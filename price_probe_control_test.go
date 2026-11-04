@@ -30,7 +30,8 @@ func TestAutomaticPriceProbeFlagsRequireExplicitOptIn(t *testing.T) {
 		{name: "legacy false with explicit consent", args: []string{"-disable-price-probes=false", "-allow-price-probes"}, allowed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// 注册参数必须重置旧值，防止沿用旧版本 / 前一次解析的开启状态。
+			// Registering the flags must reset old values so a previous
+			// version's / prior parse's enabled state is never carried over.
 			target := Config{AllowPriceProbes: true, DisablePriceProbes: true}
 			fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 			fs.SetOutput(io.Discard)
@@ -46,13 +47,13 @@ func TestAutomaticPriceProbeFlagsRequireExplicitOptIn(t *testing.T) {
 			t.Cleanup(func() { cfg = oldCfg })
 			row := taskByID(t, taskViewDefinitions(), "price_probe")
 			if row.Enabled != tc.allowed {
-				t.Fatalf("任务页面启用状态与实际调度不一致: %+v", row)
+				t.Fatalf("task page enabled state disagrees with actual scheduling: %+v", row)
 			}
 			if !tc.allowed {
 				now := time.Now()
 				row = taskByID(t, aggregateTaskViews(nil, now, os.Getpid(), now.UnixMilli()), "price_probe")
 				if row.Status != "disabled" || row.NextRunAt != 0 || row.Success != nil {
-					t.Fatalf("未授权探测不应显示计划或成功: %+v", row)
+					t.Fatalf("unauthorized probe must not show a schedule or success: %+v", row)
 				}
 			}
 		})
@@ -66,7 +67,7 @@ func TestAutomaticPriceProbeFlagsRequireExplicitOptIn(t *testing.T) {
 		fs.SetOutput(io.Discard)
 		registerAutomaticPriceProbeFlags(fs, &target)
 		if err := fs.Parse(args); err == nil {
-			t.Fatalf("非法布尔参数被接受: %v", args)
+			t.Fatalf("invalid boolean argument was accepted: %v", args)
 		}
 	}
 }
@@ -76,8 +77,8 @@ func TestDisabledAutomaticPriceProbeStopsScheduler(t *testing.T) {
 		name, reason string
 		config       Config
 	}{
-		{name: "zero config defaults off", reason: "默认关闭"},
-		{name: "legacy disable overrides opt-in", reason: "禁用优先", config: Config{AllowPriceProbes: true, DisablePriceProbes: true}},
+		{name: "zero config defaults off", reason: "disabled by default"},
+		{name: "legacy disable overrides opt-in", reason: "legacy disable takes precedence", config: Config{AllowPriceProbes: true, DisablePriceProbes: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertDisabledPriceProbeScheduler(t, tc.config, tc.reason)
@@ -108,15 +109,16 @@ func assertDisabledPriceProbeScheduler(t *testing.T, config Config, reason strin
 	case <-time.After(time.Second):
 		t.Fatal("disabled price probe scheduler did not exit before starting any model requests")
 	}
-	for _, marker := range []string{"自动探测调度", "已关闭", "不会自动请求模型", reason} {
+	for _, marker := range []string{"probe scheduling", "result=disabled", "no model requests are made automatically", reason} {
 		if !strings.Contains(audit.String(), marker) {
 			t.Errorf("missing probe shutdown audit marker %q", marker)
 		}
 	}
-	// 禁用决策和任务页事件必须使用同一个 TraceID，且实际落入项目 logs 目录。
+	// The disabled decision and the task-page event must use the same TraceID
+	// and actually land in the project's logs directory.
 	var event scheduledTaskEvent
 	for _, line := range strings.Split(audit.String(), "\n") {
-		if _, raw, ok := strings.Cut(line, "[定时任务] "); ok {
+		if _, raw, ok := strings.Cut(line, "[Scheduled task] "); ok {
 			if err := json.Unmarshal([]byte(raw), &event); err != nil {
 				t.Fatal(err)
 			}
@@ -126,14 +128,14 @@ func assertDisabledPriceProbeScheduler(t *testing.T, config Config, reason strin
 		t.Fatalf("missing disabled task event: %+v", event)
 	}
 	if !strings.Contains(audit.String(), "traceId="+event.Trace) {
-		t.Fatal("禁用决策未使用任务日志的 TraceID")
+		t.Fatal("disabled decision did not use the task log's TraceID")
 	}
 	content, err := os.ReadFile(filepath.Join(logDir, "gateway-"+time.Now().Format("2006-01-02")+".log"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(content, []byte("traceId="+event.Trace)) {
-		t.Fatal("禁用决策仅输出到控制台，未写入日志文件")
+		t.Fatal("disabled decision went only to the console; it was not written to the log file")
 	}
 }
 
@@ -141,7 +143,7 @@ func TestDefaultDisabledPriceProbeStillLearnsFromNormalRequests(t *testing.T) {
 	isolatePolicies(t)
 	cfg.AllowPriceProbes, cfg.DisablePriceProbes = false, false
 	if cfg.automaticPriceProbesAllowed() {
-		t.Fatal("默认不应允许主动探测")
+		t.Fatal("active probing must not be allowed by default")
 	}
 	oldWriter := log.Writer()
 	closeLog := initFileLogging("test-normal-price-learning")
@@ -163,7 +165,7 @@ func TestDefaultDisabledPriceProbeStillLearnsFromNormalRequests(t *testing.T) {
 		state := acc.ModelStates[tc.model]
 		accountMu.Unlock()
 		if state == nil || state.CostClass != tc.want {
-			t.Fatalf("关闭主动探测影响了正常请求学习: model=%s state=%+v", tc.model, state)
+			t.Fatalf("disabling active probing affected normal request learning: model=%s state=%+v", tc.model, state)
 		}
 	}
 }

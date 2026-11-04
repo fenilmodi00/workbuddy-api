@@ -21,7 +21,7 @@ func currentModelPolicyMode() string {
 	return "blocklist"
 }
 
-// 全局停用是调度策略，不复用授权失效字段，也不删除凭据或历史统计。
+// Global disable is a scheduling policy; it does not reuse auth-invalidated fields and never deletes credentials or historical stats.
 func annotateAccountPolicies(rows []accountSnapshot) {
 	pool := make([]*Account, len(rows))
 	for i := range rows {
@@ -57,7 +57,7 @@ func sortedNames(names map[string]bool) []string {
 	return out
 }
 
-// 用磁盘中最新配置做合并，而不是页面上可能过期的整份配置；保留无关配置段。
+// Merge using the newest config on disk rather than the possibly stale full config from the page; unrelated config sections are preserved.
 func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 	runtimeConfigMu.Lock()
 	defer runtimeConfigMu.Unlock()
@@ -81,7 +81,7 @@ func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 	if err != nil {
 		return err
 	}
-	// 从旧示例升级时移除未启用的模型名单，不再写入互相矛盾的两种字段。
+	// When upgrading from old examples, remove the disabled model list so both contradictory fields are no longer written.
 	if hasModelNames(c.Models.Allowlist) {
 		delete(models, "blocklist")
 	} else {
@@ -108,14 +108,14 @@ func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 		}
 		accountMu.Unlock()
 		if !exists || duplicates != 1 {
-			return gatewayValidationError("账号不存在或凭据文件名重复，不能设置全局开关")
+			return gatewayValidationError("Account does not exist or credential file name is duplicated; cannot set the global toggle")
 		}
-		// 只修改 all 的原始 JSON，保留模型专属规则的字段和 null/空值。
+		// Modify only the raw JSON of "all", preserving model-specific rule fields and null/empty values.
 		accountRules, parseErr := rawObject(models["accounts"])
 		if parseErr != nil {
 			return parseErr
 		}
-		// 大小写兼容已有 ALL；删除旧拼写，保证只写一个 all。
+		// Stay case-compatible with an existing ALL; delete the old spelling so only one "all" is written.
 		global := modelAccountFileConfig{}
 		for id, rule := range c.Models.Accounts {
 			if normalizeModelName(id) == "all" {
@@ -133,8 +133,8 @@ func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 		sourceMode := "blocklist"
 		if len(allows) > 0 {
 			sourceMode = "allowlist"
-			// 将当前账号池中未获白名单放行的账号显式停用，
-			// 不能仅删除白名单，否则会意外放开其他账号。
+			// Explicitly disable accounts in the current pool not granted by the allowlist;
+			// simply deleting the allowlist would unintentionally open up other accounts.
 			for n := range accountNames {
 				if !allows[n] {
 					blocks[n] = true
@@ -144,7 +144,7 @@ func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 		if len(allows) > 0 || len(global.Blocklist) > 0 {
 			for n, count := range accountNames {
 				if count > 1 {
-					blocks[n] = true // 保留规则启用时对重名凭据的拒绝状态。
+					blocks[n] = true // Preserve the rejection state for duplicated credential names while the rule is enabled.
 				}
 			}
 		}
@@ -154,7 +154,7 @@ func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 			blocks[name] = true
 		}
 		finalBlocks := sortedNames(blocks)
-		log.Printf("[账号开关规则] traceId=%s 阶段=转换全局账号名单 来源=%s 当前账号文件名数=%d 原白名单=%q 原黑名单=%q 目标=%q 启用=%t 最终黑名单=%q 说明=删除all.allowlist，仅写all.blocklist；其他当前账号全局状态保持，模型专属规则不变，之后新增账号默认开启",
+		log.Printf("[Account toggle rules] traceId=%s stage=converting global account list source=%s currentAccountFileNames=%d originalAllowlist=%q originalBlocklist=%q target=%q enabled=%t finalBlocklist=%q note=deleted all.allowlist and writes all.blocklist only; other accounts' global state is kept, model-specific rules unchanged, accounts added later default to enabled",
 			trace, sourceMode, len(accountNames), global.Allowlist, global.Blocklist, name, enabled, finalBlocks)
 		accountRules["all"], err = json.Marshal(map[string][]string{"blocklist": finalBlocks})
 		if err == nil {
@@ -164,7 +164,7 @@ func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 		target = normalizeModelName(target)
 		ids := managementModelIDs(c)
 		if target == "" || !ids[target] {
-			return gatewayValidationError("模型不在当前模型列表或已配置名单中")
+			return gatewayValidationError("Model is not in the current model list or configured lists")
 		}
 		blocks, allows := map[string]bool{}, map[string]bool{}
 		for _, id := range c.Models.Blocklist {
@@ -190,7 +190,7 @@ func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 		delete(models, "allowlist")
 		models["blocklist"], err = json.Marshal(sortedNames(blocks))
 	default:
-		return errors.New("未定义的开关类型")
+		return errors.New("Undefined toggle type")
 	}
 	if err != nil {
 		return err
@@ -207,18 +207,18 @@ func savePolicyToggle(kind, target string, enabled bool, trace string) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("[管理开关] traceId=%s 阶段=配置落盘 类型=%s 目标=%q 目标启用=%t 说明=只修改目标规则，其他配置保留，凭据和统计不会删除", trace, kind, target, enabled)
+	log.Printf("[Admin toggle] traceId=%s stage=config persisted type=%s target=%q targetEnabled=%t note=modifies only the target rule; other config is preserved; credentials and stats are never deleted", trace, kind, target, enabled)
 	if err := writeConfigPreservingFile(append(data, '\n'), old); err != nil {
 		return err
 	}
 	if err := applyRuntimeConfig(c, true, trace); err != nil {
 		if restoreErr := writeConfigPreservingFile(old, data); restoreErr != nil {
-			return fmt.Errorf("生效失败: %v；恢复配置失败: %w", err, restoreErr)
+			return fmt.Errorf("apply failed: %v; restoring config failed: %w", err, restoreErr)
 		}
 		return err
 	}
 	runtimeAppliedHash, runtimeHasAppliedHash = sha256.Sum256(append(data, '\n')), true
-	log.Printf("[管理开关] traceId=%s 结果=成功 类型=%s 目标=%q 启用=%t 说明=配置已保存且立即生效，已有上游请求不被强行中断", trace, kind, target, enabled)
+	log.Printf("[Admin toggle] traceId=%s result=success type=%s target=%q enabled=%t note=config saved and applied immediately; in-flight upstream requests are not forcibly interrupted", trace, kind, target, enabled)
 	return nil
 }
 
@@ -270,7 +270,7 @@ func handleWebUIModelToggle(w http.ResponseWriter, r *http.Request) {
 
 func handleWebUIPolicyToggle(w http.ResponseWriter, r *http.Request, kind string) {
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only POST is supported")
 		return
 	}
 	var input struct {
@@ -278,11 +278,11 @@ func handleWebUIPolicyToggle(w http.ResponseWriter, r *http.Request, kind string
 		Enabled *bool  `json:"enabled"`
 	}
 	if err := decodeAdminJSON(w, r, &input); err != nil || input.Enabled == nil || strings.TrimSpace(input.Target) == "" {
-		log.Printf("[管理开关] traceId=%s 阶段=参数校验 结果=拒绝 类型=%s 状态码=400 说明=必须提供目标与布尔开关，未修改配置", debugTraceID(r), kind)
-		writeJSONError(w, http.StatusBadRequest, "必须提供 target 字符串和 enabled 布尔值")
+		log.Printf("[Admin toggle] traceId=%s stage=parameter validation result=rejected type=%s statusCode=400 note=target and boolean toggle are required; config not modified", debugTraceID(r), kind)
+		writeJSONError(w, http.StatusBadRequest, "A target string and an enabled boolean are required")
 		return
 	}
-	log.Printf("[管理开关] traceId=%s 阶段=参数校验 类型=%s 目标=%q 启用=%t 结果=通过", debugTraceID(r), kind, input.Target, *input.Enabled)
+	log.Printf("[Admin toggle] traceId=%s stage=parameter validation type=%s target=%q enabled=%t result=passed", debugTraceID(r), kind, input.Target, *input.Enabled)
 	if err := savePolicyToggle(kind, input.Target, *input.Enabled, debugTraceID(r)); err != nil {
 		status := http.StatusInternalServerError
 		var validation gatewayValidationError
@@ -292,7 +292,7 @@ func handleWebUIPolicyToggle(w http.ResponseWriter, r *http.Request, kind string
 		if errors.Is(err, errConfigChange) {
 			status = http.StatusConflict
 		}
-		log.Printf("[管理开关] traceId=%s 结果=失败 类型=%s 状态码=%d 原因=%s 说明=未成功修改，页面须保留原开关", debugTraceID(r), kind, status, safeDebugError(err))
+		log.Printf("[Admin toggle] traceId=%s result=failed type=%s statusCode=%d reason=%s note=modification did not succeed; page must keep the original toggle", debugTraceID(r), kind, status, safeDebugError(err))
 		writeJSONError(w, status, safeDebugError(err))
 		return
 	}

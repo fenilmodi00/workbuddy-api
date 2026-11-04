@@ -35,29 +35,29 @@ func adminSecurityMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		reject := func(reason string) {
-			log.Printf("[管理请求拦截] traceId=%s 层=管理来源校验 原因=%s 状态码=403 业务影响=请求未进入管理业务", debugTraceID(r), reason)
+			log.Printf("[Admin request blocked] traceId=%s layer=admin origin validation reason=%s statusCode=403 businessImpact=request did not reach admin business logic", debugTraceID(r), reason)
 			writeJSONError(w, http.StatusForbidden, reason)
 		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
 			if err != nil || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") ||
 				!strings.EqualFold(u.Host, r.Host) || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-				reject("管理界面只接受同源请求")
+				reject("The admin interface only accepts same-origin requests")
 				return
 			}
 		}
 		if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-			reject("拒绝跨站管理请求")
+			reject("Cross-site admin requests are rejected")
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			contentType := strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])
 			if r.Header.Get("X-Workbuddy-Admin") != "1" || !strings.EqualFold(contentType, "application/json") {
-				reject("管理写操作必须由同源 JSON 请求提交")
+				reject("Admin write operations must be submitted as same-origin JSON requests")
 				return
 			}
 		}
-		log.Printf("[管理来源校验] traceId=%s 结果=通过 说明=不向其他来源开放管理CORS", debugTraceID(r))
+		log.Printf("[Admin origin validation] traceId=%s result=passed note=admin CORS is not opened to other origins", debugTraceID(r))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -75,16 +75,16 @@ func adminAuthMiddleware(next http.Handler) http.Handler {
 			token = strings.TrimPrefix(header, "Bearer ")
 		}
 		if key == "" || subtle.ConstantTimeCompare([]byte(token), []byte(key)) != 1 {
-			log.Printf("[管理请求拦截] traceId=%s 层=管理鉴权 状态码=401 业务影响=请求未进入业务方法 管理Key已配置=%t", debugTraceID(r), key != "")
-			writeJSONError(w, http.StatusUnauthorized, "请使用管理 Key 登录，不接受模型 API Key")
+			log.Printf("[Admin request blocked] traceId=%s layer=admin auth statusCode=401 businessImpact=request did not reach business methods adminKeyConfigured=%t", debugTraceID(r), key != "")
+			writeJSONError(w, http.StatusUnauthorized, "Please log in with the admin Key; model API keys are not accepted")
 			return
 		}
-		log.Printf("[管理鉴权] traceId=%s 结果=通过 说明=管理Key与模型API鉴权独立", debugTraceID(r))
+		log.Printf("[Admin auth] traceId=%s result=passed note=admin Key auth is independent of model API auth", debugTraceID(r))
 		next.ServeHTTP(w, r)
 	})
 }
 
-// 不信任代理声明的客户端 IP；初始化只能在回环连接和回环 Host 上完成。
+// Does not trust proxy-declared client IPs; initialization can only be done over loopback connections and loopback Hosts.
 func localAdminSetupRequest(r *http.Request) bool {
 	remote, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil || !net.ParseIP(remote).IsLoopback() {
@@ -106,7 +106,7 @@ func decodeAdminJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 }
 
 func decodeAdminJSONLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) error {
-	r.Body = http.MaxBytesReader(w, r.Body, limit) // 仅管理表单，不影响模型请求。
+	r.Body = http.MaxBytesReader(w, r.Body, limit) // Admin forms only; does not affect model requests.
 	defer r.Body.Close()
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -125,43 +125,43 @@ func handleWebUISetup(w http.ResponseWriter, r *http.Request) {
 		})
 	case http.MethodPost:
 		if !localAdminSetupRequest(r) {
-			log.Printf("[管理初始化] traceId=%s 结果=拒绝 原因=非本机直接访问 状态码=403 业务影响=未生成或写入管理Key", debugTraceID(r))
+			log.Printf("[Admin setup] traceId=%s result=rejected reason=not a direct local access statusCode=403 businessImpact=admin Key not generated or written", debugTraceID(r))
 			writeJSONError(w, http.StatusForbidden,
-				"首次自动生成管理 Key 仅允许本机访问。可选方式：① 在服务器本机打开本页面；"+
-					"② 使用 SSH 本地端口转发（如 ssh -L 8316:127.0.0.1:8316 用户@服务器）后访问；"+
-					"③ 直接在服务器上编辑 config.json，把 gateway.adminKey 设为随机字符串，保存后约 1 秒生效")
+				"Only the local machine is allowed to automatically generate an admin Key for the first time. Options: 1) open this page on the server itself; "+
+					"2) use SSH local port forwarding (e.g. ssh -L 8316:127.0.0.1:8316 user@server) and then access; "+
+					"3) edit config.json on the server directly, set gateway.adminKey to a random string, and it takes effect about 1 second after saving")
 			return
 		}
 		var empty map[string]json.RawMessage
 		if err := decodeAdminJSON(w, r, &empty); err != nil || empty == nil || len(empty) != 0 {
-			log.Printf("[管理初始化] traceId=%s 结果=拒绝 原因=请求JSON无效 状态码=400", debugTraceID(r))
-			writeJSONError(w, http.StatusBadRequest, "初始化请求必须是空 JSON 对象")
+			log.Printf("[Admin setup] traceId=%s result=rejected reason=invalid request JSON statusCode=400", debugTraceID(r))
+			writeJSONError(w, http.StatusBadRequest, "The setup request must be an empty JSON object")
 			return
 		}
-		log.Printf("[管理初始化] traceId=%s 阶段=开始 说明=只生成一次32字符随机管理Key，原文不进入日志", debugTraceID(r))
+		log.Printf("[Admin setup] traceId=%s stage=started note=generates a 32-character random admin Key exactly once; the raw value never enters logs", debugTraceID(r))
 		key, err := initializeAdminKey(debugTraceID(r))
 		if err != nil {
 			status := http.StatusInternalServerError
-			message := "管理 Key 保存失败，未完成初始化，请检查服务器日志和配置文件权限"
+			message := "Failed to save the admin Key; initialization not completed. Check the server logs and config file permissions"
 			if errors.Is(err, errSetupDone) {
 				status, message = http.StatusConflict, errSetupDone.Error()
 			}
-			log.Printf("[管理初始化] traceId=%s 结果=失败 状态码=%d 原因=%v", debugTraceID(r), status, err)
+			log.Printf("[Admin setup] traceId=%s result=failed statusCode=%d reason=%v", debugTraceID(r), status, err)
 			writeJSONError(w, status, message)
 			return
 		}
-		log.Printf("[管理初始化] traceId=%s 结果=成功 Key字符数=32 说明=已落盘，仅本次初始化响应返回Key", debugTraceID(r))
-		// 有意仅此一次返回原文，满足页面弹窗；其他管理接口均不返回秘密值。
+		log.Printf("[Admin setup] traceId=%s result=success keyLength=32 note=persisted; the Key is returned only in this setup response", debugTraceID(r))
+		// Intentionally returns the raw value this one time only, to satisfy the page popup; all other admin endpoints return no secrets.
 		writeJSON(w, http.StatusCreated, map[string]string{"adminKey": key})
 	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET/POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET/POST are supported")
 	}
 }
 
 func handleWebUISettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		log.Printf("[管理配置] traceId=%s 阶段=读取 结果=成功 说明=仅返回鉴权开关、Key是否已配置及实际监听端口", debugTraceID(r))
+		log.Printf("[Admin settings] traceId=%s stage=read result=success note=returns the auth toggle, whether a Key is configured, and the actual listening ports", debugTraceID(r))
 		writeJSON(w, http.StatusOK, gatewaySettingsView())
 	case http.MethodPost:
 		var input struct {
@@ -171,13 +171,13 @@ func handleWebUISettings(w http.ResponseWriter, r *http.Request) {
 			WebPort *int   `json:"webPort"`
 		}
 		if err := decodeAdminJSON(w, r, &input); err != nil || input.Enabled == nil && input.APIPort == nil && input.WebPort == nil && input.Key == "" {
-			log.Printf("[管理配置] traceId=%s 阶段=参数校验 结果=拒绝 状态码=400 原因=必须提供有效API鉴权开关和JSON", debugTraceID(r))
-			writeJSONError(w, http.StatusBadRequest, "至少提供 API 鉴权设置或端口设置，字段类型必须正确")
+			log.Printf("[Admin settings] traceId=%s stage=parameter validation result=rejected statusCode=400 reason=a valid API auth toggle and JSON are required", debugTraceID(r))
+			writeJSONError(w, http.StatusBadRequest, "Provide at least the API auth settings or port settings; field types must be correct")
 			return
 		}
-		log.Printf("[管理配置] traceId=%s 阶段=参数校验 鉴权开关已提供=%t 端口已提供=%t 新Key已提供=%t 说明=Key原文不记录", debugTraceID(r), input.Enabled != nil, input.APIPort != nil || input.WebPort != nil, input.Key != "")
+		log.Printf("[Admin settings] traceId=%s stage=parameter validation authToggleProvided=%t portsProvided=%t newKeyProvided=%t note=raw Key value is never logged", debugTraceID(r), input.Enabled != nil, input.APIPort != nil || input.WebPort != nil, input.Key != "")
 		if err := saveGatewaySettings(input.Enabled, input.Key, input.APIPort, input.WebPort, debugTraceID(r)); err != nil {
-			log.Printf("[管理配置] traceId=%s 结果=失败 原因=%v 业务影响=当前运行时鉴权状态保留", debugTraceID(r), err)
+			log.Printf("[Admin settings] traceId=%s result=failed reason=%v businessImpact=current runtime auth state is kept", debugTraceID(r), err)
 			status := http.StatusInternalServerError
 			var validation gatewayValidationError
 			if errors.As(err, &validation) {
@@ -191,14 +191,14 @@ func handleWebUISettings(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, gatewaySettingsView())
 	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET/POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET/POST are supported")
 	}
 }
 
-// 将前端校验/请求结果以有限的结构化字段落盘，不接受正文、Key 或任意日志字符串。
+// Persists frontend validation/request results as a limited set of structured fields; accepts no body, Key, or arbitrary log strings.
 func handleWebUIClientEvent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only POST is supported")
 		return
 	}
 	var input struct {
@@ -208,7 +208,7 @@ func handleWebUIClientEvent(w http.ResponseWriter, r *http.Request) {
 		Enabled *bool  `json:"enabled,omitempty"`
 	}
 	if err := decodeAdminJSON(w, r, &input); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "无效的前端审计事件")
+		writeJSONError(w, http.StatusBadRequest, "Invalid frontend audit event")
 		return
 	}
 	allowed := map[string]bool{"request_completed": true, "request_failed": true, "settings_validation_failed": true, "credential_validation_failed": true, "log_validation_failed": true,
@@ -230,33 +230,33 @@ func handleWebUIClientEvent(w http.ResponseWriter, r *http.Request) {
 		"/admin/api/account-delete": true,
 	}
 	if !allowed[input.Event] || !routes[input.Route] || input.Status < 0 || input.Status > 599 {
-		writeJSONError(w, http.StatusBadRequest, "不接受未定义的前端审计事件")
+		writeJSONError(w, http.StatusBadRequest, "Undefined frontend audit events are not accepted")
 		return
 	}
 	filterEvent := strings.HasPrefix(input.Event, "list_filter_")
 	if strings.HasPrefix(input.Event, "stats_chart_hover_") && (input.Route != "/admin/api/stats" || input.Status != 0 || input.Enabled != nil) {
-		log.Printf("[管理前端] traceId=%s 阶段=图表交互审计校验 结果=拒绝 状态码=400 说明=只接受固定统计图表事件，不接受坐标、数值、正文或凭据", debugTraceID(r))
-		writeJSONError(w, http.StatusBadRequest, "图表交互审计只能用于统计图表")
+		log.Printf("[Admin frontend] traceId=%s stage=chart interaction audit validation result=rejected statusCode=400 note=only fixed stats chart events are accepted; coordinates, values, bodies, or credentials are not", debugTraceID(r))
+		writeJSONError(w, http.StatusBadRequest, "Chart interaction audits are only for stats charts")
 		return
 	}
 	if filterEvent && (input.Enabled == nil || input.Route != "/admin/api/status" && input.Route != "/admin/api/models") ||
 		!filterEvent && input.Enabled != nil {
-		log.Printf("[管理前端] traceId=%s 阶段=筛选偏好校验 结果=拒绝 状态码=400 说明=只接受账号或模型列表的布尔筛选状态，不接受任意内容", debugTraceID(r))
-		writeJSONError(w, http.StatusBadRequest, "筛选审计必须提供对应列表的布尔状态")
+		log.Printf("[Admin frontend] traceId=%s stage=filter preference validation result=rejected statusCode=400 note=only boolean filter states for the account or model list are accepted; arbitrary content is not", debugTraceID(r))
+		writeJSONError(w, http.StatusBadRequest, "Filter audits must provide the boolean state of the corresponding list")
 		return
 	}
 	if filterEvent {
-		log.Printf("[管理前端筛选] traceId=%s 事件=%s 列表=%s 只显示可用=%t 状态码=%d 说明=仅改变网页显示偏好，不修改配置、调度规则或历史统计，不记录Cookie正文和Key",
+		log.Printf("[Admin frontend filter] traceId=%s event=%s list=%s onlyUsable=%t statusCode=%d note=changes the web display preference only; does not modify config, scheduling rules, or historical stats; cookies, bodies, and Keys are not logged",
 			debugTraceID(r), input.Event, input.Route, *input.Enabled, input.Status)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	log.Printf("[管理前端] traceId=%s 事件=%s 接口=%s 状态码=%d 说明=前端请求或参数校验结果已落盘，不含Key与业务正文",
+	log.Printf("[Admin frontend] traceId=%s event=%s endpoint=%s statusCode=%d note=frontend request or parameter validation result persisted; contains no Key or business body",
 		debugTraceID(r), input.Event, input.Route, input.Status)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// 只脱敏输出副本，不能修改用于业务判断的原始状态或磁盘文件。
+// Redacts only the output copy; the original state used for business decisions and disk files must not be modified.
 func writeAdminData(w http.ResponseWriter, r *http.Request, value any) {
 	raw, err := json.Marshal(value)
 	var copyValue any
@@ -266,8 +266,8 @@ func writeAdminData(w http.ResponseWriter, r *http.Request, value any) {
 		err = decoder.Decode(&copyValue)
 	}
 	if err != nil {
-		log.Printf("[管理响应] traceId=%s 阶段=编码 结果=失败 原因=%v", debugTraceID(r), err)
-		writeJSONError(w, http.StatusInternalServerError, "管理数据编码失败")
+		log.Printf("[Admin response] traceId=%s stage=encode result=failed reason=%v", debugTraceID(r), err)
+		writeJSONError(w, http.StatusInternalServerError, "Failed to encode admin data")
 		return
 	}
 	writeJSON(w, http.StatusOK, redactDebugValue(copyValue))

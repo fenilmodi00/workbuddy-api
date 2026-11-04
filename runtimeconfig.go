@@ -20,13 +20,15 @@ import (
 //go:embed config.example.json
 var embeddedDefaultRuntimeConfig []byte
 
-// 所有进程内配置文件读改写共用此锁，避免网页写入与热加载互相覆盖。
-// 锁序：runtimeConfigMu -> gatewayConfigMu；调度不持有此锁。
+// All in-process config file read-modify-write shares this lock, so web UI
+// writes and hot reload do not overwrite each other.
+// Lock order: runtimeConfigMu -> gatewayConfigMu; the scheduler does not hold it.
 var runtimeConfigMu sync.Mutex
 var upstreamConfigMu sync.RWMutex
 var statusSnapshotWriteMu sync.Mutex
 
-// 与运行时状态同步更新，不能仅由扫描协程缓存：网页写入后立即撤回旧文件也必须生效。
+// Updated together with the runtime state; must not be cached only by the scan
+// goroutine: reverting the old file right after a web UI write must also take effect.
 var runtimeAppliedHash [32]byte
 var runtimeHasAppliedHash bool
 var deprecatedPromptCompatibilityPresent atomic.Bool
@@ -34,7 +36,7 @@ var deprecatedPromptCompatibilityPresent atomic.Bool
 func parseRuntimeConfig(data []byte) (runtimeFileConfig, error) {
 	var c runtimeFileConfig
 	if len(bytes.TrimSpace(data)) == 0 || bytes.TrimSpace(data)[0] != '{' {
-		return c, errors.New("config.json 必须是 JSON 对象，不能是空文件或 null")
+		return c, errors.New("config.json must be a JSON object, not an empty file or null")
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -53,22 +55,23 @@ func parseRuntimeConfig(data []byte) (runtimeFileConfig, error) {
 		apiPort = cfg.Port
 	}
 	if apiPort < 1 || apiPort > 65535 || cfg.WebUI && apiPort == g.WebPort {
-		return c, errors.New("API 监听端口无效或与 Web 监听端口冲突")
+		return c, errors.New("API listen port is invalid or conflicts with the Web UI listen port")
 	}
 	if _, err := buildModelAccountRules(c.Models.Accounts); err != nil {
 		return c, err
 	}
 	for _, seconds := range []int{c.Upstream.HeaderTimeoutSeconds, c.Upstream.IdleTimeoutSeconds} {
 		if int64(seconds) > int64((1<<63-1)/time.Second) {
-			return c, errors.New("upstream 超时秒数过大，超出 time.Duration 可表示范围")
+			return c, errors.New("upstream timeout seconds too large, exceeds the time.Duration representable range")
 		}
 	}
-	// 兼容旧示例同时携带两个空数组，但非空黑白名单不能同时生效。
+	// Compatible with old examples that carried two empty arrays, but a non-empty
+	// blocklist and allowlist cannot both take effect.
 	if hasModelNames(c.Models.Blocklist) && hasModelNames(c.Models.Allowlist) {
-		return c, errors.New("models.allowlist 与 models.blocklist 不能同时非空，请只保留一种模型名单")
+		return c, errors.New("models.allowlist and models.blocklist must not both be non-empty; keep only one model list")
 	}
 	if c.Logs.RetentionDays < 0 || c.Logs.RetentionDays > 36500 {
-		return c, gatewayValidationError("logs.retentionDays 必须为 0～36500 的整数；0 表示不自动清理")
+		return c, gatewayValidationError("logs.retentionDays must be an integer in 0–36500; 0 disables automatic cleanup")
 	}
 	if _, err := normalizeRequestProfile(c.Upstream.RequestProfile); err != nil {
 		return c, err
@@ -97,7 +100,7 @@ func ensureRuntimeConfigFile(path string) error {
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("config.json 不是普通文件")
+		return fmt.Errorf("config.json is not a regular file")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -105,7 +108,7 @@ func ensureRuntimeConfigFile(path string) error {
 	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil || doc == nil {
-		return nil // 交给正常配置校验报错；不覆盖半写或非法配置。
+		return nil // leave it to the normal config validation to report; do not overwrite a half-written or invalid config.
 	}
 	changed := false
 	hasKey := func(object map[string]json.RawMessage, name string) bool {
@@ -184,7 +187,7 @@ func ensureRuntimeConfigFile(path string) error {
 	if err := os.Rename(temporary, path); err != nil {
 		return err
 	}
-	log.Printf("[配置初始化] 已补充缺失的 identity/concurrent 默认配置；已有值和其他配置保留，后续修改仍可热加载")
+	log.Printf("[Config initialization] added missing identity/concurrent default config; existing values and other config are preserved, later changes still hot-reload")
 	return nil
 }
 
@@ -242,7 +245,7 @@ func ensureIdentityDefaultReplacements(doc map[string]json.RawMessage) (bool, er
 	} else {
 		var replacements map[string]string
 		if json.Unmarshal(identity[replacementsKey], &replacements) != nil {
-			return false, nil // 非法类型交给完整配置校验，不擅自覆盖。
+			return false, nil // hand invalid types to full config validation; do not overwrite on my own.
 		}
 		// A non-empty custom map disables runtime defaults, so merge every missing
 		// built-in rule while never overwriting an explicitly customized value.
@@ -300,7 +303,7 @@ func writeNewRuntimeConfig(path string) error {
 	if err := fd.Close(); err != nil {
 		return err
 	}
-	log.Printf("[配置初始化] 已生成默认 config.json")
+	log.Printf("[Config initialization] generated default config.json")
 	return nil
 }
 
@@ -311,11 +314,11 @@ func loadRuntimeConfig(path string) error {
 	if errors.Is(err, os.ErrNotExist) {
 		data = []byte("{}")
 	} else if err != nil {
-		return fmt.Errorf("读取配置文件 %s: %w", path, err)
+		return fmt.Errorf("reading config file %s: %w", path, err)
 	}
 	c, err := parseRuntimeConfig(data)
 	if err != nil {
-		return fmt.Errorf("解析配置文件 %s: %w", path, err)
+		return fmt.Errorf("parsing config file %s: %w", path, err)
 	}
 	if err := applyRuntimeConfig(c, false, ""); err != nil {
 		return err
@@ -324,7 +327,8 @@ func loadRuntimeConfig(path string) error {
 	return nil
 }
 
-// 调用前已完整校验。先准备可失败的资源，再热切换；不打断已有连接/流。
+// Fully validated before the call. Prepare resources that can fail first, then
+// hot-switch; existing connections/streams are not interrupted.
 func applyRuntimeConfig(c runtimeFileConfig, hot bool, trace string) error {
 	profile, err := normalizeRequestProfile(c.Upstream.RequestProfile)
 	if err != nil {
@@ -346,11 +350,11 @@ func applyRuntimeConfig(c runtimeFileConfig, hot bool, trace string) error {
 		return err
 	}
 	if !hot {
-		cfg.DebugEnabled = c.Debug.Enabled // 仅启动时写入 cfg，运行期间由 sink 判断。
+		cfg.DebugEnabled = c.Debug.Enabled // written to cfg only at startup; decided by the sink at runtime.
 	}
 	previousFull := debugFullRequests.Swap(c.Debug.FullRequests)
 	if previousFull != c.Debug.FullRequests || !hot && c.Debug.FullRequests {
-		log.Printf("[完整请求日志] traceId=%s 配置开启=%t 调试日志开启=%t 说明=仅模型API；入站与实际出站请求完整记录到debug日志，已知凭据脱敏，提示词代码与图片仍属敏感数据；无次数和时长限制，请排障后关闭",
+		log.Printf("[Full request logging] traceId=%s configEnabled=%t debugLogEnabled=%t note=model API only; inbound and actual outbound requests are fully recorded to the debug log, known credentials are redacted, prompt code and images remain sensitive data; no count or duration limits, disable after troubleshooting",
 			trace, c.Debug.FullRequests, c.Debug.Enabled)
 	}
 	setModelFilter(c.Models.Blocklist, c.Models.Allowlist)
@@ -363,18 +367,21 @@ func applyRuntimeConfig(c runtimeFileConfig, hot bool, trace string) error {
 	logIdentityRuntimeConfig(trace)
 	previousProfile := officialRequests.Load()
 	setRequestProfile(profile)
-	// 未配置 upstream.requestProfile 时会回退 legacy，出站请求体因此不压缩。
-	// 该回退此前是静默的：升级后只能从「请求体没变小」间接推断，故启动时无条件打印一次。
+	// Without upstream.requestProfile configured, it falls back to legacy and the
+	// outbound request body is therefore not compressed.
+	// This fallback used to be silent: after an upgrade it could only be inferred
+	// indirectly from "the request body did not shrink", so print it once
+	// unconditionally at startup.
 	profileSource := "config.json upstream.requestProfile"
 	if c.Upstream.RequestProfile == "" {
-		profileSource = "缺省：config.json 未提供 upstream.requestProfile"
+		profileSource = "default: config.json does not provide upstream.requestProfile"
 	}
 	switch {
 	case !hot:
-		log.Printf("[出站兼容配置] traceId=%s profile=%s 来源=%s 结果=已应用 说明=legacy 不压缩出站请求体，official 启用出站 gzip 与桌面端指纹；只影响后续模型请求，不修改登录与凭据",
+		log.Printf("[Outbound compat config] traceId=%s profile=%s source=%s result=applied note=legacy does not compress the outbound request body, official enables outbound gzip and desktop fingerprints; only affects later model requests, does not modify login or credentials",
 			trace, profile, profileSource)
 	case previousProfile != officialRequests.Load():
-		log.Printf("[出站兼容配置] traceId=%s profile=%s 结果=已应用 说明=只影响后续模型请求，正在执行的请求沿用原快照，不修改登录和凭据", trace, profile)
+		log.Printf("[Outbound compat config] traceId=%s profile=%s result=applied note=only affects later model requests, in-flight requests keep the original snapshot, login and credentials are not modified", trace, profile)
 	}
 	logRetentionDays.Store(int64(c.Logs.RetentionDays))
 	header, idle, retries := upstreamHeaderTimeoutDefault, upstreamIdleTimeoutDefault, upstreamTransientRetriesDefault
@@ -401,25 +408,27 @@ func applyRuntimeConfig(c runtimeFileConfig, hot bool, trace string) error {
 	enableFirstByteRetry = firstByteRetry
 	upstreamConfigMu.Unlock()
 	if hot {
-		log.Printf("[配置热加载] traceId=%s 结果=成功 模型黑名单=%d 模型白名单=%d 账号规则=%d 调试日志=%t 日志保留天数=%d 响应头超时=%v 流空闲超时=%v 重试次数=%d 流心跳=%v 首字节重放=%t 实际API端口=%d 实际Web端口=%d 说明=后续请求使用新配置，凭据及历史账本保留；监听端口已热切换",
+		log.Printf("[Config hot reload] traceId=%s result=success modelBlocklist=%d modelAllowlist=%d accountRules=%d debugLog=%t logRetentionDays=%d headerTimeout=%v streamIdleTimeout=%v retries=%d streamHeartbeat=%v firstByteReplay=%t effectiveAPIPort=%d effectiveWebPort=%d note=later requests use the new config, credentials and historical ledgers are preserved; listen ports hot-switched",
 			trace, len(c.Models.Blocklist), len(c.Models.Allowlist), len(c.Models.Accounts), c.Debug.Enabled, c.Logs.RetentionDays, header, idle, retries, keepalive, firstByteRetry, cfg.Port, cfg.WebPort)
 	}
 	return nil
 }
 
-// 启动日志初始化后再记录一次，确保废弃字段提示与热加载结果一样落盘。
-// 不记录替换词正文，避免把旧配置中的私密文本写入普通日志。
+// Logged once more after startup log initialization, so the deprecated field
+// notice is persisted like the hot reload result.
+// Replacement word bodies are not recorded, avoiding private text from the old
+// config leaking into ordinary logs.
 func logIdentityRuntimeConfig(trace string) {
 	enabled, target, rules := identitySettingsSummary()
 	literal, wildcard, invalid := identityRuleDetails()
-	log.Printf("[身份替换配置] traceId=%s 启用=%t 目标=%s 规则数=%d 字面规则=%d 首位通配规则=%d 忽略非法规则=%d 说明=所有文字替换均按identity.replacements执行；仅处理system/developer/assistant文本；热加载只影响后续请求",
+	log.Printf("[Identity replacement config] traceId=%s enabled=%t target=%s ruleCount=%d literalRules=%d leadingWildcardRules=%d ignoredInvalidRules=%d note=all text replacements follow identity.replacements; only system/developer/assistant text is processed; hot reload only affects later requests",
 		trace, enabled, target, rules, literal, wildcard, invalid)
 	if invalid > 0 {
-		log.Printf("[替换规则告警] traceId=%s 忽略条数=%d 原因=空键或非法通配边界 说明=通配仅支持一个(.*)，必须有非空首尾文本且不得跨行；其他有效规则仍生效，未记录规则正文",
+		log.Printf("[Replacement rule warning] traceId=%s ignoredCount=%d reason=empty key or invalid wildcard boundary note=wildcards support only one (.*), must have non-empty leading and trailing text, and must not cross lines; other valid rules still apply, rule bodies are not recorded",
 			trace, invalid)
 	}
 	if deprecatedPromptCompatibilityPresent.Load() {
-		log.Printf("[废弃配置] traceId=%s 字段=promptCompatibility 结果=已忽略 说明=重复替换模块已移除；请将需要保留的规则配置在 identity.replacements 中，确认后可删除旧字段；未记录旧规则正文",
+		log.Printf("[Deprecated config] traceId=%s field=promptCompatibility result=ignored note=the duplicate replacement module has been removed; configure rules you want to keep in identity.replacements, then the old field can be deleted after confirmation; old rule bodies are not recorded",
 			trace)
 	}
 }
@@ -435,14 +444,15 @@ func currentIdleTimeout() time.Duration {
 	return idle
 }
 
-// currentStreamKeepalive 返回当前流式心跳间隔（0 表示关闭）。
+// currentStreamKeepalive returns the current stream heartbeat interval
+// (0 means disabled).
 func currentStreamKeepalive() time.Duration {
 	upstreamConfigMu.RLock()
 	defer upstreamConfigMu.RUnlock()
 	return streamKeepalive
 }
 
-// currentFirstByteRetry 返回当前首字节前重放开关。
+// currentFirstByteRetry returns the current replay-before-first-byte switch.
 func currentFirstByteRetry() bool {
 	upstreamConfigMu.RLock()
 	defer upstreamConfigMu.RUnlock()
@@ -473,8 +483,10 @@ func switchDebugLogging(enabled bool) error {
 	return nil
 }
 
-// 根据内容摘要检测变化，避免相同大小/相同时间戳的编辑被漏掉。
-// 缺失/半写/错误配置保留上一份有效配置；同一坏内容只告警一次。
+// Detects changes by content digest, so edits with the same size/timestamp are
+// not missed.
+// Missing/half-written/invalid configs keep the previous valid config; the same
+// bad content warns only once.
 type runtimeConfigWatcher struct {
 	failed    [32]byte
 	hasFailed bool
@@ -505,7 +517,7 @@ func (watcher *runtimeConfigWatcher) reload() bool {
 	}
 	if err != nil {
 		if !watcher.hasFailed || watcher.failed != sum {
-			log.Printf("[配置热加载] traceId=%s 结果=拒绝 原因=%s 业务影响=配置未切换，保留上一份有效配置；请修正文件后再保存", trace, safeDebugError(err))
+			log.Printf("[Config hot reload] traceId=%s result=rejected reason=%s businessImpact=config not switched, previous valid config kept; fix the file and save again", trace, safeDebugError(err))
 		}
 		watcher.lastError = err
 		watcher.failed, watcher.hasFailed = sum, true
@@ -523,7 +535,7 @@ func runtimeConfigLoop(ctx context.Context) {
 	var previousStatus string
 	logScheduledTask("config_reload", "scheduled", "", newTraceID(), time.Time{}, time.Now().Add(time.Second), "")
 	if logRetentionDays.Load() == 0 {
-		logScheduledTask("log_cleanup", "disabled", "disabled", newTraceID(), time.Time{}, time.Time{}, "保留天数为0，不自动清理")
+		logScheduledTask("log_cleanup", "disabled", "disabled", newTraceID(), time.Time{}, time.Time{}, "retention days is 0, no automatic cleanup")
 	}
 	for {
 		select {
@@ -533,9 +545,9 @@ func runtimeConfigLoop(ctx context.Context) {
 			next := tick.Add(time.Second)
 			started := time.Now()
 			changed := watcher.reload()
-			status, detail := "success", "检查完成，配置没有变化"
+			status, detail := "success", "check complete, config unchanged"
 			if changed {
-				detail = "新配置已校验并应用"
+				detail = "new config validated and applied"
 			}
 			if watcher.lastError != nil {
 				status, detail = "failed", safeDebugError(watcher.lastError)
@@ -546,8 +558,9 @@ func runtimeConfigLoop(ctx context.Context) {
 	}
 }
 
-// Transport 不可在活跃请求期间原地改字段。仅超时变化时克隆，
-// 新请求用新 Transport；旧流继续读取，闲置连接回收。
+// A Transport cannot have its fields changed in place during active requests.
+// Clone only when timeouts change; new requests use the new Transport, old
+// streams keep reading, idle connections are reclaimed.
 type hotConfigTransport struct {
 	mu        sync.Mutex
 	transport *http.Transport

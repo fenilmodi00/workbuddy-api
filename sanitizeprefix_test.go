@@ -85,7 +85,7 @@ func TestPrefixSanitizeLogIsMetadataOnly(t *testing.T) {
 
 func TestAssistantIdentityBrandReplacement(t *testing.T) {
 	cases := []struct{ input, want string }{
-		{"您是 Codex，一个在 Codex CLI 中运行的编码代理。", "您是 WorkBuddy，一个在 WorkBuddy CLI 中运行的编码代理。"},
+		{"You are Codex, a coding agent running in the Codex CLI.", "You are WorkBuddy, a coding agent running in the WorkBuddy CLI."},
 		{"You are an AI agent powered by DeepSeek Harness. Keep rules.", "You are WorkBuddy. Keep rules."},
 		{"You are Claude Code, Anthropic's official CLI tool for Claude.", "You are WorkBuddy, Anthropic's official CLI tool for WorkBuddy."},
 		{"You are ZCode. Keep rules.", "You are WorkBuddy. Keep rules."},

@@ -1,4 +1,4 @@
-# 凭据与敏感数据（切勿提交！）
+# Credentials and sensitive data (never commit!)
 workbuddy*.json
 workbuddy-console.json
 last-*.json
@@ -26,19 +26,19 @@ checkin-state.json
 .ssh/
 backups/
 
-# 本地编译产物
+# Local build artifacts
 workbuddy-gateway
 workbuddy-gateway.exe
 dist/
 
-# 日志与临时文件
+# Logs and temporary files
 *.log
 logs/
 *.tmp
 .DS_Store
 Thumbs.db
 
-# 本地工具缓存、历史材料与可能包含环境信息的报告
+# Local tool caches, historical material, and reports that may contain environment info
 .codex-tmp/
 .playwright-mcp/
 outputs/

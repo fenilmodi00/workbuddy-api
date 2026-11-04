@@ -12,9 +12,10 @@ import (
 	"time"
 )
 
-// streamWriteGuard 串行化下游 ResponseWriter 的心跳和数据写入。
-// net/http 不保证 ResponseWriter 并发安全，心跳 goroutine 与主流读取
-// 必须共用同一把锁。
+// streamWriteGuard serializes heartbeat and data writes to the downstream
+// ResponseWriter. net/http does not guarantee ResponseWriter concurrency
+// safety, so the heartbeat goroutine and the main stream reader must share
+// the same lock.
 type streamWriteGuard struct {
 	mu       sync.Mutex
 	w        http.ResponseWriter
@@ -30,7 +31,8 @@ func (g *streamWriteGuard) writeData(payload string) {
 	g.dataSeen = true
 }
 
-// writeUpstreamComment 转发上游已有的 SSE 注释，不把注释算作有效数据。
+// writeUpstreamComment forwards an existing upstream SSE comment without
+// counting the comment as valid data.
 func (g *streamWriteGuard) writeUpstreamComment(line string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -60,8 +62,9 @@ type streamHeartbeat struct {
 	once sync.Once
 }
 
-// startStreamHeartbeat 在首个有效 data 前周期性下发 SSE 注释；Stop 会等待
-// goroutine 退出，避免 handler 返回后仍写 ResponseWriter。
+// startStreamHeartbeat periodically emits SSE comments until the first valid
+// data frame; Stop waits for the goroutine to exit so the ResponseWriter is
+// not written after the handler returns.
 func startStreamHeartbeat(g *streamWriteGuard, interval time.Duration) *streamHeartbeat {
 	if interval <= 0 {
 		return nil
@@ -91,10 +94,12 @@ func (h *streamHeartbeat) Stop() {
 	<-h.done
 }
 
-// canReplayStream 只允许在客户端没有收到任何有效数据、预算未用尽、
-// 且错误属于瞬时网络故障或上游空闲超时时重放。
-// clientCanceled 由调用方根据 r.Context().Err() 判断；内部 idle reader 超时
-// 也会表现为 context.Canceled，因此必须与客户端取消区分。
+// canReplayStream only allows a replay when the client has received no valid
+// data, the budget is not exhausted, and the error is a transient network
+// failure or an upstream idle timeout.
+// clientCanceled is decided by the caller from r.Context().Err(); the internal
+// idle reader timeout also surfaces as context.Canceled, so it must be
+// distinguished from client cancellation.
 func canReplayStream(scanErr error, sawFirstData, budgetLeft, clientCanceled bool) bool {
 	if scanErr == nil || sawFirstData || !budgetLeft || clientCanceled {
 		return false
@@ -105,8 +110,9 @@ func canReplayStream(scanErr error, sawFirstData, budgetLeft, clientCanceled boo
 	return isTransientNetworkError(scanErr)
 }
 
-// replayResponseWriter 捕获重放时 upstreamChat 的错误响应，避免心跳已经
-// 把 200 响应头发出后再次 WriteHeader，或把 JSON 错误混进 SSE 流。
+// replayResponseWriter captures the error response of upstreamChat during a
+// replay, avoiding a second WriteHeader after the heartbeat already sent the
+// 200 response headers, or JSON errors leaking into the SSE stream.
 type replayResponseWriter struct {
 	header http.Header
 	status int
@@ -146,7 +152,7 @@ func replayUpstreamChat(w http.ResponseWriter, r *http.Request, reqID uint64, mo
 		}
 		payload, _ = json.Marshal(map[string]any{
 			"error": map[string]any{
-				"message": "首字节前重放失败，本次响应不完整",
+				"message": "Replay before first byte failed; this response is incomplete",
 				"type":    "upstream_stream_interrupted",
 				"code":    "stream_replay_failed",
 				"status":  status,
@@ -154,11 +160,11 @@ func replayUpstreamChat(w http.ResponseWriter, r *http.Request, reqID uint64, mo
 		})
 	}
 	guard.writeData(string(payload))
-	log.Printf("[异常] traceId=%s requestId=%d 发生阶段=首字节前重放 模型=%s 结果=重放未取得可用上游响应 业务影响=已通过SSE错误事件通知客户端，不伪造[DONE]",
+	log.Printf("[Exception] traceId=%s requestId=%d stage=replay before first byte model=%s result=replay did not obtain a usable upstream response businessImpact=client notified via SSE error event, no fabricated [DONE]",
 		debugTraceID(r), reqID, modelName)
 	debugEvent(r, "error", "stream_first_byte_replay_failed", map[string]any{
 		"status_code":     http.StatusBadGateway,
-		"business_impact": "客户端已开始接收SSE，无法再改写HTTP状态，改为下发流内错误",
+		"business_impact": "client already started receiving SSE, HTTP status can no longer be rewritten; switched to in-stream error",
 	})
 	return nil, nil, nil, false
 }

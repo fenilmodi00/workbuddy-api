@@ -39,7 +39,7 @@ func prepareGatewayServers() ([]*http.Server, []net.Listener, error) {
 	servers := []*http.Server{{
 		Addr: net.JoinHostPort(cfg.Addr, strconv.Itoa(cfg.Port)), Handler: newAPIHandler(),
 		ReadTimeout: 120 * time.Second,
-		// 保留模型流无总写入时限，不把管理端限制扩散到模型 API。
+		// Keep model streaming free of a total write deadline; do not spread the admin-side limit to the model API.
 		WriteTimeout: 0,
 	}}
 	if cfg.WebUI {
@@ -57,11 +57,11 @@ func prepareGatewayServers() ([]*http.Server, []net.Listener, error) {
 			for _, opened := range listeners {
 				_ = opened.Close()
 			}
-			log.Printf("[监听初始化] traceId=%s 地址=%s 结果=失败 原因=%v 业务影响=已释放先前监听，未启动后台业务", trace, server.Addr, err)
-			return nil, nil, fmt.Errorf("监听 %s 失败: %w", server.Addr, err)
+			log.Printf("[Listener init] traceId=%s addr=%s result=failed reason=%v business impact=previously opened listeners released, background services not started", trace, server.Addr, err)
+			return nil, nil, fmt.Errorf("listen on %s failed: %w", server.Addr, err)
 		}
 		listeners = append(listeners, listener)
-		log.Printf("[监听初始化] traceId=%s 地址=%s 管理端=%t 结果=绑定成功", trace, server.Addr, i == 1)
+		log.Printf("[Listener init] traceId=%s addr=%s admin=%t result=bind succeeded", trace, server.Addr, i == 1)
 	}
 	return servers, listeners, nil
 }
@@ -134,7 +134,7 @@ func (m *gatewayServerManager) serveLocked(slot *gatewayHTTPSlot) {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			if errs != nil {
 				select {
-				case errs <- fmt.Errorf("监听 %s 服务异常: %w", server.Addr, err):
+				case errs <- fmt.Errorf("listener %s serving error: %w", server.Addr, err):
 				default:
 				}
 			}
@@ -207,7 +207,7 @@ func (m *gatewayServerManager) applyWith(g gatewayFileConfig, apiPort int, webEn
 	// Swapping the two live ports cannot be pre-bound. Refuse rather than take
 	// every listener offline; users can switch through a temporary third port.
 	if apiPort == currentWeb || targetWeb != 0 && targetWeb == currentAPI {
-		return currentAPI, currentWeb, errors.New("新端口与本进程另一现有监听正在互换，请先改到临时端口再切换")
+		return currentAPI, currentWeb, errors.New("new port is swapping with another existing listener in this process; switch to a temporary port first")
 	}
 	newAPI, newWeb := m.api, m.web
 	opened := []net.Listener{}
@@ -219,7 +219,7 @@ func (m *gatewayServerManager) applyWith(g gatewayFileConfig, apiPort int, webEn
 	if apiPort != currentAPI {
 		listener, err := net.Listen("tcp", net.JoinHostPort(m.addr, strconv.Itoa(apiPort)))
 		if err != nil {
-			return currentAPI, currentWeb, fmt.Errorf("新 API 监听 %s 绑定失败: %w", net.JoinHostPort(m.addr, strconv.Itoa(apiPort)), err)
+			return currentAPI, currentWeb, fmt.Errorf("binding new API listener %s failed: %w", net.JoinHostPort(m.addr, strconv.Itoa(apiPort)), err)
 		}
 		opened = append(opened, listener)
 		slot := newGatewayHTTPSlot(listener.Addr().String(), false)
@@ -230,7 +230,7 @@ func (m *gatewayServerManager) applyWith(g gatewayFileConfig, apiPort int, webEn
 		listener, err := net.Listen("tcp", net.JoinHostPort(m.addr, strconv.Itoa(targetWeb)))
 		if err != nil {
 			closeOpened()
-			return currentAPI, currentWeb, fmt.Errorf("新 Web 监听 %s 绑定失败: %w", net.JoinHostPort(m.addr, strconv.Itoa(targetWeb)), err)
+			return currentAPI, currentWeb, fmt.Errorf("binding new Web listener %s failed: %w", net.JoinHostPort(m.addr, strconv.Itoa(targetWeb)), err)
 		}
 		opened = append(opened, listener)
 		slot := newGatewayHTTPSlot(listener.Addr().String(), true)

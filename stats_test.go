@@ -73,7 +73,7 @@ func TestStatsServerTimePreservesFutureBuckets(t *testing.T) {
 	}
 }
 
-// 缺文件时静默启用，从空统计开始，不影响网关运行。
+// Silently enabled when the file is missing; starts from empty stats without affecting gateway operation.
 func TestStatsMissingFileStartsEmpty(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -81,14 +81,14 @@ func TestStatsMissingFileStartsEmpty(t *testing.T) {
 	requestStats.Lock()
 	defer requestStats.Unlock()
 	if !requestStats.enabled || requestStats.blocked || requestStats.mode != "pending" {
-		t.Fatalf("缺文件应静默启用: %+v", requestStats.mode)
+		t.Fatalf("missing file should enable silently: %+v", requestStats.mode)
 	}
 	if len(requestStats.document.Requests) != 0 || len(requestStats.document.Accounts) != 0 {
-		t.Fatal("缺文件时应从空统计开始")
+		t.Fatal("should start from empty stats when the file is missing")
 	}
 }
 
-// 坏文件不得被覆盖，也不得阻断运行。
+// A bad file must not be overwritten, nor block operation.
 func TestStatsCorruptFileIsPreserved(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -101,21 +101,21 @@ func TestStatsCorruptFileIsPreserved(t *testing.T) {
 	blocked, mode := requestStats.blocked, requestStats.mode
 	requestStats.Unlock()
 	if !blocked || mode != "memory" {
-		t.Fatalf("坏文件应转为仅内存: blocked=%t mode=%s", blocked, mode)
+		t.Fatalf("bad file should switch to memory-only: blocked=%t mode=%s", blocked, mode)
 	}
-	// 追加数据后尝试落盘：必须保留原文件，不得覆盖。
+	// After appending data, attempt persistence: the original file must be preserved, never overwritten.
 	requestStats.Lock()
 	requestStats.document.Requests = append(requestStats.document.Requests, statsRequest{
 		Account: "a", Model: "m", At: time.Now().UnixMilli(), Status: 200, LatencyMS: 1})
 	requestStats.revision++
 	requestStats.Unlock()
-	// 明确跳过写入（而不是报错重试）：坏文件必须原样保留。
+	// Explicitly skips writing (rather than erroring and retrying): the bad file must be kept as-is.
 	if err := flushOptionalStats(); err != nil {
-		t.Fatalf("坏文件状态应静默跳过落盘，实际: %v", err)
+		t.Fatalf("bad file state should silently skip persistence, got: %v", err)
 	}
 	raw, err := os.ReadFile(statsFile)
 	if err != nil || string(raw) != broken {
-		t.Fatalf("原文件被改动: %q err=%v", string(raw), err)
+		t.Fatalf("original file was modified: %q err=%v", string(raw), err)
 	}
 }
 
@@ -123,7 +123,7 @@ func TestStatsValidFileRestores(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
 	at := time.Now().Add(-time.Hour).UnixMilli()
-	// 统计标识由「文件 + 站点 + UID + 企业 ID」派生，这里用同一账号算出真实标识。
+	// The stats ID is derived from "file + site + UID + enterprise ID"; here a real ID is computed from the same account.
 	accountMu.Lock()
 	acc := &Account{Path: "workbuddy-a.json", Edition: "cn", Auth: &StoredAuth{
 		Edition: "cn", Account: StoredAccount{UID: "u1"}}}
@@ -145,9 +145,9 @@ func TestStatsValidFileRestores(t *testing.T) {
 	mode := requestStats.mode
 	requestStats.Unlock()
 	if mode != "file" || len(got.Requests) != 1 || len(got.Accounts) != 1 {
-		t.Fatalf("有效文件未恢复: mode=%s requests=%d accounts=%d", mode, len(got.Requests), len(got.Accounts))
+		t.Fatalf("valid file not restored: mode=%s requests=%d accounts=%d", mode, len(got.Requests), len(got.Accounts))
 	}
-	// 恢复的模型账本必须落回账号，且保持原有收费属性。
+	// The restored model ledger must land back on the account and keep its original cost class.
 	accountMu.Lock()
 	oldAccounts := accounts
 	accounts = []*Account{acc}
@@ -156,7 +156,7 @@ func TestStatsValidFileRestores(t *testing.T) {
 	accountMu.Unlock()
 	state := acc.ModelStates["glm-5.3-flash"]
 	if state == nil || state.CostClass != modelCostPaid || !state.QuotaBlocked {
-		t.Fatalf("模型账本未按账号恢复: %+v", state)
+		t.Fatalf("model ledger not restored onto account: %+v", state)
 	}
 }
 
@@ -181,17 +181,17 @@ func TestAggregateModelStatsWindow(t *testing.T) {
 	window := aggregateModelStatsWindow(now.Add(-5*time.Hour), now)
 	m1, ok := window["m1"]
 	if !ok || m1.Requests != 2 || m1.Success != 2 || m1.Failed != 0 || m1.Tokens != 200 {
-		t.Fatalf("m1 窗口聚合错误: %+v", m1)
+		t.Fatalf("m1 window aggregation wrong: %+v", m1)
 	}
 	if m1.AvgTTFTMS == nil || *m1.AvgTTFTMS != 800 {
-		t.Fatalf("m1 首Token均值错误: %+v", m1.AvgTTFTMS)
+		t.Fatalf("m1 first-token average wrong: %+v", m1.AvgTTFTMS)
 	}
 	if m1.AvgLatencyMS == nil || *m1.AvgLatencyMS != 3000 {
-		t.Fatalf("m1 总耗时均值错误: %+v", m1.AvgLatencyMS)
+		t.Fatalf("m1 total duration average wrong: %+v", m1.AvgLatencyMS)
 	}
 	m2, ok := window["m2"]
 	if !ok || m2.Requests != 1 || m2.Failed != 1 || m2.AvgTTFTMS != nil {
-		t.Fatalf("m2 失败请求不应计入首Token: %+v", m2)
+		t.Fatalf("m2 failed request must not count toward first token: %+v", m2)
 	}
 }
 
@@ -221,7 +221,7 @@ func TestHandleWebUIModelsRange5hUsesPersistedStats(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleWebUIModels(rec, httptest.NewRequest(http.MethodGet, "/admin/api/models?range=5h", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("range=5h 状态码=%d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("range=5h status code=%d: %s", rec.Code, rec.Body.String())
 	}
 	var body struct {
 		Range  string              `json:"range"`
@@ -231,7 +231,7 @@ func TestHandleWebUIModelsRange5hUsesPersistedStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	if body.Range != "5h" {
-		t.Fatalf("响应未标注统计窗口: %#v", body.Range)
+		t.Fatalf("response did not label the stats window: %#v", body.Range)
 	}
 	byID := map[string]modelStatSnapshot{}
 	for _, m := range body.Models {
@@ -240,20 +240,20 @@ func TestHandleWebUIModelsRange5hUsesPersistedStats(t *testing.T) {
 	m1 := byID["m1"]
 	if m1.Requests != 1 || m1.Tokens != 100 || m1.AvgTTFTMs != 800 || !m1.HasTTFT ||
 		m1.AvgLatencyMs != 2000 || !m1.HasLatency {
-		t.Fatalf("模型列表没有复用 stats.json 窗口: %+v", m1)
+		t.Fatalf("model list did not reuse the stats.json window: %+v", m1)
 	}
 	if m2 := byID["m2"]; m2.Requests != 0 || m2.HasTTFT || m2.HasLatency {
-		t.Fatalf("窗口内无调用的模型应显示空统计: %+v", m2)
+		t.Fatalf("models without calls in the window should show empty stats: %+v", m2)
 	}
 
 	rec = httptest.NewRecorder()
 	handleWebUIModels(rec, httptest.NewRequest(http.MethodGet, "/admin/api/models?range=24h", nil))
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("非法 range 应返回 400: %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("invalid range should return 400: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
-// 每次实际账号调用记一次，失败重试分开；未选号的拒绝不记。
+// One record per actual account call; failed retries kept separate; rejections without an account selection are not recorded.
 func TestStatsRecordsAttemptWithUsageAndTiming(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -273,24 +273,24 @@ func TestStatsRecordsAttemptWithUsageAndTiming(t *testing.T) {
 	requestStats.Lock()
 	defer requestStats.Unlock()
 	if len(requestStats.document.Requests) != 1 {
-		t.Fatalf("应记录 1 条: %d", len(requestStats.document.Requests))
+		t.Fatalf("expected 1 record: %d", len(requestStats.document.Requests))
 	}
 	row := requestStats.document.Requests[0]
 	if row.TotalTokens == nil || *row.TotalTokens != 300 || row.Credit == nil || *row.Credit != 1.25 {
-		t.Fatalf("usage 未落盘: %+v", row)
+		t.Fatalf("usage not persisted: %+v", row)
 	}
 	if row.TTFTMS == nil || *row.TTFTMS <= 0 {
-		t.Fatalf("首字耗时未记录: %+v", row.TTFTMS)
+		t.Fatalf("first-byte duration not recorded: %+v", row.TTFTMS)
 	}
 	if row.LatencyMS <= 0 {
-		t.Fatalf("总耗时未记录: %v", row.LatencyMS)
+		t.Fatalf("total duration not recorded: %v", row.LatencyMS)
 	}
 	if _, ok := requestStats.document.Accounts["acct"]; !ok {
-		t.Fatal("账号选择时必须登记账号身份")
+		t.Fatal("account selection must register the account identity")
 	}
 }
 
-// 未选到账号的拒绝（鉴权、参数错误）不产生账号消耗记录。
+// Rejections without an account selection (auth, parameter errors) produce no account usage record.
 func TestStatsIgnoresRequestsWithoutAccountSelection(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -301,11 +301,11 @@ func TestStatsIgnoresRequestsWithoutAccountSelection(t *testing.T) {
 	requestStats.Lock()
 	defer requestStats.Unlock()
 	if len(requestStats.document.Requests) != 0 {
-		t.Fatalf("未选号不得记录: %+v", requestStats.document.Requests)
+		t.Fatalf("must not record without account selection: %+v", requestStats.document.Requests)
 	}
 }
 
-// 缺失 usage 记为空样本，而不是零消耗；0 积分与未知积分必须可区分。
+// Missing usage is recorded as an empty sample, not zero usage; 0 credits and unknown credits must be distinguishable.
 func TestStatsDistinguishesUnknownFromZero(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -324,22 +324,22 @@ func TestStatsDistinguishesUnknownFromZero(t *testing.T) {
 	}
 	summary := body["summary"].(map[string]any)
 	if summary["tokenSamples"] != float64(1) || summary["tokens"] != float64(0) {
-		t.Fatalf("未知 Token 与零 Token 未区分: %+v", summary)
+		t.Fatalf("unknown tokens and zero tokens not distinguished: %+v", summary)
 	}
 	if summary["creditSamples"] != float64(1) || summary["credits"] != float64(0) {
-		t.Fatalf("未知积分与零积分未区分: %+v", summary)
+		t.Fatalf("unknown credits and zero credits not distinguished: %+v", summary)
 	}
 	if summary["requests"] != float64(2) {
-		t.Fatalf("请求数应包含全部调用: %+v", summary)
+		t.Fatalf("request count should include all calls: %+v", summary)
 	}
 }
 
-// UTC+8 日历：小时对齐整点，周从周一开始，月按自然月；账号维度互不串数据。
+// UTC+8 calendar: hours aligned to the hour, weeks start Monday, months by calendar month; account dimensions never mix data.
 func TestStatsBucketsUseUTC8AndIsolateAccounts(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
 	loadOptionalStats()
-	// 2026-10-14 是周三；周一应为 2026-10-12。
+	// 2026-10-14 is a Wednesday; Monday should be 2026-10-12.
 	monday := time.Date(2026, 10, 12, 9, 30, 0, 0, statsZone)
 	sunday := time.Date(2026, 10, 18, 23, 30, 0, 0, statsZone)
 	requestStats.Lock()
@@ -361,21 +361,21 @@ func TestStatsBucketsUseUTC8AndIsolateAccounts(t *testing.T) {
 		row := raw.(map[string]any)
 		if row["label"] == "2026-10-12" {
 			if row["tokens"] != float64(300) {
-				t.Fatalf("周一桶应合并周一与周日: %+v", row)
+				t.Fatalf("Monday bucket should merge Monday and Sunday: %+v", row)
 			}
 			total += row["tokens"].(float64)
 		}
 	}
 	if total != 300 {
-		t.Fatalf("账号维度未隔离，出现其它账号数据: total=%v", total)
+		t.Fatalf("account dimension not isolated; other account data appeared: total=%v", total)
 	}
 	if body["summary"].(map[string]any)["tokens"] != float64(300) {
-		t.Fatalf("汇总未按账号过滤: %+v", body["summary"])
+		t.Fatalf("summary not filtered by account: %+v", body["summary"])
 	}
 }
 
-// 明细按模型排名：只列有调用的模型，用量（Token）多的在前，
-// Token 未知的按请求数兜底，且跟随账号与时间范围过滤。
+// Detail ranked by model: only models with calls are listed, higher usage (tokens) first,
+// unknown tokens fall back to request count, and account plus time-range filters apply.
 func TestStatsModelRanking(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -388,11 +388,11 @@ func TestStatsModelRanking(t *testing.T) {
 		statsTestRequest("a", "small-model", time.Now(), int64p(100), float64p(1)),
 		statsTestRequest("a", "big-model", time.Now(), int64p(9000), float64p(5)),
 		statsTestRequest("a", "mid-model", time.Now(), int64p(3000), float64p(2)),
-		// 只有调用、没有 usage：仍要列出，靠请求数排在最后。
+		// Calls but no usage: still listed, ranked last by request count.
 		statsTestRequest("a", "no-usage", time.Now(), nil, nil),
-		// 超出所选日期范围：不得进入排名。
+		// Outside the selected date range: must not enter the ranking.
 		statsTestRequest("a", "old-model", time.Now().AddDate(0, 0, -40), int64p(999999), float64p(99)),
-		// 另一个账号：全局可见，单账号过滤后不可见。
+		// Another account: visible globally, invisible after single-account filtering.
 		statsTestRequest("b", "intl-model", time.Now(), int64p(5000), float64p(3)),
 	}
 	requestStats.Unlock()
@@ -400,7 +400,7 @@ func TestStatsModelRanking(t *testing.T) {
 		t.Helper()
 		raw, ok := body["models"].([]any)
 		if !ok {
-			t.Fatalf("响应缺少 models 字段: %v", body["models"])
+			t.Fatalf("response is missing the models field: %v", body["models"])
 		}
 		out := make([]string, 0, len(raw))
 		for _, row := range raw {
@@ -408,31 +408,31 @@ func TestStatsModelRanking(t *testing.T) {
 		}
 		return out
 	}
-	// 单账号 + 当天：按 Token 降序，无用量模型最后。
+	// Single account + today: descending by tokens, no-usage model last.
 	code, body := statsQuery(t, "period=day&account=a&start="+today+"&end="+today)
 	if code != http.StatusOK {
 		t.Fatalf("status=%d", code)
 	}
 	want := []string{"big-model", "mid-model", "small-model", "no-usage"}
 	if got := names(body); len(got) != len(want) {
-		t.Fatalf("排名行数错误: %v", got)
+		t.Fatalf("wrong ranking row count: %v", got)
 	} else {
 		for i := range want {
 			if got[i] != want[i] {
-				t.Fatalf("排名错误: got %v want %v", got, want)
+				t.Fatalf("wrong ranking: got %v want %v", got, want)
 			}
 		}
 	}
-	// 全局：包含另一账号的模型，仍不含超范围模型。
+	// Global: includes the other account's model, still excludes the out-of-range model.
 	if code, body := statsQuery(t, "period=day&start="+today+"&end="+today); code != http.StatusOK {
 		t.Fatalf("status=%d", code)
 	} else if got := names(body); len(got) != 5 || got[0] != "big-model" {
-		t.Fatalf("全局排名错误: %v", got)
+		t.Fatalf("wrong global ranking: %v", got)
 	}
 }
 
-// 耗时趋势必须按模型分开。同一时间桶里不同模型不能合成一个平均值，
-// 某模型没有调用的桶是 null，并跟随账号与日期过滤。
+// Latency trends must stay per model. Different models in the same bucket must not merge into one average,
+// buckets without calls for a model are null, and account and date filters apply.
 func TestStatsLatencySeriesStaysPerModel(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -464,39 +464,39 @@ func TestStatsLatencySeriesStaysPerModel(t *testing.T) {
 	}
 	raw, _ := body["modelLatency"].([]any)
 	if len(raw) != 2 {
-		t.Fatalf("应只保留所选账号和日期内有调用的模型: %+v", raw)
+		t.Fatalf("should keep only models with calls for the selected account and dates: %+v", raw)
 	}
 	if raw[0].(map[string]any)["model"] != "model-slow" || raw[1].(map[string]any)["model"] != "model-fast" {
-		t.Fatalf("线条顺序应与用量排名一致: %+v", raw)
+		t.Fatalf("line order should match the usage ranking: %+v", raw)
 	}
 	slow := raw[0].(map[string]any)["avgLatencyMs"].([]any)
 	fast := raw[1].(map[string]any)["avgLatencyMs"].([]any)
 	if len(slow) != 2 || slow[0] != float64(900) || slow[1] != nil {
-		t.Fatalf("慢模型第二天没有调用，必须是 null，不能画成 0: %+v", slow)
+		t.Fatalf("slow model has no calls on day two, must be null, not drawn as 0: %+v", slow)
 	}
 	if fast[0] != float64(200) || fast[1] != float64(300) {
-		t.Fatalf("同模型应单独平均，不能和慢模型合成一个值: %+v", fast)
+		t.Fatalf("same model should average separately, not merge with the slow model: %+v", fast)
 	}
 	slowTtft := raw[0].(map[string]any)["avgTtftMs"].([]any)
 	fastTtft := raw[1].(map[string]any)["avgTtftMs"].([]any)
 	if len(slowTtft) != 2 || slowTtft[0] != float64(300) || slowTtft[1] != nil {
-		t.Fatalf("首字序列也要按模型分桶，缺失桶为 null: %+v", slowTtft)
+		t.Fatalf("first-token series must also bucket per model; missing buckets are null: %+v", slowTtft)
 	}
 	if fastTtft[0] != float64(40) || fastTtft[1] != float64(60) {
-		t.Fatalf("首字不能把不同模型合成一个值: %+v", fastTtft)
+		t.Fatalf("first token must not merge different models into one value: %+v", fastTtft)
 	}
 	blended := body["buckets"].([]any)[0].(map[string]any)["avgLatencyMs"].(float64)
 	if blended <= 400 || blended >= 500 {
-		t.Fatalf("时间桶总平均应仍是全部调用的平均，实际 %v", blended)
+		t.Fatalf("bucket overall average should still be the average of all calls, got %v", blended)
 	}
 	if code, body = statsQuery(t, "period=day&account=b&start=2026-10-13&end=2026-10-14"); code != http.StatusOK {
 		t.Fatalf("status=%d", code)
 	} else if rows, _ := body["modelLatency"].([]any); len(rows) != 1 || rows[0].(map[string]any)["model"] != "other-model" {
-		t.Fatalf("账号过滤未作用到耗时线: %+v", rows)
+		t.Fatalf("account filter not applied to latency lines: %+v", rows)
 	}
 }
 
-// 首字序列只收 v2 口径、完整且成功的调用；旧口径、未完成、失败都不能混进柱形。
+// The first-token series only accepts v2-metric, complete, successful calls; legacy metric, incomplete, and failed calls must not enter the bars.
 func TestStatsModelTTFTSeriesIgnoresLegacyAndIncomplete(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -512,9 +512,9 @@ func TestStatsModelTTFTSeriesIgnoresLegacyAndIncomplete(t *testing.T) {
 	requestStats.document.Accounts["a"] = statsAccount{File: "a.json", Edition: "cn"}
 	requestStats.document.Requests = []statsRequest{
 		row(ttftMetric, true, 200, 100),
-		row("", true, 200, 900),          // 旧口径，不能进入首字柱形
-		row(ttftMetric, false, 200, 900), // 不完整
-		row(ttftMetric, true, 429, 900),  // 失败
+		row("", true, 200, 900),          // legacy metric, must not enter the first-token bars
+		row(ttftMetric, false, 200, 900), // incomplete
+		row(ttftMetric, true, 429, 900),  // failed
 	}
 	requestStats.Unlock()
 	code, body := statsQuery(t, "period=day&account=a&start=2026-10-13&end=2026-10-13")
@@ -527,33 +527,33 @@ func TestStatsModelTTFTSeriesIgnoresLegacyAndIncomplete(t *testing.T) {
 	}
 	series, _ := rows[0].(map[string]any)["avgTtftMs"].([]any)
 	if len(series) != 1 || series[0] != float64(100) {
-		t.Fatalf("首字柱形只能收 v2、完整、成功的样本: %+v", series)
+		t.Fatalf("first-token bars must only accept v2, complete, successful samples: %+v", series)
 	}
 	latency, _ := rows[0].(map[string]any)["avgLatencyMs"].([]any)
 	if len(latency) != 1 || latency[0] != float64(100) {
-		t.Fatalf("总耗时折线仍是该桶全部调用的平均: %+v", latency)
+		t.Fatalf("total duration line should still average all calls in that bucket: %+v", latency)
 	}
 }
 
 func TestStatsBucketStartBoundaries(t *testing.T) {
 	at := time.Date(2026, 10, 14, 23, 59, 59, 0, statsZone)
 	if got := statsBucketStart(at, "hour"); !got.Equal(time.Date(2026, 10, 14, 23, 0, 0, 0, statsZone)) {
-		t.Fatalf("小时桶错误: %v", got)
+		t.Fatalf("wrong hour bucket: %v", got)
 	}
 	if got := statsBucketStart(at, "day"); !got.Equal(time.Date(2026, 10, 14, 0, 0, 0, 0, statsZone)) {
-		t.Fatalf("日桶错误: %v", got)
+		t.Fatalf("wrong day bucket: %v", got)
 	}
-	// 周日 00:00 必须归到本周一，而不是下周一。
+	// Sunday 00:00 must roll into this week's Monday, not next Monday.
 	sunday := time.Date(2026, 10, 18, 0, 0, 0, 0, statsZone)
 	if got := statsBucketStart(sunday, "week"); !got.Equal(time.Date(2026, 10, 12, 0, 0, 0, 0, statsZone)) {
-		t.Fatalf("周桶错误: %v", got)
+		t.Fatalf("wrong week bucket: %v", got)
 	}
 	if got := statsBucketStart(at, "month"); !got.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, statsZone)) {
-		t.Fatalf("月桶错误: %v", got)
+		t.Fatalf("wrong month bucket: %v", got)
 	}
 }
 
-// 账号身份变化（UID / 企业 ID / 站点）必须换统计标识，避免继承旧账本。
+// An account identity change (UID / enterprise ID / site) must change the stats ID so the old ledger is not inherited.
 func TestStatsAccountIdentityFollowsCredentials(t *testing.T) {
 	accountMu.Lock()
 	defer accountMu.Unlock()
@@ -564,29 +564,29 @@ func TestStatsAccountIdentityFollowsCredentials(t *testing.T) {
 	renewed := &Account{Path: base.Path, Edition: "cn", Auth: &StoredAuth{
 		Edition: "cn", Account: same.Account, Auth: StoredTokens{AccessToken: "rotated"}}}
 	if second, _ := statsAccountIDLocked(renewed); second != first {
-		t.Fatal("令牌轮换不应改变统计归属")
+		t.Fatal("token rotation must not change stats ownership")
 	}
-	// 用新构造的账号表达变更，避免复制含锁的 Account 值。
+	// Express changes with freshly constructed accounts, avoiding copying the lock-holding Account value.
 	for name, changed := range map[string]*Account{
-		"换账号": {Path: base.Path, Edition: "cn", Auth: &StoredAuth{
+		"account changed": {Path: base.Path, Edition: "cn", Auth: &StoredAuth{
 			Edition: "cn", Account: StoredAccount{UID: "u2", EnterpriseID: "ent-1"}}},
-		"换企业": {Path: base.Path, Edition: "cn", Auth: &StoredAuth{
+		"enterprise changed": {Path: base.Path, Edition: "cn", Auth: &StoredAuth{
 			Edition: "cn", Account: StoredAccount{UID: "u1", EnterpriseID: "ent-2"}}},
-		"换站点": {Path: base.Path, Edition: "intl", Auth: &StoredAuth{
+		"site changed": {Path: base.Path, Edition: "intl", Auth: &StoredAuth{
 			Edition: "intl", Account: StoredAccount{UID: "u1", EnterpriseID: "ent-1"}}},
-		"换文件": {Path: "workbuddy-b.json", Edition: "cn", Auth: &StoredAuth{
+		"file changed": {Path: "workbuddy-b.json", Edition: "cn", Auth: &StoredAuth{
 			Edition: "cn", Account: StoredAccount{UID: "u1", EnterpriseID: "ent-1"}}},
 	} {
 		if id, _ := statsAccountIDLocked(changed); id == first {
-			t.Fatalf("%s 后仍沿用旧统计标识", name)
+			t.Fatalf("stats ID unchanged after %s", name)
 		}
 	}
 }
 
-// 落盘失败必须降级为仅内存，并且不影响后续统计与查询。
+// Persistence failure must degrade to memory-only without affecting later stats or queries.
 func TestStatsWriteFailureDegradesToMemory(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("目录只读语义在 Windows 上不稳定，改由符号链接与坏文件用例覆盖")
+		t.Skip("directory read-only semantics are unstable on Windows; covered instead by symlink and bad-file cases")
 	}
 	chdirTemp(t)
 	resetStatsState(t)
@@ -600,20 +600,20 @@ func TestStatsWriteFailureDegradesToMemory(t *testing.T) {
 	requestStats.revision++
 	requestStats.Unlock()
 	if err := flushOptionalStats(); err == nil {
-		t.Fatal("路径被目录占用时应落盘失败")
+		t.Fatal("persistence should fail when the path is occupied by a directory")
 	}
 	requestStats.Lock()
 	mode, problem := requestStats.mode, requestStats.problem
 	requestStats.Unlock()
 	if mode != "memory" || problem == "" {
-		t.Fatalf("应降级为仅内存并给出白话原因: mode=%s problem=%s", mode, problem)
+		t.Fatalf("should degrade to memory-only with a plain-language reason: mode=%s problem=%s", mode, problem)
 	}
 	if code, _ := statsQuery(t, "period=day"); code != http.StatusOK {
-		t.Fatalf("落盘失败不得影响查询: %d", code)
+		t.Fatalf("persistence failure must not affect queries: %d", code)
 	}
 }
 
-// 正常落盘后重新加载必须得到同样的记录，且文件权限不放宽。
+// After a normal persist, reloading must yield the same records, and file permissions must not be loosened.
 func TestStatsRoundTripPersists(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -629,11 +629,11 @@ func TestStatsRoundTripPersists(t *testing.T) {
 	}
 	info, err := os.Stat(statsFile)
 	if err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("stats.json 未生成: %v", err)
+		t.Fatalf("stats.json was not created: %v", err)
 	}
 	if runtime.GOOS != "windows" {
 		if perm := info.Mode().Perm(); perm != 0600 {
-			t.Fatalf("权限应为 0600，实际 %o", perm)
+			t.Fatalf("permissions should be 0600, got %o", perm)
 		}
 	}
 	resetStatsState(t)
@@ -641,11 +641,11 @@ func TestStatsRoundTripPersists(t *testing.T) {
 	requestStats.Lock()
 	defer requestStats.Unlock()
 	if len(requestStats.document.Requests) != 1 || *requestStats.document.Requests[0].TotalTokens != 42 {
-		t.Fatalf("重新加载丢失记录: %+v", requestStats.document.Requests)
+		t.Fatalf("reload lost records: %+v", requestStats.document.Requests)
 	}
 }
 
-// 统计接口只读，写入方法必须被拒绝。
+// The stats API is read-only; write methods must be rejected.
 func TestStatsEndpointRejectsWrites(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -653,16 +653,16 @@ func TestStatsEndpointRejectsWrites(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleWebUIStats(rec, httptest.NewRequest(http.MethodPost, "/admin/api/stats", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("写入统计应被拒绝: %d", rec.Code)
+		t.Fatalf("stats write should be rejected: %d", rec.Code)
 	}
 	for _, query := range []string{"period=year", "period=day&start=bad", "period=day&account=missing"} {
 		if code, _ := statsQuery(t, query); code != http.StatusBadRequest {
-			t.Fatalf("非法查询 %s 应返回 400，实际 %d", query, code)
+			t.Fatalf("invalid query %s should return 400, got %d", query, code)
 		}
 	}
 }
 
-// 落盘只由后台循环负责，且取消上下文时必须冲刷一次。
+// Persistence is handled only by the background loop, and it must flush once when the context is cancelled.
 func TestStatsPersistenceLoopFlushesOnCancel(t *testing.T) {
 	chdirTemp(t)
 	resetStatsState(t)
@@ -680,9 +680,9 @@ func TestStatsPersistenceLoopFlushesOnCancel(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("统计落盘循环未在取消时退出")
+		t.Fatal("stats persistence loop did not exit on cancel")
 	}
 	if _, err := os.Stat(filepath.Clean(statsFile)); err != nil {
-		t.Fatalf("取消时必须冲刷统计: %v", err)
+		t.Fatalf("stats must be flushed on cancel: %v", err)
 	}
 }

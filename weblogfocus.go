@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// parseLogOffset 解析告警带来的日志定位偏移；缺省或非法时返回 -1 表示按尾部读取。
+// parseLogOffset parses the log focus offset carried by alerts; returns -1 when missing or invalid, meaning read from the tail.
 func parseLogOffset(raw string) int64 {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -20,8 +20,8 @@ func parseLogOffset(raw string) int64 {
 	return v
 }
 
-// readWebLogAround 读取覆盖指定字节偏移的日志窗口，供「告警 → 跳到那一行」使用。
-// 返回窗口内的行、目标行下标、以及是否真的定位到了（文件被轮转或清理时为 false）。
+// readWebLogAround reads the log window covering the given byte offset, used for "alert → jump to that line".
+// Returns the lines in the window, the target line index, and whether the target was actually located (false when the file was rotated or cleaned up).
 func readWebLogAround(name string, offset int64, span int64) ([]string, int, bool, error) {
 	root, err := os.OpenRoot(logDir)
 	if err != nil {
@@ -58,7 +58,7 @@ func readWebLogAround(name string, offset int64, span int64) ([]string, int, boo
 		return nil, -1, false, readErr
 	}
 	buf = buf[:n]
-	// 记录窗口首行在文件中的真实起点，便于把偏移换算成行下标。
+	// Record the real start of the window's first line in the file, to convert the offset into a line index.
 	cursor := start
 	if start > 0 {
 		if cut := strings.IndexByte(string(buf), '\n'); cut >= 0 {

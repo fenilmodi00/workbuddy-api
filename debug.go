@@ -26,7 +26,7 @@ import (
 
 const runtimeConfigFile = "config.json"
 
-// 只补充现有任务日志，不维护独立任务状态。管理页从 gateway 日志反向聚合这些记录。
+// Only supplements existing task logs; does not maintain separate task state. The admin page aggregates these records from gateway logs.
 func logScheduledTask(task, phase, status, trace string, started, next time.Time, detail string) {
 	record := struct {
 		Task      string `json:"task"`
@@ -46,7 +46,7 @@ func logScheduledTask(task, phase, status, trace string, started, next time.Time
 		record.NextAt = next.UnixMilli()
 	}
 	raw, _ := json.Marshal(record)
-	log.Printf("[定时任务] %s", raw)
+	log.Printf("[Scheduled task] %s", raw)
 }
 
 func startScheduledTask(task string, next time.Time) (string, time.Time) {
@@ -55,7 +55,7 @@ func startScheduledTask(task string, next time.Time) (string, time.Time) {
 	return trace, started
 }
 
-// 高频本地检查每分钟记录最近一次执行，状态变化/实际变更立即记录，避免日志按秒膨胀。
+// High-frequency local checks record the most recent execution each minute; state changes / actual changes are logged immediately to avoid per-second log growth.
 func logFrequentTask(task, status, detail string, started, next time.Time, last *time.Time, previous *string, changed bool) {
 	now := time.Now()
 	if last.IsZero() || now.Sub(*last) >= time.Minute || *previous != status || changed {
@@ -67,53 +67,54 @@ func logFrequentTask(task, status, detail string, started, next time.Time, last 
 
 type runtimeFileConfig struct {
 	Gateway gatewayFileConfig `json:"gateway"`
-	// SystemPrompt 控制保底文本及实验性全局强制文本（后置于 system 末尾）。空值均保持旧行为。
+	// SystemPrompt controls the fallback text and the experimental global forced text (appended at the end of system). Empty values keep the old behavior.
 	SystemPrompt struct {
 		Fallback string `json:"fallback"`
 		Force    string `json:"force"`
 	} `json:"systemPrompt"`
-	// Identity 控制 system/developer/assistant 中所有配置文字替换。
-	// 省略时使用内置 WorkBuddy 展示名及默认文本规则。
+	// Identity controls all configured text replacement in system/developer/assistant.
+	// When omitted, the built-in WorkBuddy display name and default text rules are used.
 	Identity runtimeIdentityConfig `json:"identity"`
-	// 仅接受 v1.14.40 曾写入的旧字段，避免升级时因未知字段无法启动。
-	// 不解析或执行其中规则；新的文本替换统一由 Identity 控制。
+	// Only accepts legacy fields once written by v1.14.40, preventing startup failures on unknown fields during upgrades.
+	// Its rules are not parsed or executed; new text replacement is handled solely by Identity.
 	DeprecatedPromptCompatibility json.RawMessage      `json:"promptCompatibility,omitempty"`
 	Concurrent                    concurrentFileConfig `json:"concurrent"`
 	Debug                         debugFileConfig      `json:"debug"`
 	Logs                          struct {
-		RetentionDays int `json:"retentionDays"` // 0 保留全部；正数保留含今天在内的 N 个日历日。
+		RetentionDays int `json:"retentionDays"` // 0 keeps everything; positive N keeps the last N calendar days including today.
 	} `json:"logs"`
-	// Upstream 段可选，用于按网络状况调整上游超时（单位秒，<=0 或省略表示用默认值）。
+	// The Upstream section is optional; adjusts upstream timeouts based on network conditions (in seconds; <=0 or omitted means defaults).
 	Upstream struct {
-		// RequestProfile: legacy（省略/空值）保留旧行为；official 使用已抓取的国内桌面兼容参数。
+		// RequestProfile: legacy (omitted/empty) keeps the old behavior; official uses the captured domestic desktop compatibility parameters.
 		RequestProfile string `json:"requestProfile"`
-		// HeaderTimeoutSeconds：请求发送完成 → 收到响应头的等待上限。
+		// HeaderTimeoutSeconds: upper bound waiting for response headers after the request body is sent.
 		HeaderTimeoutSeconds int `json:"headerTimeoutSeconds"`
-		// IdleTimeoutSeconds：流式响应体的空闲读超时（持续有数据则不超时）。
+		// IdleTimeoutSeconds: idle read timeout for the streaming response body (no timeout while data keeps arriving).
 		IdleTimeoutSeconds int `json:"idleTimeoutSeconds"`
-		// TransientRetries：请求体发送阶段遇到瞬时网络错误的额外重试次数。
-		// 用指针区分「未配置」（用默认值）与「显式设为 0」（禁用重试）。
+		// TransientRetries: extra retries for transient network errors during the request-body send phase.
+		// A pointer distinguishes "not configured" (use default) from "explicitly 0" (retries disabled).
 		TransientRetries *int `json:"transientRetries"`
-		// StreamKeepaliveSeconds：等待上游首字节期间的 SSE 注释间隔；<=0 或省略用默认值。
+		// StreamKeepaliveSeconds: SSE comment interval while waiting for the upstream's first byte; <=0 or omitted uses the default.
 		StreamKeepaliveSeconds int `json:"streamKeepaliveSeconds"`
-		// EnableFirstByteRetry：是否允许首字节前对瞬时网络中断安全重放一次。
-		// 指针区分「未配置」（默认开启）与显式 false（关闭）。
+		// EnableFirstByteRetry: whether to allow one safe replay after transient network interruption before the first byte.
+		// The pointer distinguishes "not configured" (enabled by default) from explicit false (disabled).
 		EnableFirstByteRetry *bool `json:"enableFirstByteRetry"`
 	} `json:"upstream"`
-	// Models 段可选，用于按模型名做黑白名单控制（大小写不敏感）。
+	// The Models section is optional; controls the model blocklist/allowlist by model name (case-insensitive).
 	Models struct {
-		// Blocklist：被禁用的模型名列表，命中即拒绝。
+		// Blocklist: names of disabled models; any hit is rejected.
 		Blocklist []string `json:"blocklist"`
-		// Allowlist：白名单；非空时只允许列表内的模型，其余一律拒绝。
+		// Allowlist: when non-empty, only models in the list are allowed; everything else is rejected.
 		Allowlist []string `json:"allowlist,omitempty"`
-		// Accounts：all 控制全局调度，其余键限定各模型的凭据文件名。
+		// Accounts: all controls global scheduling; other keys restrict credential file names per model.
 		Accounts map[string]modelAccountFileConfig `json:"accounts"`
 	} `json:"models"`
 }
 
-// debugFileConfig 对缺少 debug、null、空对象、空字符串、0/1、true/false 和
-// 未知字段全部容错；任何非对象或非布尔值都按 false 处理，不让配置语法细节
-// 阻断网关启动。显式 false 仍写入示例和首次部署默认配置，便于发现开关。
+// debugFileConfig tolerates missing debug, null, empty objects, empty strings, 0/1, true/false, and
+// unknown fields; any non-object or non-boolean value is treated as false so that config syntax
+// details never block gateway startup. Explicit false is still written to the example and first-deploy
+// default config so the switch remains discoverable.
 type debugFileConfig struct {
 	Enabled      bool `json:"enabled"`
 	FullRequests bool `json:"fullRequests"`
@@ -127,7 +128,7 @@ func (d *debugFileConfig) UnmarshalJSON(data []byte) error {
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil {
-		return nil // 非对象值按全 false 处理，不阻断启动；未知字段同样忽略。
+		return nil // Non-object values are treated as all-false, not blocking startup; unknown fields are likewise ignored.
 	}
 	d.Enabled = tolerantConfigBool(object["enabled"])
 	d.FullRequests = tolerantConfigBool(object["fullRequests"])
@@ -192,7 +193,7 @@ var (
 	instanceID  = hostInstanceID()
 )
 
-// modelFilter 保存生效的模型黑白名单（已归一化为小写、去重）。
+// modelFilter holds the effective model blocklist/allowlist (normalized to lowercase, deduplicated).
 type modelFilter struct {
 	blocklist map[string]bool
 	allowlist map[string]bool
@@ -203,7 +204,7 @@ var (
 	currentFilter = modelFilter{}
 )
 
-// setModelFilter 用配置重建模型黑白名单。空列表表示该维度不限制。
+// setModelFilter rebuilds the model blocklist/allowlist from config. Empty lists mean no restriction for that dimension.
 func setModelFilter(blocklist, allowlist []string) {
 	build := func(names []string) map[string]bool {
 		if len(names) == 0 {
@@ -226,8 +227,8 @@ func setModelFilter(blocklist, allowlist []string) {
 	modelFilterMu.Unlock()
 }
 
-// modelDisabled 判断某模型是否被配置禁用，并返回中文原因。
-// 规则：黑名单命中即禁用；白名单非空且未命中则禁用；两者都未配置则不限制。
+// modelDisabled reports whether a model is disabled by configuration and returns the reason.
+// Rules: a blocklist hit disables; a non-empty allowlist without a hit disables; neither configured means no restriction.
 func modelDisabled(model string) (bool, string) {
 	key := normalizeModelName(model)
 	if key == "" {
@@ -238,22 +239,22 @@ func modelDisabled(model string) (bool, string) {
 	modelFilterMu.RUnlock()
 
 	if filter.blocklist != nil && filter.blocklist[key] {
-		return true, fmt.Sprintf("模型 %s 已被网关禁用（命中黑名单），请联系管理员调整 config.json", model)
+		return true, fmt.Sprintf("Model %s has been disabled by the gateway (blocklist hit); contact an administrator to adjust config.json", model)
 	}
 	if filter.allowlist != nil && !filter.allowlist[key] {
-		return true, fmt.Sprintf("模型 %s 已被网关禁用（不在白名单内），请联系管理员调整 config.json", model)
+		return true, fmt.Sprintf("Model %s has been disabled by the gateway (not in allowlist); contact an administrator to adjust config.json", model)
 	}
 	return false, ""
 }
 
-// modelFilterConfigured 报告当前是否配置了任何黑白名单（用于启动横幅展示）。
+// modelFilterConfigured reports whether any blocklist/allowlist is currently configured (for the startup banner).
 func modelFilterConfigured() bool {
 	modelFilterMu.RLock()
 	defer modelFilterMu.RUnlock()
 	return currentFilter.blocklist != nil || currentFilter.allowlist != nil
 }
 
-// modelFilterSummary 返回生效的黑名单/白名单条目数（用于启动横幅展示）。
+// modelFilterSummary returns the effective blocklist/allowlist entry counts (for the startup banner).
 func modelFilterSummary() (blocked, allowed int) {
 	modelFilterMu.RLock()
 	defer modelFilterMu.RUnlock()
@@ -270,7 +271,7 @@ type modelAccountFileRule struct {
 	block map[string]bool
 }
 
-// setModelAccountFilter 校验并原子替换按模型的凭据文件规则，不能用路径或通配符匹配凭据。
+// setModelAccountFilter validates and atomically replaces per-model credential file rules; credentials cannot be matched by path or wildcards.
 func setModelAccountFilter(config map[string]modelAccountFileConfig) error {
 	rules, err := buildModelAccountRules(config)
 	if err != nil {
@@ -288,10 +289,10 @@ func buildModelAccountRules(config map[string]modelAccountFileConfig) (map[strin
 	for model, entry := range config {
 		id := normalizeModelName(model)
 		if id == "" {
-			return nil, fmt.Errorf("模型名不能为空")
+			return nil, fmt.Errorf("model name must not be empty")
 		}
 		if seen[id] {
-			return nil, fmt.Errorf("模型 %s 重复配置", id)
+			return nil, fmt.Errorf("duplicate configuration for model %s", id)
 		}
 		seen[id] = true
 		rule := modelAccountFileRule{allow: map[string]bool{}, block: map[string]bool{}}
@@ -302,7 +303,7 @@ func buildModelAccountRules(config map[string]modelAccountFileConfig) (map[strin
 			for _, raw := range item.list {
 				name := strings.TrimSpace(raw)
 				if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\\*?[]`) || !strings.HasSuffix(strings.ToLower(name), ".json") {
-					return nil, fmt.Errorf("模型 %s 的凭据文件名 %q 无效：仅支持以 .json 结尾的精确文件名，不支持路径或通配符", id, raw)
+					return nil, fmt.Errorf("credential file name %q for model %s is invalid: only exact file names ending in .json are supported; paths and wildcards are not allowed", id, raw)
 				}
 				item.into[name] = true
 			}
@@ -315,8 +316,8 @@ func buildModelAccountRules(config map[string]modelAccountFileConfig) (map[strin
 	return rules, nil
 }
 
-// modelAccountAllowed 同时检查全局 all 与模型专属账号规则。
-// 重名文件拒绝匹配，避免不同目录下同名凭据被一起误放行。
+// modelAccountAllowed checks both the global all rule and model-specific account rules.
+// Duplicate file names refuse the match so same-named credentials in different directories are not all let through by mistake.
 func modelAccountAllowed(model string, acc *Account, pool []*Account) (bool, string) {
 	modelAccountFilterMu.RLock()
 	rule, configured := modelAccountFilters[normalizeModelName(model)]
@@ -328,24 +329,24 @@ func modelAccountAllowed(model string, acc *Account, pool []*Account) (bool, str
 	name := filepath.Base(acc.Path)
 	for _, other := range pool {
 		if other != acc && filepath.Base(other.Path) == name {
-			return false, "凭据文件名重复"
+			return false, "duplicate credential file name"
 		}
 	}
 	for _, item := range []struct {
 		rule  modelAccountFileRule
 		label string
-	}{{global, "全局"}, {rule, "模型"}} {
+	}{{global, "global"}, {rule, "model"}} {
 		if item.rule.block[name] {
-			return false, "命中" + item.label + "账号黑名单"
+			return false, "hit " + item.label + " account blocklist"
 		}
 		if len(item.rule.allow) > 0 && !item.rule.allow[name] {
-			return false, "不在" + item.label + "账号白名单"
+			return false, "not in " + item.label + " account allowlist"
 		}
 	}
 	return true, ""
 }
 
-// modelAccountRuleConfigured 判断该模型是否配置了有效的凭据文件规则。
+// modelAccountRuleConfigured reports whether this model has a valid credential file rule configured.
 func modelAccountRuleConfigured(model string) bool {
 	modelAccountFilterMu.RLock()
 	rule, ok := modelAccountFilters[normalizeModelName(model)]
@@ -384,7 +385,7 @@ func ensureJSONEOF(dec *json.Decoder) error {
 	} else if err != nil {
 		return err
 	}
-	return errors.New("配置文件包含多个 JSON 值")
+	return errors.New("config file contains multiple JSON values")
 }
 
 func initDebugLogging() (func(), error) {
@@ -393,7 +394,7 @@ func initDebugLogging() (func(), error) {
 	}
 	f, err := newDailyLogWriter("debug", ".jsonl")
 	if err != nil {
-		return nil, fmt.Errorf("打开调试日志: %w", err)
+		return nil, fmt.Errorf("open debug log: %w", err)
 	}
 	sink := &debugJSONSink{writer: f, closer: f}
 	debugSinkMu.Lock()
@@ -579,7 +580,7 @@ func debugEvent(r *http.Request, level, event string, fields map[string]any) {
 		record[key] = value
 	}
 
-	// 只生成日志用副本，不能改写调用方用于业务判断的字段或错误。
+	// Only build a copy for logging; must not rewrite fields or errors the caller uses for business decisions.
 	data, err := json.Marshal(redactDebugValue(record))
 	if err != nil {
 		return
@@ -588,7 +589,7 @@ func debugEvent(r *http.Request, level, event string, fields map[string]any) {
 	n, writeErr := sink.writer.Write(append(data, '\n'))
 	sink.mu.Unlock()
 	if writeErr != nil || n != len(data)+1 {
-		log.Printf("[调试日志] traceId=%s 事件=%s 结果=写入失败 错误类型=%T 业务影响=本条诊断记录可能不完整，不中断模型请求",
+		log.Printf("[Debug log] traceId=%s event=%s result=write failed errorType=%T businessImpact=this diagnostic record may be incomplete; model requests are not interrupted",
 			traceID, event, writeErr)
 	}
 }

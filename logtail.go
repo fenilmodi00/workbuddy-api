@@ -7,10 +7,10 @@ import (
 	"os"
 )
 
-const webUILogReadBudget int64 = 1 << 20 // 仅管理日志接口，不限制模型请求或上游响应。
+const webUILogReadBudget int64 = 1 << 20 // Admin log API only; does not limit model requests or upstream responses.
 
-// readTailLines 按块倒序定位，再一次性拼接；复杂度与扫描字节数线性相关。
-// 预算截断时丢弃首个不完整行，避免显示无法可靠脱敏的秘密值片段。
+// readTailLines locates the tail in reverse blocks, then concatenates in one pass; complexity is linear in scanned bytes.
+// When the budget truncates, the first incomplete line is dropped so fragments of secret values that cannot be reliably redacted are not displayed.
 func readTailLines(f *os.File, n int, budget int64) ([]string, bool, error) {
 	if n <= 0 {
 		return []string{}, false, nil
@@ -20,7 +20,7 @@ func readTailLines(f *os.File, n int, budget int64) ([]string, bool, error) {
 		return nil, false, err
 	}
 	if !st.Mode().IsRegular() {
-		return nil, false, fmt.Errorf("只允许读取普通日志文件")
+		return nil, false, fmt.Errorf("only ordinary log files may be read")
 	}
 	const chunkSize int64 = 16 << 10
 	pos, scanned := st.Size(), int64(0)
@@ -42,7 +42,7 @@ func readTailLines(f *os.File, n int, budget int64) ([]string, bool, error) {
 		scanned += int64(count)
 		newlines += bytes.Count(chunk, []byte{'\n'})
 		if count != int(size) {
-			return nil, false, fmt.Errorf("日志在读取期间发生截断，请重试")
+			return nil, false, fmt.Errorf("log file was truncated while being read; please retry")
 		}
 	}
 	truncated := pos > 0 && budget > 0 && scanned >= budget && newlines <= n

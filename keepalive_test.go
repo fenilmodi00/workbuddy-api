@@ -51,21 +51,22 @@ func TestHourListParsing(t *testing.T) {
 func TestNextKeepaliveTimePicksEarliestFutureHour(t *testing.T) {
 	loc := time.FixedZone("UTC+8", 8*3600)
 	now := time.Date(2026, 10, 2, 23, 30, 0, 0, loc)
-	// 23:30 已过 22:00，下一个是次日 10:00。
+	// 23:30 is past 22:00; the next slot is 10:00 the next day.
 	got := nextKeepaliveTime(now, []int{10, 22})
 	want := time.Date(2026, 10, 3, 10, 0, 0, 0, loc)
 	if !got.Equal(want) {
 		t.Fatalf("got=%s want=%s", got, want)
 	}
-	// 未到 22:00 时当天触发。
+	// Before 22:00 the same day should trigger.
 	now = time.Date(2026, 10, 2, 21, 0, 0, 0, loc)
 	if got := nextKeepaliveTime(now, []int{22}); !got.Equal(time.Date(2026, 10, 2, 22, 0, 0, 0, loc)) {
-		t.Fatalf("当天应触发: %s", got)
+		t.Fatalf("should trigger same day: %s", got)
 	}
-	// 正好等于配置时刻应顺延到次日，避免刚启动就重复触发。
+	// Exactly at the configured time should defer to the next day, avoiding a
+	// duplicate trigger right after startup.
 	now = time.Date(2026, 10, 2, 22, 0, 0, 0, loc)
 	if got := nextKeepaliveTime(now, []int{22}); !got.Equal(time.Date(2026, 10, 3, 22, 0, 0, 0, loc)) {
-		t.Fatalf("整点应顺延: %s", got)
+		t.Fatalf("exact hour should defer: %s", got)
 	}
 }
 
@@ -75,12 +76,12 @@ func TestClassifyRefreshFailure(t *testing.T) {
 		status     int
 		want       refreshFailureKind
 	}{
-		{"上游会话失效码", `{"code":12153,"msg":"Offline user session not found"}`, 401, refreshFailureSessionDead},
+		{"upstream session dead code", `{"code":12153,"msg":"Offline user session not found"}`, 401, refreshFailureSessionDead},
 		{"invalid_grant", `{"code":12153,"msg":"invalid_grant: Token is not active"}`, 401, refreshFailureSessionDead},
-		{"普通401", `{"code":10001,"msg":"unauthorized"}`, 401, refreshFailureTransient},
-		{"权限拒绝403", `{"code":10002,"msg":"permission denied"}`, 403, refreshFailureTransient},
-		{"服务端5xx", `{"code":500,"msg":"internal error"}`, 500, refreshFailureTransient},
-		{"网络错误无响应体", "", 0, refreshFailureTransient},
+		{"plain 401", `{"code":10001,"msg":"unauthorized"}`, 401, refreshFailureTransient},
+		{"permission denied 403", `{"code":10002,"msg":"permission denied"}`, 403, refreshFailureTransient},
+		{"server 5xx", `{"code":500,"msg":"internal error"}`, 500, refreshFailureTransient},
+		{"network error no body", "", 0, refreshFailureTransient},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := classifyRefreshFailure(tc.status, tc.body); got != tc.want {
@@ -100,22 +101,22 @@ func TestJWTExpiryAndRefreshTokenExpiryFallback(t *testing.T) {
 	}
 	for _, bad := range []string{"", "not-a-jwt", "a.b", "header." + base64.RawURLEncoding.EncodeToString([]byte(`{}`)) + ".sig"} {
 		if _, ok := jwtExpiry(bad); ok {
-			t.Fatalf("应解析失败: %q", bad)
+			t.Fatalf("should fail to parse: %q", bad)
 		}
 	}
 
-	// 优先使用续期接口记录的时间。
+	// Prefer the time recorded by the renewal API.
 	recorded := time.Now().Add(72 * time.Hour).Truncate(time.Second)
-	if v, source, ok := refreshTokenExpiry(StoredTokens{RefreshToken: token, RefreshExpiresAt: recorded.Unix()}); !ok || !v.Equal(recorded) || source != "续期接口返回" {
-		t.Fatalf("应优先使用续期接口时间: %v %s %v", v, source, ok)
+	if v, source, ok := refreshTokenExpiry(StoredTokens{RefreshToken: token, RefreshExpiresAt: recorded.Unix()}); !ok || !v.Equal(recorded) || source != "renewal API response" {
+		t.Fatalf("should prefer renewal API time: %v %s %v", v, source, ok)
 	}
-	// 没有记录时回退到未验签的令牌声明。
-	if v, source, ok := refreshTokenExpiry(StoredTokens{RefreshToken: token}); !ok || !v.Equal(exp) || source != "令牌声明" {
-		t.Fatalf("应回退到令牌声明: %v %s %v", v, source, ok)
+	// Without a record, fall back to unverified token claims.
+	if v, source, ok := refreshTokenExpiry(StoredTokens{RefreshToken: token}); !ok || !v.Equal(exp) || source != "token claims" {
+		t.Fatalf("should fall back to token claims: %v %s %v", v, source, ok)
 	}
-	// 都没有则未知。
+	// With neither, it is unknown.
 	if _, _, ok := refreshTokenExpiry(StoredTokens{RefreshToken: "opaque"}); ok {
-		t.Fatal("不可解析的令牌应视为未知")
+		t.Fatal("unparseable token should be treated as unknown")
 	}
 }
 
@@ -125,33 +126,34 @@ func TestSanitizeUpstreamTextHidesIdentifiers(t *testing.T) {
 	got := sanitizeUpstreamText(raw)
 	for _, secret := range []string{"00000000-0000-4000-8000-000000000001", "eyJhbGciOiJSUzI1NiJ9"} {
 		if strings.Contains(got, secret) {
-			t.Fatalf("敏感片段未隐去: %s", got)
+			t.Fatalf("sensitive fragment not redacted: %s", got)
 		}
 	}
-	if !strings.Contains(got, "已隐去") {
-		t.Fatalf("应包含隐去标记: %s", got)
+	if !strings.Contains(got, "[redacted]") {
+		t.Fatalf("should contain the redaction marker: %s", got)
 	}
 }
 
-// refreshTestServer 起一个假的续期接口，返回可配置的响应体。
+// refreshTestServer starts a fake renewal API returning a configurable body.
 func refreshTestServer(t *testing.T, handler func(call int) (int, string)) *httptest.Server {
 	t.Helper()
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 覆盖前的只读校验会打到同一个站点，返回「可用」让测试聚焦刷新逻辑本身。
+		// The read-only check before overwrite hits the same site; returning
+		// "available" keeps the test focused on the refresh logic itself.
 		if r.URL.Path == "/billing/meter/get-user-resource-summary" {
 			_, _ = w.Write([]byte(`{"code":0,"data":{"Packages":[]}}`))
 			return
 		}
 		calls++
 		if r.URL.Path != "/v2/plugin/auth/token/refresh" {
-			t.Errorf("非预期路径: %s", r.URL.Path)
+			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
-			t.Errorf("非预期方法: %s", r.Method)
+			t.Errorf("unexpected method: %s", r.Method)
 		}
 		if r.Header.Get("X-Refresh-Token") == "" {
-			t.Error("缺少 X-Refresh-Token")
+			t.Error("missing X-Refresh-Token")
 		}
 		if got := r.Header.Get("X-Auth-Refresh-Source"); got != "workbuddy" {
 			t.Errorf("X-Auth-Refresh-Source=%q", got)
@@ -189,27 +191,27 @@ func TestRefreshPersistsRenewalMetadata(t *testing.T) {
 	})
 	acc := newTestAccount(t, "old-access", "old-refresh")
 	before := time.Now()
-	if err := refreshAccountToken(acc, "单元测试"); err != nil {
+	if err := refreshAccountToken(acc, "unit test"); err != nil {
 		t.Fatal(err)
 	}
 	got := acc.Auth.Auth
 	if got.AccessToken != "new-access" || got.RefreshToken != "new-refresh" || got.Domain != "example.test" {
-		t.Fatalf("令牌未更新: %+v", got)
+		t.Fatalf("token not updated: %+v", got)
 	}
 	if got.ExpiresAt < before.Add(3500*time.Second).Unix() {
-		t.Fatalf("访问令牌过期时间未顺延: %d", got.ExpiresAt)
+		t.Fatalf("access token expiry not extended: %d", got.ExpiresAt)
 	}
 	if got.RefreshExpiresAt < before.Add(7100*time.Second).Unix() {
-		t.Fatalf("刷新令牌到期时间未记录: %d", got.RefreshExpiresAt)
+		t.Fatalf("refresh token expiry not recorded: %d", got.RefreshExpiresAt)
 	}
 	if got.LastRefreshTime < before.Unix() {
-		t.Fatalf("最近续期时间未记录: %d", got.LastRefreshTime)
+		t.Fatalf("last renewal time not recorded: %d", got.LastRefreshTime)
 	}
 	if acc.RefreshFailCount != 0 || acc.LastRefreshError != "" {
-		t.Fatal("成功续期后应清零失败计数")
+		t.Fatal("failure count should be cleared after a successful renewal")
 	}
 
-	// 元数据必须落盘，重启后仍能看到。
+	// Metadata must be persisted; still visible after a restart.
 	raw, err := os.ReadFile(acc.Path)
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +221,7 @@ func TestRefreshPersistsRenewalMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	if onDisk.Auth.LastRefreshTime == 0 || onDisk.Auth.RefreshExpiresAt == 0 || onDisk.Auth.AccessToken != "new-access" {
-		t.Fatalf("元数据未写回磁盘: %+v", onDisk.Auth)
+		t.Fatalf("metadata not written back to disk: %+v", onDisk.Auth)
 	}
 }
 
@@ -230,46 +232,46 @@ func TestRefreshPreservesExpiryWhenUpstreamOmitsExpiresIn(t *testing.T) {
 	})
 	acc := newTestAccount(t, "first-access", "refresh-token")
 	originalExpires := acc.Auth.Auth.ExpiresAt
-	if err := refreshAccountToken(acc, "单元测试"); err != nil {
+	if err := refreshAccountToken(acc, "unit test"); err != nil {
 		t.Fatal(err)
 	}
 	if acc.Auth.Auth.ExpiresAt != originalExpires {
-		t.Fatalf("接口未给 expiresIn 时应保留旧过期时间: %d -> %d", originalExpires, acc.Auth.Auth.ExpiresAt)
+		t.Fatalf("should keep the old expiry when the API omits expiresIn: %d -> %d", originalExpires, acc.Auth.Auth.ExpiresAt)
 	}
 	if acc.Auth.Auth.AccessToken != "second-access" {
-		t.Fatal("访问令牌仍应更新")
+		t.Fatal("access token should still be updated")
 	}
 	if acc.Auth.Auth.RefreshToken != "refresh-token" {
-		t.Fatal("接口未下发新刷新令牌时应保留旧值")
+		t.Fatal("old refresh token should be kept when the API does not send a new one")
 	}
 }
 
 func TestRefreshDisablesOnlyAfterConsecutiveFailures(t *testing.T) {
 	chdirTemp(t)
-	// 普通 401（不含会话失效标志）：属于临时失败，不能一次就删凭据。
+	// A plain 401 (without session-dead markers) is a transient failure; credentials must not be deleted on one failure.
 	refreshTestServer(t, func(int) (int, string) {
 		return 401, `{"code":10001,"msg":"unauthorized"}`
 	})
 	acc := newTestAccount(t, "access", "refresh")
 	for i := 1; i < refreshDisableThreshold; i++ {
-		if err := refreshAccountToken(acc, "单元测试"); err == nil {
-			t.Fatal("应返回错误")
+		if err := refreshAccountToken(acc, "unit test"); err == nil {
+			t.Fatal("should return an error")
 		}
 		if acc.Disabled {
-			t.Fatalf("第 %d 次失败就禁用账号，过于激进", i)
+			t.Fatalf("disabling the account on failure number %d is too aggressive", i)
 		}
 		if acc.RefreshFailCount != i {
-			t.Fatalf("失败计数=%d want=%d", acc.RefreshFailCount, i)
+			t.Fatalf("failure count=%d want=%d", acc.RefreshFailCount, i)
 		}
 		if _, err := os.Stat(acc.Path); err != nil {
-			t.Fatalf("凭据文件不应被删除: %v", err)
+			t.Fatalf("credential file should not be deleted: %v", err)
 		}
 	}
-	if err := refreshAccountToken(acc, "单元测试"); err == nil {
-		t.Fatal("应返回错误")
+	if err := refreshAccountToken(acc, "unit test"); err == nil {
+		t.Fatal("should return an error")
 	}
 	if !acc.Disabled {
-		t.Fatalf("连续 %d 次失败后应判定登录态失效", refreshDisableThreshold)
+		t.Fatalf("login state should be declared dead after %d consecutive failures", refreshDisableThreshold)
 	}
 }
 
@@ -279,23 +281,23 @@ func TestSessionDeadSignalKeepsCredentialsUntilThreshold(t *testing.T) {
 		return 401, `{"code":12153,"msg":"invalid_grant: Token is not active"}`
 	})
 	acc := newTestAccount(t, "access", "refresh")
-	if err := refreshAccountToken(acc, "单元测试"); err == nil {
-		t.Fatal("应返回错误")
+	if err := refreshAccountToken(acc, "unit test"); err == nil {
+		t.Fatal("should return an error")
 	}
 	if acc.Disabled {
-		t.Fatal("首次会话失效只告警，不应立即删除凭据")
+		t.Fatal("the first session-dead failure only warns; credentials must not be deleted immediately")
 	}
 	if _, err := os.Stat(acc.Path); err != nil {
-		t.Fatalf("凭据文件应保留: %v", err)
+		t.Fatalf("credential file should be kept: %v", err)
 	}
-	if !strings.Contains(acc.LastRefreshError, "登录态失效") {
-		t.Fatalf("应记录判定类型: %s", acc.LastRefreshError)
+	if !strings.Contains(acc.LastRefreshError, "session dead") {
+		t.Fatalf("should record the verdict kind: %s", acc.LastRefreshError)
 	}
 	for i := 1; i < refreshDisableThreshold; i++ {
-		_ = refreshAccountToken(acc, "单元测试")
+		_ = refreshAccountToken(acc, "unit test")
 	}
 	if !acc.Disabled {
-		t.Fatalf("连续 %d 次会话失效后应停止调度", refreshDisableThreshold)
+		t.Fatalf("scheduling should stop after %d consecutive session-dead failures", refreshDisableThreshold)
 	}
 }
 
@@ -308,17 +310,17 @@ func TestRefreshSuccessResetsFailureCounter(t *testing.T) {
 		return 200, `{"code":0,"data":{"accessToken":"ok-access","expiresIn":3600}}`
 	})
 	acc := newTestAccount(t, "access", "refresh")
-	if err := refreshAccountToken(acc, "单元测试"); err == nil {
-		t.Fatal("首次应失败")
+	if err := refreshAccountToken(acc, "unit test"); err == nil {
+		t.Fatal("first call should fail")
 	}
 	if acc.RefreshFailCount != 1 {
-		t.Fatalf("失败计数=%d", acc.RefreshFailCount)
+		t.Fatalf("failure count=%d", acc.RefreshFailCount)
 	}
-	if err := refreshAccountToken(acc, "单元测试"); err != nil {
+	if err := refreshAccountToken(acc, "unit test"); err != nil {
 		t.Fatal(err)
 	}
 	if acc.RefreshFailCount != 0 || acc.LastRefreshError != "" {
-		t.Fatalf("成功后续期计数应清零: %d %q", acc.RefreshFailCount, acc.LastRefreshError)
+		t.Fatalf("failure count should be cleared after success: %d %q", acc.RefreshFailCount, acc.LastRefreshError)
 	}
 }
 
@@ -341,16 +343,16 @@ func TestKeepaliveSkipsUnusableAccountsAndRefreshesValid(t *testing.T) {
 		accountMu.Unlock()
 	})
 
-	runKeepaliveOnce("单元测试", false)
+	runKeepaliveOnce("unit test", false)
 
 	if valid.Auth.Auth.AccessToken != "keepalive-access" {
-		t.Fatal("可用账号应被主动续期")
+		t.Fatal("available account should be proactively renewed")
 	}
 	if disabled.Disabled != true || disabled.Auth.Auth.AccessToken != "x" {
-		t.Fatal("已失效账号不应被刷新")
+		t.Fatal("dead account should not be refreshed")
 	}
 	if noRefresh.Auth.Auth.AccessToken != "x" {
-		t.Fatal("缺少刷新令牌的账号不应被刷新")
+		t.Fatal("account missing a refresh token should not be refreshed")
 	}
 }
 
@@ -363,11 +365,11 @@ func TestKeepaliveOverdueDetection(t *testing.T) {
 		acc  *Account
 		want bool
 	}{
-		{"从未续期", &Account{Auth: &StoredAuth{}}, true},
-		{"刚续期", &Account{Auth: &StoredAuth{Auth: StoredTokens{LastRefreshTime: now.Unix()}}}, false},
-		{"超过阈值", &Account{Auth: &StoredAuth{Auth: StoredTokens{LastRefreshTime: now.Add(-keepaliveOverdueAfter - time.Minute).Unix()}}}, true},
-		{"无凭据", &Account{}, false},
-		{"空账号", nil, false},
+		{"never renewed", &Account{Auth: &StoredAuth{}}, true},
+		{"just renewed", &Account{Auth: &StoredAuth{Auth: StoredTokens{LastRefreshTime: now.Unix()}}}, false},
+		{"over threshold", &Account{Auth: &StoredAuth{Auth: StoredTokens{LastRefreshTime: now.Add(-keepaliveOverdueAfter - time.Minute).Unix()}}}, true},
+		{"no credentials", &Account{}, false},
+		{"nil account", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := isKeepaliveOverdue(tc.acc, now); got != tc.want {
@@ -389,18 +391,18 @@ func TestRenewalStatusTextShowsExpiryAndWarnings(t *testing.T) {
 		}},
 	}
 	text := formatRenewalStatus(acc)
-	for _, want := range []string{"刷新令牌", "即将到期", "最近续期"} {
+	for _, want := range []string{"Refresh token", "expiring soon", "Last renewal"} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("缺少 %q: %s", want, text)
+			t.Fatalf("missing %q: %s", want, text)
 		}
 	}
-	// 未知到期时间不能显示成"有效"。
+	// Unknown expiry must not be shown as "valid".
 	unknown := formatRenewalStatus(&Account{Auth: &StoredAuth{Auth: StoredTokens{RefreshToken: "opaque"}}})
-	if !strings.Contains(unknown, "到期时间未知") || strings.Contains(unknown, "有效") {
-		t.Fatalf("未知到期时间处理不当: %s", unknown)
+	if !strings.Contains(unknown, "expiry unknown") || strings.Contains(unknown, "valid") {
+		t.Fatalf("unknown expiry mishandled: %s", unknown)
 	}
 	if got := formatRenewalStatus(nil); got != "" {
-		t.Fatalf("空账号应返回空串: %q", got)
+		t.Fatalf("nil account should return an empty string: %q", got)
 	}
 }
 
@@ -408,18 +410,18 @@ func TestAccountTableWarnsOnExpiringRefreshToken(t *testing.T) {
 	soon := time.Now().Add(48 * time.Hour).Unix()
 	expired := time.Now().Add(-time.Hour).Unix()
 	out := renderAccountTable([]accountSnapshot{
-		{Path: "soon.json", QuotaKnown: true, PlanLabel: "免费", RefreshExpiresAt: soon},
-		{Path: "dead.json", QuotaKnown: true, PlanLabel: "免费", RefreshExpiresAt: expired},
-		{Path: "failing.json", QuotaKnown: true, PlanLabel: "免费", RefreshFailCount: 2},
+		{Path: "soon.json", QuotaKnown: true, PlanLabel: "Free", RefreshExpiresAt: soon},
+		{Path: "dead.json", QuotaKnown: true, PlanLabel: "Free", RefreshExpiresAt: expired},
+		{Path: "failing.json", QuotaKnown: true, PlanLabel: "Free", RefreshFailCount: 2},
 	})
-	for _, want := range []string{"soon.json 刷新令牌", "建议尽快重新登录", "dead.json 刷新令牌已过期", "failing.json 续期连续失败 2 次"} {
+	for _, want := range []string{"soon.json Refresh token", "re-login recommended as soon as possible", "dead.json Refresh token expired", "failing.json renewal failed 2 consecutive times"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("监控表缺少预警 %q:\n%s", want, out)
+			t.Fatalf("monitor table missing warning %q:\n%s", want, out)
 		}
 	}
-	// 长期有效的账号不应产生噪声。
-	clean := renderAccountTable([]accountSnapshot{{Path: "ok.json", QuotaKnown: true, PlanLabel: "免费", RefreshExpiresAt: time.Now().Add(200 * 24 * time.Hour).Unix()}})
-	if strings.Contains(clean, "重新登录") || strings.Contains(clean, "续期连续失败") {
-		t.Fatalf("长期有效账号不应告警:\n%s", clean)
+	// A long-valid account should not produce noise.
+	clean := renderAccountTable([]accountSnapshot{{Path: "ok.json", QuotaKnown: true, PlanLabel: "Free", RefreshExpiresAt: time.Now().Add(200 * 24 * time.Hour).Unix()}})
+	if strings.Contains(clean, "re-login") || strings.Contains(clean, "renewal failed") {
+		t.Fatalf("long-valid account should not warn:\n%s", clean)
 	}
 }

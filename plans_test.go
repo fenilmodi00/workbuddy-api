@@ -53,21 +53,21 @@ func TestIdentifyPlanFromEffectiveResources(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"never_trial", quotaSummaryData{}, []planResource{free}, "免费", false},
-		{"stale_trial_flag_free", quotaSummaryData{ProTrialStatus: float64(1)}, []planResource{free}, "免费", false},
-		{"trial_expired_status", quotaSummaryData{ProTrialStatus: "1"}, []planResource{free, expired}, "免费", false},
-		{"trial_expired_time", quotaSummaryData{ProTrialStatus: 1}, []planResource{free, expiredByTime}, "免费", false},
-		{"active_trial", quotaSummaryData{ProTrialStatus: 1}, []planResource{free, trial}, "Pro试用", false},
+		{"never_trial", quotaSummaryData{}, []planResource{free}, "Free", false},
+		{"stale_trial_flag_free", quotaSummaryData{ProTrialStatus: float64(1)}, []planResource{free}, "Free", false},
+		{"trial_expired_status", quotaSummaryData{ProTrialStatus: "1"}, []planResource{free, expired}, "Free", false},
+		{"trial_expired_time", quotaSummaryData{ProTrialStatus: 1}, []planResource{free, expiredByTime}, "Free", false},
+		{"active_trial", quotaSummaryData{ProTrialStatus: 1}, []planResource{free, trial}, "Pro trial", false},
 		{"active_paid", quotaSummaryData{IsPaidUser: true}, []planResource{free, pro}, "pro", false},
 		{"ordinary_trial_does_not_override_paid", quotaSummaryData{ProTrialStatus: 1}, []planResource{trial, pro}, "pro", false},
-		{"converted_trial_still_active", quotaSummaryData{ProTrialStatus: float64(2)}, []planResource{trial, pro}, "Pro试用", false},
+		{"converted_trial_still_active", quotaSummaryData{ProTrialStatus: float64(2)}, []planResource{trial, pro}, "Pro trial", false},
 		{"used_up_not_expired", quotaSummaryData{IsPaidUser: true}, []planResource{exhausted}, "pro", false},
-		{"future_subscription", quotaSummaryData{}, []planResource{free, future}, "免费", false},
-		{"bonus_is_not_subscription", quotaSummaryData{ProTrialStatus: 1}, []planResource{free, bonus}, "免费", false},
-		{"empty_valid_list", quotaSummaryData{}, nil, "免费", false},
+		{"future_subscription", quotaSummaryData{}, []planResource{free, future}, "Free", false},
+		{"bonus_is_not_subscription", quotaSummaryData{ProTrialStatus: 1}, []planResource{free, bonus}, "Free", false},
+		{"empty_valid_list", quotaSummaryData{}, nil, "Free", false},
 		{"new_plan_official_name", quotaSummaryData{}, []planResource{free, newTier}, "Business Ultra 2027", false},
 		{"explicit_current_subscription", quotaSummaryData{SubscriptionPackageCode: newTier.PackageCode}, []planResource{pro, newTier}, "Business Ultra 2027", false},
-		{"unnamed_future_subscription", quotaSummaryData{}, []planResource{free, testPlanResource("new-unnamed", "")}, "未识别订阅", false},
+		{"unnamed_future_subscription", quotaSummaryData{}, []planResource{free, testPlanResource("new-unnamed", "")}, "Unrecognized subscription", false},
 		{"renamed_existing_tier", quotaSummaryData{}, []planResource{testPlanResource(pro.PackageCode, "Pro Plus New")}, "Pro Plus New", false},
 		{"paid_summary_without_resource", quotaSummaryData{IsPaidUser: true}, []planResource{free}, "", true},
 		{"subscription_summary_without_resource", quotaSummaryData{SubscriptionPackageCode: "missing"}, []planResource{free}, "", true},
@@ -89,17 +89,17 @@ func TestRegionalPlanNamesAndFutureTiers(t *testing.T) {
 	for _, tc := range []struct {
 		site, code, name, want string
 	}{
-		{"cn", "TCACA_code_008_cfWoLwvjU4", "CodeBuddy个人体验版", "体验版"},
-		{"cn", "TCACA_code_002_AkiJS3ZHF5", "Pro Plan Monthly Subscription", "标准版"},
-		{"cn", "TCACA_code_026_BaESVICNoi", "", "高级版"},
-		{"cn", "TCACA_code_027_0FCGVA6vSa", "CodeBuddy个人旗舰版", "旗舰版"},
+		{"cn", "TCACA_code_008_cfWoLwvjU4", "CodeBuddy Personal Trial", "Trial"},
+		{"cn", "TCACA_code_002_AkiJS3ZHF5", "Pro Plan Monthly Subscription", "Standard"},
+		{"cn", "TCACA_code_026_BaESVICNoi", "", "Premium"},
+		{"cn", "TCACA_code_027_0FCGVA6vSa", "CodeBuddy Personal Flagship", "Flagship"},
 		{"intl", "TCACA_code_002_AkiJS3ZHF5", "Pro Plan Monthly Subscription", "pro"},
-		{"intl", "TCACA_code_035_ArVxJcGDsm", "Free Plan Subscription", "免费"},
-		{"intl", "TCACA_code_039_KRcQj7wUat", "Pro Plan Trial Subscription", "Pro试用"},
-		{"cn", "future-cn-tier", "CodeBuddy商务版", "CodeBuddy商务版"},
-		{"cn", "new-standard-code", "个人标准版", "标准版"},
-		{"cn", "future-unnamed-tier", "", "未识别订阅"},
-		{"cn", "TCACA_code_023_4xbGhMrE6q", "CodeBuddy个人青春版", "CodeBuddy个人青春版"},
+		{"intl", "TCACA_code_035_ArVxJcGDsm", "Free Plan Subscription", "Free"},
+		{"intl", "TCACA_code_039_KRcQj7wUat", "Pro Plan Trial Subscription", "Pro trial"},
+		{"cn", "future-cn-tier", "CodeBuddy Business", "CodeBuddy Business"},
+		{"cn", "new-standard-code", "Personal Standard", "Standard"},
+		{"cn", "future-unnamed-tier", "", "Unrecognized subscription"},
+		{"cn", "TCACA_code_023_4xbGhMrE6q", "CodeBuddy Personal Junior", "CodeBuddy Personal Junior"},
 	} {
 		t.Run(tc.site+"/"+tc.code, func(t *testing.T) {
 			got := resourcePlanName(tc.site, testPlanResource(tc.code, tc.name))
@@ -108,14 +108,14 @@ func TestRegionalPlanNamesAndFutureTiers(t *testing.T) {
 			}
 		})
 	}
-	free := testPlanResource("TCACA_code_008_cfWoLwvjU4", "CodeBuddy个人体验版")
+	free := testPlanResource("TCACA_code_008_cfWoLwvjU4", "CodeBuddy Personal Trial")
 	for code, label := range cnPlanNames {
 		got, err := identifyPlan("cn", quotaSummaryData{}, []planResource{free, testPlanResource(code, "")}, time.Now())
 		if err != nil || got != label {
 			t.Fatalf("cn tier=%s got=%q err=%v want=%q", code, got, err, label)
 		}
 	}
-	if got, err := identifyPlan("cn", quotaSummaryData{}, nil, time.Now()); err != nil || got != "体验版" {
+	if got, err := identifyPlan("cn", quotaSummaryData{}, nil, time.Now()); err != nil || got != "Trial" {
 		t.Fatalf("cn empty entitlements must not use intl Free label: %q %v", got, err)
 	}
 }
@@ -268,21 +268,21 @@ func TestQuotaRefreshSeparatesQuotaAndPlanFailures(t *testing.T) {
 	}))
 	defer server.Close()
 	profileINTL.Origin, cfg.HttpClient = server.URL, server.Client()
-	acc := &Account{Path: "test.json", Auth: &StoredAuth{Edition: "intl", Auth: StoredTokens{AccessToken: "private-test-token"}}, PlanLabel: "Pro试用"}
+	acc := &Account{Path: "test.json", Auth: &StoredAuth{Edition: "intl", Auth: StoredTokens{AccessToken: "private-test-token"}}, PlanLabel: "Pro trial"}
 	if err := refreshAccountQuota(context.Background(), acc); err != nil {
 		t.Fatal(err)
 	}
-	if acc.PlanLabel != "免费" || acc.PlanCheckedAt == 0 || acc.PlanStale || acc.QuotaRemaining != 99 {
+	if acc.PlanLabel != "Free" || acc.PlanCheckedAt == 0 || acc.PlanStale || acc.QuotaRemaining != 99 {
 		t.Fatalf("wrong effective plan/quota: %+v", acc)
 	}
 	if len(traces) != 2 || traces[0] == "" || traces[0] != traces[1] {
 		t.Fatalf("trace mismatch: %v", traces)
 	}
 	mode = "plan-fail"
-	if err := refreshAccountQuota(context.Background(), acc); err != nil || acc.PlanLabel != "免费" || !acc.PlanStale || acc.QuotaRemaining != 99 {
+	if err := refreshAccountQuota(context.Background(), acc); err != nil || acc.PlanLabel != "Free" || !acc.PlanStale || acc.QuotaRemaining != 99 {
 		t.Fatalf("plan failure lost verified plan or quota: err=%v", err)
 	}
-	acc.PlanCheckedAt, acc.PlanLabel = 0, "Pro试用"
+	acc.PlanCheckedAt, acc.PlanLabel = 0, "Pro trial"
 	if err := refreshAccountQuota(context.Background(), acc); err != nil || acc.PlanLabel != planUnknown || !acc.PlanStale {
 		t.Fatal("legacy unverified plan must not survive a failed check")
 	}
@@ -295,7 +295,7 @@ func TestQuotaRefreshSeparatesQuotaAndPlanFailures(t *testing.T) {
 			t.Fatal("secret leaked into audit")
 		}
 	}
-	for _, marker := range []string{"traceId=", "套餐查询", "套餐判断", "本轮套餐无法确认"} {
+	for _, marker := range []string{"traceId=", "Plan query", "Plan verdict", "plan cannot be confirmed this round"} {
 		if !strings.Contains(audit.String(), marker) {
 			t.Fatalf("missing audit marker %s", marker)
 		}
@@ -409,7 +409,7 @@ func TestEnterpriseQuotaUsesAllocatedUsageNotPersonalPackages(t *testing.T) {
 	table := renderAccountTable([]accountSnapshot{{
 		Path: acc.Path, QuotaKnown: true, QuotaUnlimited: true, QuotaUsed: acc.QuotaUsed, PlanLabel: planEnterprise,
 	}})
-	if !strings.Contains(table, "不限") || !strings.Contains(table, planEnterprise) || strings.Contains(table, "付费耗尽") {
+	if !strings.Contains(table, "Unlimited") || !strings.Contains(table, planEnterprise) || strings.Contains(table, "Paid exhausted") {
 		t.Fatalf("unlimited display wrong:\n%s", table)
 	}
 	if _, _, err := nextAccountForModel("glm-5.3-flash", nil); err != nil {
@@ -423,7 +423,7 @@ func TestEnterpriseQuotaUsesAllocatedUsageNotPersonalPackages(t *testing.T) {
 	if !acc.QuotaExhausted || acc.QuotaUnlimited || acc.QuotaRemaining != 0 {
 		t.Fatalf("used-up allocation should exhaust: %+v", acc)
 	}
-	if _, _, err := nextAccountForModel("glm-5.3-flash", nil); err == nil || !strings.Contains(err.Error(), "额度阻断=1") {
+	if _, _, err := nextAccountForModel("glm-5.3-flash", nil); err == nil || !strings.Contains(err.Error(), "quota blocked=1") {
 		t.Fatalf("used-up enterprise allocation should block paid model, err=%v", err)
 	}
 
@@ -437,7 +437,7 @@ func TestEnterpriseQuotaUsesAllocatedUsageNotPersonalPackages(t *testing.T) {
 			t.Fatal("token leaked into audit")
 		}
 	}
-	for _, marker := range []string{"traceId=", "企业分配额度", "limitNum", "credit", "get-user-resource"} {
+	for _, marker := range []string{"traceId=", "enterprise allocated quota", "limitNum", "credit", "get-user-resource"} {
 		if !strings.Contains(audit.String(), marker) {
 			t.Fatalf("missing audit marker %s", marker)
 		}
@@ -446,7 +446,7 @@ func TestEnterpriseQuotaUsesAllocatedUsageNotPersonalPackages(t *testing.T) {
 
 func TestPlanTableShowsFutureNameAndStaleMarker(t *testing.T) {
 	out := renderAccountTable([]accountSnapshot{{Path: "test.json", QuotaKnown: true, PlanLabel: "Business Ultra 2027", PlanStale: true}})
-	if !strings.Contains(out, "Business Ultra 2027*") || !strings.Contains(out, "权益查询失败") {
+	if !strings.Contains(out, "Business Ultra 2027*") || !strings.Contains(out, "entitlement query failed") {
 		t.Fatalf("future plan/stale status hidden: %s", out)
 	}
 	out = renderAccountTable([]accountSnapshot{{Path: "test.json", QuotaKnown: true}})

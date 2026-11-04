@@ -8,8 +8,8 @@ import (
 	"unicode/utf8"
 )
 
-// promptSettings 是配置文件内的可选提示词。零值完全保留旧行为。
-// 日志仅记录来源和长度，绝不记录配置或客户端的提示词正文。
+// promptSettings is the optional prompts in the config file. The zero value fully preserves the old behavior.
+// Logs record only the source and length; the prompt content from config or the client is never logged.
 type promptSettings struct {
 	fallback string
 	force    string
@@ -41,17 +41,17 @@ func configuredFallbackSystemPrompt() string {
 	return fallback
 }
 
-// prepareSystemPromptForUpstream 在 Chat、Responses、Messages 三个入口统一执行。
-// 先保证首条为 system，再把实验性的全局强制文本追加到该 system 内容末尾（后置），
-// 使其成为整段提示词中位置最靠后的指令、紧贴其后的用户消息；
-// 不删除、不覆盖客户端原有 system。content 数组保留原来的内容块顺序，
-// 强制文本作为最后一个内容块追加在数组末尾。
+// prepareSystemPromptForUpstream runs uniformly at the Chat, Responses, and Messages entry points.
+// It first ensures the first message is a system message, then appends the experimental global force text to the end of that system content (post-positioned),
+// making it the last instruction in the whole prompt, immediately preceding the user message;
+// the client's original system is neither deleted nor overwritten. The content array keeps the original content-block order,
+// with the force text appended as the last content block at the end of the array.
 func prepareSystemPromptForUpstream(obj map[string]any, r *http.Request, requestID uint64, traceID string) {
 	injected := ensureLeadingSystemMessage(obj)
 	settings := configuredSystemPrompts()
 	force := settings.force
 	forced := strings.TrimSpace(force) != ""
-	kind := "未修改"
+	kind := "unmodified"
 	messages, _ := obj["messages"].([]any)
 	if injected && len(messages) > 0 {
 		applyIdentityReplacements(map[string]any{"messages": []any{messages[0]}}, r, requestID)
@@ -66,33 +66,33 @@ func prepareSystemPromptForUpstream(obj map[string]any, r *http.Request, request
 			old := first["content"]
 			switch content := old.(type) {
 			case string:
-				kind = "字符串"
+				kind = "string"
 				if content == "" {
 					first["content"] = force
 				} else {
 					first["content"] = content + "\n\n" + force
 				}
 			case []any:
-				kind = "内容块数组"
+				kind = "content-block array"
 				blocks := make([]any, 0, len(content)+1)
 				blocks = append(blocks, content...)
 				blocks = append(blocks, map[string]any{"type": "text", "text": force})
 				first["content"] = blocks
 			case nil:
-				kind = "空内容"
+				kind = "empty content"
 				first["content"] = force
 			default:
-				// 非法 system 内容仍由上游参数校验；不静默丢弃客户端数据。
+				// Invalid system content is still validated by upstream parameter checks; client data is not silently dropped.
 				forced = false
-				kind = "未支持的内容类型，已跳过强制后置"
+				kind = "unsupported content type, force-append skipped"
 			}
 		}
 	}
-	fallbackSource := "未使用（客户端提供system）"
+	fallbackSource := "not used (client provides system)"
 	if injected {
-		fallbackSource = "内置保底"
+		fallbackSource = "built-in fallback"
 		if strings.TrimSpace(settings.fallback) != "" {
-			fallbackSource = "配置保底"
+			fallbackSource = "config fallback"
 		}
 	}
 	if traceID == "" {
@@ -101,12 +101,12 @@ func prepareSystemPromptForUpstream(obj map[string]any, r *http.Request, request
 	if traceID == "" {
 		traceID = r.Header.Get("X-Trace-ID")
 	}
-	log.Printf("[系统提示词规则] traceId=%s requestId=%d 阶段=上游请求序列化前 保底来源=%s 强制全局已应用=%t 强制位置=后置(紧贴用户消息) 强制内容类型=%s 强制字符数=%d 结果=保留客户端原有system且未记录提示词正文",
+	log.Printf("[System prompt policy] traceId=%s requestId=%d stage=before-upstream-request-serialization fallback-source=%s forced-global-applied=%t forced-position=append-after-client-system forced-content-kind=%s forced-char-count=%d result=client original system preserved and prompt content never logged",
 		traceID, requestID, fallbackSource, forced, kind, utf8.RuneCountInString(force))
 	debugEvent(r, "debug", "system_prompt_policy_applied", map[string]any{
 		"fallback_source": fallbackSource, "forced_applied": forced,
 		"forced_position": "append_after_client_system", "forced_content_kind": kind,
 		"forced_chars":    utf8.RuneCountInString(force),
-		"business_impact": "按配置在请求出站前处理system；强制文本后置于system末尾且不记录提示词正文",
+		"business_impact": "processes system before the request leaves, per config; force text appended after the system content and prompt content never logged",
 	})
 }

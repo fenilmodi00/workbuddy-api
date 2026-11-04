@@ -23,51 +23,51 @@ func TestSystemPromptConfigurationAndMissingConfig(t *testing.T) {
 		cfg.DebugEnabled = oldDebug
 	})
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"systemPrompt":{"fallback":"新保底","force":"全局实验规则"}}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"systemPrompt":{"fallback":"new fallback","force":"global experimental rules"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := loadRuntimeConfig(path); err != nil {
 		t.Fatal(err)
 	}
-	if got := configuredSystemPrompts(); got.fallback != "新保底" || got.force != "全局实验规则" {
-		t.Fatalf("配置没有生效: %#v", got)
+	if got := configuredSystemPrompts(); got.fallback != "new fallback" || got.force != "global experimental rules" {
+		t.Fatalf("config did not take effect: %#v", got)
 	}
 	if err := loadRuntimeConfig(path + ".missing"); err != nil {
 		t.Fatal(err)
 	}
 	if got := configuredSystemPrompts(); got.fallback != "" || got.force != "" {
-		t.Fatalf("配置文件缺失时应重置为空: %#v", got)
+		t.Fatalf("missing config file should reset to empty: %#v", got)
 	}
 }
 
 func TestFallbackPromptOnlyChangesMissingSystem(t *testing.T) {
-	withSystemPrompts(t, "自定义保底", "")
+	withSystemPrompts(t, "custom fallback", "")
 	userOnly := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}}
 	prepareSystemPromptForUpstream(userOnly, httptest.NewRequest("POST", "/v1/chat/completions", nil), 1, "test-trace")
 	msgs := userOnly["messages"].([]any)
-	if len(msgs) != 2 || msgs[0].(map[string]any)["content"] != "自定义保底" {
-		t.Fatalf("没有用配置的保底提示词: %#v", msgs)
+	if len(msgs) != 2 || msgs[0].(map[string]any)["content"] != "custom fallback" {
+		t.Fatalf("configured fallback prompt was not used: %#v", msgs)
 	}
-	original := map[string]any{"messages": []any{map[string]any{"role": "system", "content": "客户端规则"}, map[string]any{"role": "user", "content": "hi"}}}
+	original := map[string]any{"messages": []any{map[string]any{"role": "system", "content": "client rules"}, map[string]any{"role": "user", "content": "hi"}}}
 	prepareSystemPromptForUpstream(original, httptest.NewRequest("POST", "/v1/chat/completions", nil), 2, "test-trace")
-	if got := original["messages"].([]any)[0].(map[string]any)["content"]; got != "客户端规则" {
-		t.Fatalf("已有 system 不应被配置保底覆盖: %#v", got)
+	if got := original["messages"].([]any)[0].(map[string]any)["content"]; got != "client rules" {
+		t.Fatalf("existing system must not be overwritten by the config fallback: %#v", got)
 	}
 }
 
 func TestForcedGlobalPromptPreservesExistingSystem(t *testing.T) {
-	withSystemPrompts(t, "", "全局实验规则")
-	obj := map[string]any{"messages": []any{map[string]any{"role": "system", "content": "客户端规则"}, map[string]any{"role": "user", "content": "hi"}}}
+	withSystemPrompts(t, "", "global experimental rules")
+	obj := map[string]any{"messages": []any{map[string]any{"role": "system", "content": "client rules"}, map[string]any{"role": "user", "content": "hi"}}}
 	prepareSystemPromptForUpstream(obj, httptest.NewRequest("POST", "/v1/chat/completions", nil), 3, "test-trace")
 	msgs := obj["messages"].([]any)
-	if len(msgs) != 2 || msgs[0].(map[string]any)["content"] != "客户端规则\n\n全局实验规则" {
-		t.Fatalf("全局强制文本没有追加到客户端 system 末尾或篡改了原文: %#v", msgs)
+	if len(msgs) != 2 || msgs[0].(map[string]any)["content"] != "client rules\n\nglobal experimental rules" {
+		t.Fatalf("global force text not appended to the end of the client system, or the original text was altered: %#v", msgs)
 	}
-	obj = map[string]any{"messages": []any{map[string]any{"role": "system", "content": []any{map[string]any{"type": "text", "text": "原始内容块"}}}}}
+	obj = map[string]any{"messages": []any{map[string]any{"role": "system", "content": []any{map[string]any{"type": "text", "text": "original content block"}}}}}
 	prepareSystemPromptForUpstream(obj, httptest.NewRequest("POST", "/v1/responses", nil), 4, "test-trace")
 	parts := obj["messages"].([]any)[0].(map[string]any)["content"].([]any)
-	if len(parts) != 2 || parts[0].(map[string]any)["text"] != "原始内容块" || parts[1].(map[string]any)["text"] != "全局实验规则" {
-		t.Fatalf("全局强制文本应作为最后一个内容块追加且不丢弃原 system: %#v", parts)
+	if len(parts) != 2 || parts[0].(map[string]any)["text"] != "original content block" || parts[1].(map[string]any)["text"] != "global experimental rules" {
+		t.Fatalf("global force text should be appended as the last content block without dropping the original system: %#v", parts)
 	}
 }
 
@@ -76,74 +76,74 @@ func TestEmptyPromptConfigPreservesLegacyBehavior(t *testing.T) {
 	obj := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}}
 	prepareSystemPromptForUpstream(obj, httptest.NewRequest("POST", "/v1/chat/completions", nil), 5, "test-trace")
 	if got := obj["messages"].([]any)[0].(map[string]any)["content"]; got != defaultSystemPrompt {
-		t.Fatalf("空配置必须使用原保底文本: %#v", got)
+		t.Fatalf("empty config must use the original fallback text: %#v", got)
 	}
 }
 
 func TestSystemPromptConfigurationReachesChatAndResponses(t *testing.T) {
-	withSystemPrompts(t, "定制保底", "统一规则")
+	withSystemPrompts(t, "custom fallback", "unified rules")
 	chat := captureUpstreamMessages(t, "/v1/chat/completions", `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-	if got := chat[0].(map[string]any)["content"]; got != "定制保底\n\n统一规则" {
-		t.Fatalf("Chat 缺 system 时应保留保底并把全局规则追加到末尾: %#v", got)
+	if got := chat[0].(map[string]any)["content"]; got != "custom fallback\n\nunified rules" {
+		t.Fatalf("chat without system should keep the fallback and append the global rules at the end: %#v", got)
 	}
-	responses := captureUpstreamMessages(t, "/v1/responses", `{"model":"m","stream":true,"instructions":"客户端已有system","input":"hi"}`)
-	if got := responses[0].(map[string]any)["content"]; got != "客户端已有system\n\n统一规则" {
-		t.Fatalf("Responses 应保留 instructions 并把全局规则追加到末尾: %#v", got)
+	responses := captureUpstreamMessages(t, "/v1/responses", `{"model":"m","stream":true,"instructions":"client-provided system","input":"hi"}`)
+	if got := responses[0].(map[string]any)["content"]; got != "client-provided system\n\nunified rules" {
+		t.Fatalf("responses should preserve instructions and append the global rules at the end: %#v", got)
 	}
-	if strings.Contains(chat[1].(map[string]any)["content"].(string), "统一规则") {
-		t.Fatal("全局规则不能重复写入用户消息")
+	if strings.Contains(chat[1].(map[string]any)["content"].(string), "unified rules") {
+		t.Fatal("global rules must not be written into the user message twice")
 	}
 }
 
 func TestSystemPromptConfigurationReachesMessages(t *testing.T) {
-	withSystemPrompts(t, "定制保底", "统一规则")
+	withSystemPrompts(t, "custom fallback", "unified rules")
 	for _, tc := range []struct {
 		name, body, want string
 	}{
-		{"fallback", `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`, "定制保底\n\n统一规则"},
-		{"client_system", `{"model":"m","system":"客户端规则","messages":[{"role":"user","content":"hi"}]}`, "客户端规则\n\n统一规则"},
-		{"system_blocks", `{"model":"m","system":[{"type":"text","text":"规则一"},{"type":"text","text":"规则二"}],"messages":[{"role":"user","content":"hi"}]}`, "规则一\n规则二\n\n统一规则"},
+		{"fallback", `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`, "custom fallback\n\nunified rules"},
+		{"client_system", `{"model":"m","system":"client rules","messages":[{"role":"user","content":"hi"}]}`, "client rules\n\nunified rules"},
+		{"system_blocks", `{"model":"m","system":[{"type":"text","text":"rule one"},{"type":"text","text":"rule two"}],"messages":[{"role":"user","content":"hi"}]}`, "rule one\nrule two\n\nunified rules"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			messages := captureUpstreamMessages(t, "/v1/messages", tc.body)
 			if got := messages[0].(map[string]any)["content"]; got != tc.want {
-				t.Fatalf("Messages 提示词未统一应用: got=%#v want=%q", got, tc.want)
+				t.Fatalf("messages prompt not applied uniformly: got=%#v want=%q", got, tc.want)
 			}
 			if got := messages[1].(map[string]any)["content"]; got != "hi" {
-				t.Fatalf("不应修改 user 内容: %#v", got)
+				t.Fatalf("user content must not be modified: %#v", got)
 			}
 		})
 	}
 }
 
-// TestForcedPromptIsAppendedAfterClientSystem 固定「客户端原文在前、强制提示词在后」这一契约。
+// TestForcedPromptIsAppendedAfterClientSystem pins the contract "client text first, forced prompt after".
 //
-// 这条顺序直接决定冲突时的实际效果：网关只发送一条 system 消息，内容形如
-// 「<客户端自己的系统提示词>\n\n<强制文本>」。强制文本位于整段提示词的最末尾，
-// 紧贴其后的用户消息，是最"新近"的指令，因此人设类、风格类指令通常最有影响力。
-// 这不是优先级字段，而是同一段文本里的先后顺序。
+// This order directly determines the practical effect on conflict: the gateway sends a single system message whose content is
+// "<client's own system prompt>\n\n<forced text>". The forced text sits at the very end of the whole prompt,
+// immediately preceding the user message, making it the "most recent" instruction, so persona and style instructions usually carry the most influence.
+// This is not a priority field; it is ordering within the same text.
 func TestForcedPromptIsAppendedAfterClientSystem(t *testing.T) {
-	withSystemPrompts(t, "", "【强制后置】")
-	body := `{"model":"m","stream":true,"messages":[{"role":"system","content":"【客户端自己的系统提示词】"},{"role":"user","content":"hi"}]}`
+	withSystemPrompts(t, "", "[FORCED-APPEND]")
+	body := `{"model":"m","stream":true,"messages":[{"role":"system","content":"[CLIENT-OWN-SYSTEM-PROMPT]"},{"role":"user","content":"hi"}]}`
 	messages := captureUpstreamMessages(t, "/v1/chat/completions", body)
 	content, ok := messages[0].(map[string]any)["content"].(string)
 	if !ok {
-		t.Fatalf("system 内容应为字符串: %#v", messages[0])
+		t.Fatalf("system content should be a string: %#v", messages[0])
 	}
-	forcedAt := strings.Index(content, "【强制后置】")
-	clientAt := strings.Index(content, "【客户端自己的系统提示词】")
+	forcedAt := strings.Index(content, "[FORCED-APPEND]")
+	clientAt := strings.Index(content, "[CLIENT-OWN-SYSTEM-PROMPT]")
 	if clientAt != 0 {
-		t.Fatalf("客户端原文应位于 system 内容最前: %q", content)
+		t.Fatalf("client text should be at the very front of the system content: %q", content)
 	}
 	if forcedAt <= clientAt {
-		t.Fatalf("强制文本应排在客户端原文之后: %q", content)
+		t.Fatalf("forced text should come after the client text: %q", content)
 	}
-	// 强制文本必须收尾，即位于 system 内容的最后，紧贴其后的用户消息。
-	if !strings.HasSuffix(content, "【强制后置】") {
-		t.Fatalf("强制文本应位于 system 内容最末: %q", content)
+	// The forced text must close the content, i.e. sit at the very end of the system content, immediately preceding the user message.
+	if !strings.HasSuffix(content, "[FORCED-APPEND]") {
+		t.Fatalf("forced text should be at the very end of the system content: %q", content)
 	}
-	// 两者之间用空行分隔，保证仍是一条合法 system 消息。
-	if !strings.Contains(content, "【客户端自己的系统提示词】\n\n【强制后置】") {
-		t.Fatalf("拼接格式变化: %q", content)
+	// The two are separated by a blank line, keeping it a single valid system message.
+	if !strings.Contains(content, "[CLIENT-OWN-SYSTEM-PROMPT]\n\n[FORCED-APPEND]") {
+		t.Fatalf("concatenation format changed: %q", content)
 	}
 }

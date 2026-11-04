@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// withCatalogModels 用临时目录替换模型目录，测试结束后恢复。
+// withCatalogModels swaps in a temporary model catalog and restores it after the test.
 func withCatalogModels(t *testing.T, models map[string][]catalogModel) {
 	t.Helper()
 	modelsMu.Lock()
@@ -24,7 +24,7 @@ func withCatalogModels(t *testing.T, models map[string][]catalogModel) {
 	})
 }
 
-// withFakeUpstream 用假上游 + 单个 cn 账号跑通真实出站链路，captured 接收出站请求体。
+// withFakeUpstream runs the real outbound path against a fake upstream with a single cn account; captured receives the outbound request body.
 func withFakeUpstream(t *testing.T, captured *[]byte) {
 	t.Helper()
 	chdirTemp(t)
@@ -76,7 +76,7 @@ func decodeUpstreamBody(t *testing.T, body []byte) map[string]any {
 	t.Helper()
 	var out map[string]any
 	if err := json.Unmarshal(body, &out); err != nil {
-		t.Fatalf("解析出站请求失败: %v\n%s", err, body)
+		t.Fatalf("failed to decode outbound request: %v\n%s", err, body)
 	}
 	return out
 }
@@ -86,7 +86,7 @@ func TestEnsureUpstreamMaxTokensInjectsCatalogLimit(t *testing.T) {
 	obj := map[string]any{"model": "budget-model"}
 	ensureUpstreamMaxTokens(obj, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), 7, "test-trace", "budget-model")
 	if got := obj["max_tokens"]; got != 128000 {
-		t.Fatalf("未按目录补输出上限: %#v", got)
+		t.Fatalf("output limit not injected per catalog: %#v", got)
 	}
 }
 
@@ -95,7 +95,7 @@ func TestEnsureUpstreamMaxTokensUsesPerModelLimit(t *testing.T) {
 	obj := map[string]any{"model": "small-budget-model"}
 	ensureUpstreamMaxTokens(obj, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), 8, "test-trace", "small-budget-model")
 	if got := obj["max_tokens"]; got != 64000 {
-		t.Fatalf("小窗口模型应使用自己的输出上限: %#v", got)
+		t.Fatalf("small-window model should use its own output limit: %#v", got)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestEnsureUpstreamMaxTokensKeepsClientValue(t *testing.T) {
 	obj := map[string]any{"model": "budget-model", "max_tokens": 2000}
 	ensureUpstreamMaxTokens(obj, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), 9, "test-trace", "budget-model")
 	if got := obj["max_tokens"]; got != 2000 {
-		t.Fatalf("不得覆盖客户端显式值: %#v", got)
+		t.Fatalf("must not override the client's explicit value: %#v", got)
 	}
 }
 
@@ -113,7 +113,7 @@ func TestEnsureUpstreamMaxTokensRespectsMaxCompletionTokens(t *testing.T) {
 	obj := map[string]any{"model": "budget-model", "max_completion_tokens": 4096}
 	ensureUpstreamMaxTokens(obj, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), 10, "test-trace", "budget-model")
 	if _, exists := obj["max_tokens"]; exists {
-		t.Fatalf("客户端已用 max_completion_tokens 声明预算时不应再补 max_tokens: %#v", obj)
+		t.Fatalf("max_tokens must not be injected when the client declared a budget via max_completion_tokens: %#v", obj)
 	}
 }
 
@@ -122,7 +122,7 @@ func TestEnsureUpstreamMaxTokensTreatsNullAsAbsent(t *testing.T) {
 	obj := map[string]any{"model": "budget-model", "max_tokens": nil}
 	ensureUpstreamMaxTokens(obj, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), 11, "test-trace", "budget-model")
 	if got := obj["max_tokens"]; got != 128000 {
-		t.Fatalf("max_tokens=null 应视为未声明: %#v", got)
+		t.Fatalf("max_tokens=null should be treated as undeclared: %#v", got)
 	}
 }
 
@@ -131,7 +131,7 @@ func TestEnsureUpstreamMaxTokensSkipsUnknownModel(t *testing.T) {
 	obj := map[string]any{"model": "not-in-catalog"}
 	ensureUpstreamMaxTokens(obj, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), 12, "test-trace", "not-in-catalog")
 	if _, exists := obj["max_tokens"]; exists {
-		t.Fatalf("目录未收录的模型不应猜测输出上限: %#v", obj)
+		t.Fatalf("output limit must not be guessed for models missing from the catalog: %#v", obj)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestChatEntryInjectsMaxTokensWhenClientOmitsBudget(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := decodeUpstreamBody(t, captured)["max_tokens"]; got != float64(128000) {
-		t.Fatalf("Chat 入口未补输出预算: %#v\n%s", got, captured)
+		t.Fatalf("Chat entry did not inject the output budget: %#v\n%s", got, captured)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestChatEntryKeepsClientMaxTokens(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := decodeUpstreamBody(t, captured)["max_tokens"]; got != float64(512) {
-		t.Fatalf("Chat 入口覆盖了客户端输出预算: %#v", got)
+		t.Fatalf("Chat entry overrode the client's output budget: %#v", got)
 	}
 }
 
@@ -176,7 +176,7 @@ func TestResponsesEntryInjectsMaxTokensWhenClientOmitsBudget(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := decodeUpstreamBody(t, captured)["max_tokens"]; got != float64(128000) {
-		t.Fatalf("Responses 入口未补输出预算: %#v\n%s", got, captured)
+		t.Fatalf("Responses entry did not inject the output budget: %#v\n%s", got, captured)
 	}
 }
 
@@ -191,7 +191,7 @@ func TestResponsesEntryKeepsClientMaxOutputTokens(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := decodeUpstreamBody(t, captured)["max_tokens"]; got != float64(2048) {
-		t.Fatalf("Responses 入口覆盖了客户端输出预算: %#v", got)
+		t.Fatalf("Responses entry overrode the client's output budget: %#v", got)
 	}
 }
 
@@ -206,7 +206,7 @@ func TestMessagesEntryInjectsMaxTokensWhenClientOmitsBudget(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := decodeUpstreamBody(t, captured)["max_tokens"]; got != float64(128000) {
-		t.Fatalf("Anthropic 入口未补输出预算: %#v\n%s", got, captured)
+		t.Fatalf("Anthropic entry did not inject the output budget: %#v\n%s", got, captured)
 	}
 }
 
@@ -221,6 +221,6 @@ func TestMessagesEntryKeepsClientMaxTokens(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := decodeUpstreamBody(t, captured)["max_tokens"]; got != float64(1024) {
-		t.Fatalf("Anthropic 入口覆盖了客户端输出预算: %#v", got)
+		t.Fatalf("Anthropic entry overrode the client's output budget: %#v", got)
 	}
 }

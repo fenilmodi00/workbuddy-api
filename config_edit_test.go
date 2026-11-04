@@ -34,30 +34,30 @@ func TestConfigEditorRequiresAdminAndWarningAcknowledgement(t *testing.T) {
 		for _, method := range []string{"GET", "POST"} {
 			w := adminRequest(handler, method, "/admin/api/config-edit?acknowledged=1", key, "{}")
 			if w.Code != http.StatusUnauthorized || strings.Contains(w.Body.String(), "feature-admin-key") {
-				t.Fatalf("配置编辑绕过管理鉴权: %s %d", method, w.Code)
+				t.Fatalf("config edit bypassed admin auth: %s %d", method, w.Code)
 			}
 		}
 	}
 	for _, method := range []string{"GET", "POST"} {
 		w := adminRequest(handler, method, "/admin/api/config-edit", "feature-admin-key", "{}")
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("没有风险确认应拒绝: %s %d", method, w.Code)
+			t.Fatalf("missing risk acknowledgement must be rejected: %s %d", method, w.Code)
 		}
 	}
 	w := adminRequest(handler, "GET", "/admin/api/config", "feature-admin-key", "")
 	if strings.Contains(w.Body.String(), "feature-admin-key") || strings.Contains(w.Body.String(), "feature-api-key") {
-		t.Fatal("常规预览暴露了真实Key")
+		t.Fatal("regular preview exposed real Keys")
 	}
 	w = adminRequest(handler, "GET", "/admin/api/config-edit?acknowledged=1", "feature-admin-key", "")
 	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" ||
 		!strings.Contains(w.Body.String(), "feature-admin-key") || !strings.Contains(w.Body.String(), "visible prompt text") {
-		t.Fatalf("确认后没有取得真实配置: %d", w.Code)
+		t.Fatalf("did not obtain real config after acknowledgement: %d", w.Code)
 	}
 	var view struct{ Content, Revision string }
 	_ = json.Unmarshal(w.Body.Bytes(), &view)
 	onDisk, _ := os.ReadFile(runtimeConfigFile)
 	if view.Content != string(onDisk) || view.Revision != configRevision(onDisk) {
-		t.Fatal("编辑器必须使用原文，不能使用脱敏预览")
+		t.Fatal("editor must use the original text, not the redacted preview")
 	}
 	methodRequest := httptest.NewRequest(http.MethodPut, "/admin/api/config-edit", strings.NewReader("{}"))
 	methodRequest.Header.Set("Authorization", "Bearer feature-admin-key")
@@ -66,7 +66,7 @@ func TestConfigEditorRequiresAdminAndWarningAcknowledgement(t *testing.T) {
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, methodRequest)
 	if w.Code != http.StatusMethodNotAllowed {
-		t.Fatal("配置编辑未限制方法")
+		t.Fatal("config edit did not restrict methods")
 	}
 	crossOrigin := httptest.NewRequest(http.MethodGet, "/admin/api/config-edit?acknowledged=1", nil)
 	crossOrigin.Header.Set("Authorization", "Bearer feature-admin-key")
@@ -74,15 +74,15 @@ func TestConfigEditorRequiresAdminAndWarningAcknowledgement(t *testing.T) {
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, crossOrigin)
 	if w.Code != http.StatusForbidden {
-		t.Fatal("明文配置编辑接口接受跨站来源")
+		t.Fatal("plaintext config edit endpoint accepted a cross-site origin")
 	}
-	// 锁内二次鉴权也必须拒绝旧会话（单独验证 handler，不依赖外层中间件）。
+	// The in-lock second authentication must also reject stale sessions (validates the handler alone, without outer middleware).
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config-edit?acknowledged=1", nil)
 	req.Header.Set("Authorization", "Bearer stale-key")
 	w = httptest.NewRecorder()
 	handleWebUIConfigEdit(w, req)
 	if w.Code != http.StatusUnauthorized {
-		t.Fatal("锁内未再次校验会话")
+		t.Fatal("session was not re-validated inside the lock")
 	}
 }
 
@@ -110,7 +110,7 @@ func TestConfigEditorSavesHotSettingsPortsAndSecretSafeAudit(t *testing.T) {
 	content := fmt.Sprintf(`{"gateway":{"adminKey":"feature-admin-key","apiKeyEnabled":true,"apiKey":"%s","apiPort":%d,"webPort":%d},"systemPrompt":{"force":"%s","fallback":"fallback"},"models":{"blocklist":["off"],"accounts":{"all":{"blocklist":["paused.json"]}}},"logs":{"retentionDays":5},"upstream":{"idleTimeoutSeconds":77,"transientRetries":0},"debug":{"enabled":false}}`, newAPIKey, nextAPI, nextWeb, prompt)
 	w := adminRequest(handler, "POST", "/admin/api/config-edit", "feature-admin-key", editorRequestBody(t, configRevision(old), content, false))
 	if w.Code != http.StatusOK {
-		t.Fatalf("保存失败: %d %s", w.Code, w.Body.String())
+		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
 	}
 	var response struct {
 		Revision        string
@@ -122,34 +122,34 @@ func TestConfigEditorSavesHotSettingsPortsAndSecretSafeAudit(t *testing.T) {
 	}
 	saved, _ := os.ReadFile(runtimeConfigFile)
 	if response.Revision != configRevision(saved) || response.Settings.RestartRequired || response.AdminKeyChanged {
-		t.Fatal("保存状态、版本或端口热切换状态错误")
+		t.Fatal("save status, revision, or port hot-switch state incorrect")
 	}
 	if cfg.Port != nextAPI || cfg.WebPort != nextWeb || currentAPIKey() != newAPIKey ||
 		configuredSystemPrompts().force != prompt || logRetentionDays.Load() != 5 {
-		t.Fatal("热配置未生效或监听端口未热切换")
+		t.Fatal("hot config not applied or listener ports not hot-switched")
 	}
 	if disabled, _ := modelDisabled("off"); !disabled {
-		t.Fatal("模型名单未生效")
+		t.Fatal("model blocklist not applied")
 	}
 	if allowed, _ := modelAccountAllowed("any", &Account{Path: "paused.json"}, nil); allowed {
-		t.Fatal("全局账号名单未生效")
+		t.Fatal("global account blocklist not applied")
 	}
 	_, idle, retries := upstreamSettings()
 	if idle != 77*time.Second || retries != 0 {
-		t.Fatal("上游配置未生效")
+		t.Fatal("upstream settings not applied")
 	}
 	watcher := runtimeConfigWatcher{}
 	if watcher.reload() {
-		t.Fatal("保存摘要未更新，导致重复热加载")
+		t.Fatal("save digest not updated, causing duplicate hot reload")
 	}
 	for _, secret := range []string{"feature-admin-key", newAPIKey, prompt, "fallback"} {
 		if strings.Contains(audit.String(), secret) || strings.Contains(w.Body.String(), secret) {
-			t.Fatalf("编辑保存日志或响应泄漏配置正文: %q", secret)
+			t.Fatalf("edit save log or response leaked config content: %q", secret)
 		}
 	}
-	for _, marker := range []string{"[请求到达]", "[管理来源校验]", "[管理鉴权]", "[配置编辑]", "[配置热加载]", "[响应返回]"} {
+	for _, marker := range []string{"[Request received]", "[Admin origin validation]", "[Admin auth]", "[Config edit]", "[Config hot reload]", "[Response returned]"} {
 		if !strings.Contains(audit.String(), marker) {
-			t.Errorf("缺少完整链路审计 %s", marker)
+			t.Errorf("missing full-chain audit entry %s", marker)
 		}
 	}
 }
@@ -173,19 +173,19 @@ func TestConfigEditorRejectsInvalidDocumentsWithoutMutation(t *testing.T) {
 	} {
 		w := adminRequest(handler, "POST", "/admin/api/config-edit", "feature-admin-key", editorRequestBody(t, configRevision(old), content, false))
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("无效配置未拒绝: 字节=%d HTTP=%d", len(content), w.Code)
+			t.Fatalf("invalid config not rejected: bytes=%d HTTP=%d", len(content), w.Code)
 		}
 		after, _ := os.ReadFile(runtimeConfigFile)
 		if !bytes.Equal(after, old) || currentAdminKey() != "feature-admin-key" || currentAPIKey() != "feature-api-key" {
-			t.Fatal("无效配置修改了磁盘或运行时")
+			t.Fatal("invalid config modified disk or runtime")
 		}
 		if strings.Contains(w.Body.String(), "synthetic-secret-unknown-field") {
-			t.Fatal("校验错误泄漏用户正文")
+			t.Fatal("validation error leaked user content")
 		}
 	}
 	for _, body := range []string{`{`, `{"acknowledged":true,"path":"../other.json"}`, `{"acknowledged":true,"content":false}`} {
 		if w := adminRequest(handler, "POST", "/admin/api/config-edit", "feature-admin-key", body); w.Code != 400 {
-			t.Fatal("未知表单字段或类型未拒绝")
+			t.Fatal("unknown form field or type not rejected")
 		}
 	}
 }
@@ -200,18 +200,18 @@ func TestConfigEditorRevisionConflictAndExternalKeyChange(t *testing.T) {
 	changed, _ := os.ReadFile(runtimeConfigFile)
 	w := adminRequest(handler, "POST", "/admin/api/config-edit", "feature-admin-key", editorRequestBody(t, configRevision(old), string(old), false))
 	if w.Code != http.StatusConflict {
-		t.Fatal("覆盖其他页面更新未被阻止")
+		t.Fatal("overwriting another page's update was not blocked")
 	}
 	after, _ := os.ReadFile(runtimeConfigFile)
 	if !bytes.Equal(after, changed) {
-		t.Fatal("版本冲突覆盖了新配置")
+		t.Fatal("revision conflict overwrote the new config")
 	}
 	writeRuntimeFixture(t, `{"gateway":{"adminKey":"changed-before-reload"}}`)
 	changed, _ = os.ReadFile(runtimeConfigFile)
 	for _, method := range []string{"GET", "POST"} {
 		w = adminRequest(handler, method, "/admin/api/config-edit?acknowledged=1", "feature-admin-key", editorRequestBody(t, configRevision(changed), string(old), false))
 		if w.Code != http.StatusConflict || strings.Contains(w.Body.String(), "changed-before-reload") {
-			t.Fatal("旧会话覆盖或读取了尚未热加载的新管理Key")
+			t.Fatal("stale session overwrote or read the not-yet-hot-reloaded new admin Key")
 		}
 	}
 }
@@ -223,22 +223,22 @@ func TestConfigEditorAdminKeyChangeAndRemovalConfirmation(t *testing.T) {
 	content := strings.ReplaceAll(string(old), "feature-admin-key", "synthetic-new-editor-admin-key")
 	w := adminRequest(handler, "POST", "/admin/api/config-edit", "feature-admin-key", editorRequestBody(t, configRevision(old), content, false))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"adminKeyChanged":true`) {
-		t.Fatal("管理Key变化未告知客户端")
+		t.Fatal("admin Key change not reported to the client")
 	}
 	if adminRequest(handler, "GET", "/admin/api/config", "feature-admin-key", "").Code != 401 {
-		t.Fatal("旧会话仍然有效")
+		t.Fatal("old session still valid")
 	}
 	old, _ = os.ReadFile(runtimeConfigFile)
 	w = adminRequest(handler, "POST", "/admin/api/config-edit", "synthetic-new-editor-admin-key", editorRequestBody(t, configRevision(old), `{}`, false))
 	if w.Code != 400 || currentAdminKey() == "" {
-		t.Fatal("未经额外确认允许清空管理Key")
+		t.Fatal("clearing admin Key allowed without extra confirmation")
 	}
 	w = adminRequest(handler, "POST", "/admin/api/config-edit", "synthetic-new-editor-admin-key", editorRequestBody(t, configRevision(old), `{}`, true))
 	if w.Code != 200 || currentAdminKey() != "" || !strings.Contains(w.Body.String(), `"adminKeyCleared":true`) {
-		t.Fatal("确认清空管理Key没有生效")
+		t.Fatal("confirmed admin Key clearing did not take effect")
 	}
 	if adminRequest(handler, "GET", "/admin/api/config-edit?acknowledged=1", "synthetic-new-editor-admin-key", "").Code != 401 {
-		t.Fatal("清空管理Key意外放开管理鉴权")
+		t.Fatal("cleared admin Key unexpectedly opened admin auth")
 	}
 }
 
@@ -246,21 +246,21 @@ func TestConfigEditorApplyFailureRestoresDiskAndRuntime(t *testing.T) {
 	isolateAdminFeatures(t)
 	handler := newWebUIHandler()
 	old, _ := os.ReadFile(runtimeConfigFile)
-	// debug 文件不可创建时，完整配置热应用必须失败并恢复旧文件。
+	// When the debug file cannot be created, full config hot-apply must fail and restore the old file.
 	if err := os.Mkdir(filepath.Join(logDir, "debug-"+time.Now().Format("2006-01-02")+".jsonl"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	content := `{"gateway":{"adminKey":"feature-admin-key","apiKeyEnabled":false},"debug":{"enabled":true},"models":{"blocklist":["off"]}}`
 	w := adminRequest(handler, "POST", "/admin/api/config-edit", "feature-admin-key", editorRequestBody(t, configRevision(old), content, false))
 	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("应用失败未返回错误: %d", w.Code)
+		t.Fatalf("apply failure did not return an error: %d", w.Code)
 	}
 	after, _ := os.ReadFile(runtimeConfigFile)
 	if !bytes.Equal(old, after) || currentAPIKey() != "feature-api-key" || debugLoggingEnabled() {
-		t.Fatal("失败没有恢复原配置")
+		t.Fatal("failure did not restore the original config")
 	}
 	if disabled, _ := modelDisabled("off"); disabled {
-		t.Fatal("失败部分应用了模型名单")
+		t.Fatal("failure partially applied the model blocklist")
 	}
 }
 
@@ -270,15 +270,15 @@ func TestConfigEditorCanRepairInvalidCurrentFileAndRejectsOversizeRead(t *testin
 	writeRuntimeFixture(t, `{`)
 	w := adminRequest(handler, "GET", "/admin/api/config-edit?acknowledged=1", "feature-admin-key", "")
 	if w.Code != 200 {
-		t.Fatal("管理员无法加载损坏文件进行修复")
+		t.Fatal("admin could not load the corrupted file for repair")
 	}
 	w = adminRequest(handler, "POST", "/admin/api/config-edit", "feature-admin-key", editorRequestBody(t, configRevision([]byte("{")), `{"gateway":{"adminKey":"feature-admin-key"}}`, false))
 	if w.Code != 200 {
-		t.Fatalf("损坏配置修复失败: %d", w.Code)
+		t.Fatalf("corrupted config repair failed: %d", w.Code)
 	}
 	writeRuntimeFixture(t, strings.Repeat("x", configEditBudget+1))
 	if adminRequest(handler, "GET", "/admin/api/config-edit?acknowledged=1", "feature-admin-key", "").Code != 400 {
-		t.Fatal("超出读取预算的配置未拒绝")
+		t.Fatal("config beyond the read budget not rejected")
 	}
 }
 
@@ -289,7 +289,7 @@ func TestConfigEditorRejectsSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("other.json", "test-link.json"); err != nil {
-		t.Skip("系统未允许创建符号链接")
+		t.Skip("system did not allow creating symlinks")
 	}
 	if err := os.Remove(runtimeConfigFile); err != nil {
 		t.Fatal(err)
@@ -301,11 +301,11 @@ func TestConfigEditorRejectsSymlink(t *testing.T) {
 	for _, method := range []string{"GET", "POST"} {
 		w := adminRequest(handler, method, "/admin/api/config-edit?acknowledged=1", "feature-admin-key", editorRequestBody(t, configRevision(old), `{}`, true))
 		if w.Code != 400 {
-			t.Fatal("网页编辑错误地跟随了配置符号链接")
+			t.Fatal("web edit incorrectly followed the config symlink")
 		}
 	}
 	after, _ := os.ReadFile("other.json")
 	if !bytes.Equal(after, old) {
-		t.Fatal("网页编辑改写了非配置目标")
+		t.Fatal("web edit modified a non-config target")
 	}
 }

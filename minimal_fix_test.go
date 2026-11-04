@@ -179,7 +179,7 @@ func TestMinimalBannerHidesAPIKey(t *testing.T) {
 	cfg.APIKey = "synthetic-banner-secret"
 	var output bytes.Buffer
 	printAPIAuthBanner(&output)
-	if strings.Contains(output.String(), cfg.APIKey) || !strings.Contains(output.String(), "已启用 (密钥已隐藏)") {
+	if strings.Contains(output.String(), cfg.APIKey) || !strings.Contains(output.String(), "Enabled (key hidden)") {
 		t.Fatalf("unsafe banner: %q", output.String())
 	}
 }
@@ -197,7 +197,7 @@ func TestMinimalVerify403IsNotAlwaysInvalid(t *testing.T) {
 		{"permission", 403, `{"code":40301,"msg":"permission denied"}`, false, true},
 		{"waf", 403, "request denied by risk control", false, true},
 		{"explicit invalid token", 403, `{"msg":"invalid token"}`, false, false},
-		{"explicit expired login", 403, `{"msg":"登录已过期"}`, false, false},
+		{"explicit expired login", 403, `{"msg":"expired login"}`, false, false},
 		{"upstream unavailable", 503, `{"msg":"maintenance"}`, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -231,7 +231,7 @@ func TestMinimalSaveAuthCommitsMemoryAfterWrite(t *testing.T) {
 	authLock.Lock()
 	currAuth = previous
 	authLock.Unlock()
-	cfg.AuthFile = t.TempDir() // 写入目录应确定失败，无需修改真实文件或权限。
+	cfg.AuthFile = t.TempDir() // Writing to a directory should fail for certain, no need to touch real files or permissions.
 	if err := saveAuth(next); err == nil {
 		t.Fatal("write to directory should fail")
 	}
@@ -370,8 +370,8 @@ func TestMinimalFileAuditStillCoversRejectedAndSuccessfulRequests(t *testing.T) 
 	closeLog := initFileLogging("minimal-fix-test")
 	defer closeLog()
 	handler := requestAuditMiddleware(corsMiddleware(authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[业务入口] traceId=%s 原因=synthetic business success", debugTraceID(r))
-		log.Printf("[外部接口] traceId=%s HTTP=403 code=12153 原因=permission denied Authorization: Bearer unknown-audit-token", debugTraceID(r))
+		log.Printf("[Business entry] traceId=%s reason=synthetic business success", debugTraceID(r))
+		log.Printf("[External API] traceId=%s HTTP=403 code=12153 reason=permission denied Authorization: Bearer unknown-audit-token", debugTraceID(r))
 		w.WriteHeader(http.StatusNoContent)
 	}))))
 	for _, allowed := range []bool{false, true} {
@@ -395,9 +395,9 @@ func TestMinimalFileAuditStillCoversRejectedAndSuccessfulRequests(t *testing.T) 
 	}
 	text := string(data)
 	for _, stage := range []string{
-		"[请求到达] traceId=rejected-trace", "[请求被拦截] traceId=rejected-trace", "[响应返回] traceId=rejected-trace",
-		"[请求到达] traceId=accepted-trace", "[中间件-鉴权] traceId=accepted-trace", "[业务入口] traceId=accepted-trace",
-		"[外部接口] traceId=accepted-trace HTTP=403 code=12153 原因=permission denied", "[响应返回] traceId=accepted-trace",
+		"[Request received] traceId=rejected-trace", "[Request intercepted] traceId=rejected-trace", "[Response returned] traceId=rejected-trace",
+		"[Request received] traceId=accepted-trace", "[Middleware-Auth] traceId=accepted-trace", "[Business entry] traceId=accepted-trace",
+		"[External API] traceId=accepted-trace HTTP=403 code=12153 reason=permission denied", "[Response returned] traceId=accepted-trace",
 	} {
 		if !strings.Contains(text, stage) {
 			t.Fatalf("missing audit stage %q: %s", stage, text)

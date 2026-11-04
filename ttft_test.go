@@ -55,8 +55,10 @@ func TestTTFTDeltaDefinition(t *testing.T) {
 	}
 }
 
-// 每条协议响应路径都实际消费分阶段SSE：先角色/心跳，再Token；确保计时不是首字节。
-// 六路径+纯控制流/截断流，验证日志、CLI模型快照与持久化样本用同一个duration。
+// Every protocol response path actually consumes staged SSE: role/heartbeat
+// first, then token; ensures the timing is not the first byte.
+// Six paths plus pure-control/truncated streams verify that the log, CLI model
+// snapshot and persisted sample share the same duration.
 func TestTTFTAllResponsePaths(t *testing.T) {
 	handlers := []struct {
 		name string
@@ -159,7 +161,7 @@ func TestTTFTAllResponsePaths(t *testing.T) {
 					}
 					raw, _ := os.ReadFile(logDir + "/" + f.Name())
 					text := string(raw)
-					if strings.Contains(text, "[首Token统计]") && strings.Contains(text, "口径="+ttftMetric) {
+					if strings.Contains(text, "[TTFT metrics]") && strings.Contains(text, "metric="+ttftMetric) {
 						found = true
 					}
 					if strings.Contains(text, "test content") || strings.Contains(text, "test reasoning") {
@@ -209,8 +211,9 @@ func TestTTFTLegacySamplesStayOnDiskButNotInAverage(t *testing.T) {
 	}
 }
 
-// 中途被切断的流不能进入平均：判定以上游流本身的结果为准，
-// 不再事后检查请求 Context（那会把已完整结束的响应也一起误杀）。
+// A stream cut off midway must not enter the average: the verdict follows the
+// upstream stream's own result, no longer checking the request Context
+// afterwards (that would also wrongly kill responses that already completed).
 func TestTTFTInterruptedStreamDoesNotCount(t *testing.T) {
 	modelStatsMu.Lock()
 	old := modelStats
@@ -220,7 +223,8 @@ func TestTTFTInterruptedStreamDoesNotCount(t *testing.T) {
 	r := httptest.NewRequest("POST", "/", nil)
 	reader := newTTFTReader(strings.NewReader(""), time.Now().Add(-time.Second))
 	observeFirstToken(reader, firstTokenChunk(t, `{"content":"x"}`))
-	// 读取出错或没有结束原因时，处理器会记为未完成。
+	// On read error or a missing finish reason, the handler records the stream
+	// as incomplete.
 	completeTokenStream(reader, false)
 	finishFirstToken(r, "interrupted", 1, reader)
 	modelStatsMu.Lock()
@@ -249,7 +253,8 @@ func TestTTFTFirstTokenStableAndLegacyCLISnapshotHidden(t *testing.T) {
 	}
 }
 
-// doneDisconnectWriter 模拟常见客户端：读到 [DONE] 就关闭连接，从而取消请求 Context。
+// doneDisconnectWriter simulates a common client: it closes the connection as
+// soon as it reads [DONE], cancelling the request Context.
 type doneDisconnectWriter struct {
 	*httptest.ResponseRecorder
 	cancel context.CancelFunc
@@ -263,8 +268,12 @@ func (w *doneDisconnectWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// 已完整结束（有结束原因、[DONE] 已下发）的响应，不能因为客户端随后断开而丢掉首 Token 样本。
-// 线上实测：响应本身完整，但延迟结算时看到请求 Context 已取消，样本被误丢。
+// A response that fully completed (has a finish reason and [DONE] was sent)
+// must not lose its first-token sample because the client disconnects
+// afterwards.
+// Observed in production: the response itself was complete, but the deferred
+// settlement saw the request Context already cancelled and the sample was
+// wrongly dropped.
 func TestTTFTCompletedStreamKeepsSampleAfterClientDisconnect(t *testing.T) {
 	isolatedGatewayConfig(t)
 	resetStatsState(t)

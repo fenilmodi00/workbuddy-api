@@ -59,7 +59,7 @@ func defaultIdentityReplacements(target string) map[string]string {
 	}
 	replacements := make(map[string]string)
 	if err := json.Unmarshal(embeddedDefaultRuntimeConfig, &template); err != nil {
-		log.Printf("[默认替换规则] 结果=未启用默认规则 原因=内置配置模板解析失败 说明=不记录模板正文")
+		log.Printf("[Default replacement rules] result=default rules not enabled reason=built-in config template failed to parse note=template body not logged")
 		return replacements
 	}
 	for old, newValue := range template.Identity.Replacements {

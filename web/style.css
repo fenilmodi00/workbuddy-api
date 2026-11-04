@@ -290,8 +290,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 }
 
 /* ---------------------------------------------------------------------------
-   总览 · 用量与性能（Token / 积分 / 耗时趋势）
-   复用既有主题令牌；仅新增图表系列色，明暗两套各自可读。
+   Overview · usage and performance (tokens / credits / latency trends)
+   Reuses existing theme tokens; only new chart series colors are added, readable in both light and dark.
 --------------------------------------------------------------------------- */
 :root {
   --series-token: #6d6bf5;
@@ -342,7 +342,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 
 .usage-section { margin-bottom: 22px; }
 
-/* 运行状态移到总览最上面后，标题自身不再叠加顶部间距。 */
+/* Runtime status moved to the top of the overview, so the heading no longer adds its own top margin. */
 .panel > .overview-subheading:first-child { margin-top: 0; }
 
 .usage-heading {
@@ -467,7 +467,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   position: relative;
   cursor: crosshair;
   display: grid;
-  /* 单列堆叠：合并后的用量图和耗时图都需要完整宽度。 */
+  /* Single-column stack: the merged usage and latency charts both need full width. */
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   margin-bottom: 14px;
@@ -626,7 +626,7 @@ circle.series-m5 { fill: var(--series-m5); }
 circle.series-m6 { fill: var(--series-m6); }
 circle.series-m7 { fill: var(--series-m7); }
 
-/* 柱形与折线同图时，柱形用半透明的同一系列色，折线保持实线覆盖在上层。 */
+/* Bars and lines in the same chart: bars use a translucent version of the same series color, lines stay solid on top. */
 .chart-bar { stroke: none; opacity: 0.55; }
 rect.series-token { fill: var(--series-token); }
 rect.series-credit { fill: var(--series-credit); }
@@ -656,7 +656,7 @@ rect.series-m7 { fill: var(--series-m7); }
   letter-spacing: 0.02em;
 }
 
-/* 总览运行状态：百分比是主视觉，告警用色条+文字双重区分，不依赖颜色辨识。 */
+/* Overview runtime status: the percentage is the main visual; alerts use a color bar plus text, not color alone. */
 .health-layout { display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(0, 2fr); gap: 16px; margin-bottom: 16px; height: 196px; }
 .health-layout .card { margin: 0; min-width: 0; height: 100%; overflow: hidden; }
 .account-alert-card { display: flex; flex-direction: column; }
@@ -732,7 +732,7 @@ rect.series-m7 { fill: var(--series-m7); }
 }
 
 /* ---------------------------------------------------------------------------
-   账号 网页新增 / 删除
+   Accounts: add via web / delete
 --------------------------------------------------------------------------- */
 .account-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
 

@@ -23,23 +23,23 @@ func (r toolSequenceRepairReport) changed() bool {
 		r.DroppedCalls > 0 || r.DroppedOutputs > 0
 }
 
-// repairToolMessageSequence 修复发往上游的现代 tool_calls/tool 序列。
+// repairToolMessageSequence repairs a modern tool_calls/tool sequence before it is sent upstream.
 //
-// 规则：
-//   - 先按 tool call ID 做对称裁剪：无结果的调用、无调用的结果、重复项全部删除；
-//   - 仅当同一批次至少有两个调用时，才把夹在调用和结果之间的普通消息移到结果之后；
-//   - Responses API 转换产生的连续/交错单调用 assistant 消息会合并为一个并行批次；
-//   - 结果按原始出现顺序保留，不按调用顺序重排。
+// Rules:
+//   - First, symmetric pruning by tool call ID: calls without results, results without calls, and duplicates are all removed;
+//   - Only when a batch contains at least two calls, ordinary messages wedged between calls and results are moved after the results;
+//   - Consecutive/interleaved single-call assistant messages produced by Responses API conversion are merged into one parallel batch;
+//   - Results keep their original appearance order and are not reordered by call order.
 func repairToolMessageSequence(obj map[string]any) toolSequenceRepairReport {
 	messages, ok := obj["messages"].([]any)
 	report := toolSequenceRepairReport{OriginalMessages: len(messages), FinalMessages: len(messages)}
 	if !ok || len(messages) == 0 {
 		return report
 	}
-	// 拓扑签名必须在就地修改前抓取（过滤阶段会改写 assistant 消息的 tool_calls）。
+	// The topology signature must be captured before in-place modification (the filtering stage rewrites assistant messages' tool_calls).
 	topologyBefore := toolMessageTopology(messages)
 
-	// 每个 ID 只保留第一条调用，以及位于该调用之后的第一条结果。
+	// Keep only the first call per ID, and the first result located after that call.
 	callMessageIndex := make(map[string]int)
 	callEntryIndex := make(map[string]int)
 	for messageIndex, messageAny := range messages {
@@ -138,8 +138,8 @@ func repairToolMessageSequence(obj map[string]any) toolSequenceRepairReport {
 	return report
 }
 
-// toolMessageTopology 生成有界的消息拓扑签名：仅角色与工具调用 ID，不含任何正文内容。
-// 最多记录前 40 条，用于在真实请求上核对工具序列结构而不泄露提示词或工具结果。
+// toolMessageTopology builds a bounded message topology signature: roles and tool call IDs only, no body content.
+// It records at most the first 40 entries, so the tool sequence structure can be checked on real requests without leaking prompts or tool results.
 func toolMessageTopology(messages []any) string {
 	const maxEntries = 200
 	parts := make([]string, 0, maxEntries)
@@ -313,7 +313,7 @@ func logToolSequenceRepair(r *http.Request, traceID string, requestID uint64, mo
 	result := "unchanged"
 	if report.changed() {
 		result = "repaired"
-		log.Printf("[ToolSequenceRepair] traceId=%s requestId=%d 模型=%s 结果=已修复 原消息=%d 修复后=%d 并行批次=%d 移出插入消息=%d 合并调用消息=%d 删除无结果调用=%d 删除孤儿或重复结果=%d 业务影响=避免上游11148工具调用序列断裂",
+		log.Printf("[ToolSequenceRepair] traceId=%s requestId=%d model=%s result=repaired originalMessages=%d finalMessages=%d parallelBatches=%d movedInsertedMessages=%d mergedCallMessages=%d droppedCallsWithoutResult=%d droppedOrphanOrDuplicateResults=%d businessImpact=avoids upstream 11148 tool call sequence break",
 			traceID, requestID, model, report.OriginalMessages, report.FinalMessages, report.ParallelBatches,
 			report.MovedMessages, report.MergedCallMessages, report.DroppedCalls, report.DroppedOutputs)
 	}
@@ -329,7 +329,7 @@ func logToolSequenceRepair(r *http.Request, traceID string, requestID uint64, mo
 		"merged_call_messages":         report.MergedCallMessages,
 		"dropped_calls_without_output": report.DroppedCalls,
 		"dropped_orphan_outputs":       report.DroppedOutputs,
-		"business_impact":              "出站工具调用序列已完成校验，防止上游11148错误",
+		"business_impact":              "outbound tool call sequence validated, prevents upstream 11148 error",
 	}
 	if report.changed() {
 		fields["topology_before"] = report.TopologyBefore

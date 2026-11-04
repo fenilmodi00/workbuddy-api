@@ -5,19 +5,23 @@ import (
 	"net/http"
 )
 
-// 上游按「输入 token + 输出预算」判断是否超出模型窗口：请求不带 max_tokens 时，
-// 上游会为输出默认预留 384000，标称 1048576 窗口的 deepseek-v4.1-flash 实际只剩
-// 约 664576 可用输入。长会话会在远未到窗口上限时被 400 code=11133
-// （model_param_invalid，报错文案不指明具体参数）拒绝，表现为「聊着聊着就 400」。
+// Upstream decides whether the model window is exceeded by "input tokens + output
+// budget": when a request carries no max_tokens, upstream reserves 384000 by default
+// for output, leaving deepseek-v4.1-flash's nominal 1048576 window with only about
+// 664576 usable input. Long sessions get rejected with 400 code=11133
+// (model_param_invalid; the error text does not name the specific parameter) well
+// before the window ceiling, appearing as "400 out of nowhere mid-conversation".
 //
-// 实测（2026-10-10，deepseek-v4.1-flash，窗口 1048576）：
+// Measured (2026-10-10, deepseek-v4.1-flash, window 1048576):
 //
-//	678912 输入 + 未声明输出预算       -> 400 code=11133
-//	678912 输入 + max_tokens=128000    -> 200
-//	678912 输入 + max_tokens=400000    -> 400 code=11133
+//	678912 input + no declared output budget  -> 400 code=11133
+//	678912 input + max_tokens=128000          -> 200
+//	678912 input + max_tokens=400000          -> 400 code=11133
 //
-// 因此仅在客户端未声明输出预算时，补上模型目录声明的输出上限，把被默认预留的
-// 额度收回来。客户端显式传入的值一律不覆盖；目录未收录的模型保持原样，不猜测。
+// Therefore, only when the client declared no output budget, add the output ceiling
+// declared in the model catalog to reclaim the quota reserved by default. Values the
+// client passes explicitly are never overridden; models missing from the catalog are
+// left as-is, with no guessing.
 func ensureUpstreamMaxTokens(obj map[string]any, r *http.Request, requestID uint64, traceID, modelName string) {
 	if clientDeclaredOutputBudget(obj) {
 		return
@@ -33,17 +37,17 @@ func ensureUpstreamMaxTokens(obj map[string]any, r *http.Request, requestID uint
 	if traceID == "" {
 		traceID = r.Header.Get("X-Trace-ID")
 	}
-	log.Printf("[输出预算] traceId=%s requestId=%d 模型=%s 阶段=上游请求序列化前 客户端已声明输出预算=false 结果=已补max_tokens=%d 业务影响=收回上游默认预留的输出额度，避免长会话被11133拒绝",
+	log.Printf("[Output budget] traceId=%s requestId=%d model=%s stage=before upstream request serialization client declared output budget=false result=max_tokens injected=%d business impact=reclaims output quota reserved by upstream default, preventing 11133 rejections on long sessions",
 		traceID, requestID, modelName, limit)
 	debugEvent(r, "debug", "max_tokens_budget_injected", map[string]any{
 		"model": modelName, "injected_max_tokens": limit,
-		"business_impact": "客户端未声明输出预算，网关按模型目录补入输出上限以收回上游默认预留额度；不覆盖客户端显式值",
+		"business_impact": "client declared no output budget; the gateway injects the output ceiling from the model catalog to reclaim upstream default reserved quota; explicit client values are never overridden",
 	})
 }
 
-// clientDeclaredOutputBudget 判断客户端是否已声明输出预算。
-// max_tokens 为 null 视为未声明；max_completion_tokens 是等价的新字段，
-// 只要其中任意一个带有效值就保持请求原样。
+// clientDeclaredOutputBudget decides whether the client has declared an output budget.
+// max_tokens of null counts as undeclared; max_completion_tokens is the equivalent
+// newer field — as long as either carries a valid value, the request is left untouched.
 func clientDeclaredOutputBudget(obj map[string]any) bool {
 	for _, key := range []string{"max_tokens", "max_completion_tokens"} {
 		if value, ok := obj[key]; ok && value != nil {
@@ -53,8 +57,8 @@ func clientDeclaredOutputBudget(obj map[string]any) bool {
 	return false
 }
 
-// modelMaxOutputTokens 返回模型在站点目录中声明的最大输出 token 数。
-// 目录未收录该模型时返回 0，调用方应保持请求原样。
+// modelMaxOutputTokens returns the maximum output token count declared in the site catalogs for the model.
+// Returns 0 when the model is not in any catalog; the caller should leave the request untouched.
 func modelMaxOutputTokens(modelID string) int {
 	modelID = normalizeModelName(modelID)
 	if modelID == "" {

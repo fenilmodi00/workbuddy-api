@@ -12,10 +12,10 @@ func TestFreeModelDisplayCountsUsesStatisticsMultipliers(t *testing.T) {
 	rows := []modelStatSnapshot{
 		{ID: "both", CNMultiplier: "0.00x", IntlMultiplier: "0.00x"},
 		{ID: "cn-only", CNMultiplier: "0.00x", IntlMultiplier: "0.29x"},
-		{ID: "intl-only", CNMultiplier: "收费(倍率未知)", IntlMultiplier: "0.00x"},
+		{ID: "intl-only", CNMultiplier: "Paid (unknown multiplier)", IntlMultiplier: "0.00x"},
 		{ID: "unknown", CNMultiplier: "-", IntlMultiplier: "-"},
-		// 复用统计表的最终倍率，而不是再从免费/收费标签做另一套推导。
-		{ID: "mixed", CNFree: "混合", CNMultiplier: "0.29x", IntlFree: "是", IntlMultiplier: "-"},
+		// Reuse the stats table's final multipliers instead of deriving a second set from free/paid labels.
+		{ID: "mixed", CNFree: "Mixed", CNMultiplier: "0.29x", IntlFree: "Yes", IntlMultiplier: "-"},
 	}
 	cn, intl := freeModelDisplayCounts(rows)
 	if cn != 2 || intl != 2 {
@@ -105,7 +105,7 @@ func TestFreeModelDisplaySnapshotKeepsMeasuredLedgerAndScheduling(t *testing.T) 
 	if beforeKind != afterKind || beforeUsable != afterUsable || afterUsable {
 		t.Fatal("display count changed scheduling eligibility")
 	}
-	// 全局禁用模型后，它从模型统计表消失，展示数量也应同步变化。
+	// After globally disabling the model, it disappears from the model stats table and the display counts should change accordingly.
 	setModelFilter([]string{"catalog-free"}, nil)
 	writeStatusSnapshot()
 	raw, err = os.ReadFile(statusSnapshotFile)

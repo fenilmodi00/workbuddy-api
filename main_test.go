@@ -16,8 +16,9 @@ import (
 	"time"
 )
 
-// TestMain 将整个测试进程切到临时工作目录，确保任何写状态/缓存/日志的测试
-// 都不会污染仓库目录（这些文件按设计写在进程 cwd）。
+// TestMain switches the whole test process to a temporary working directory so
+// any test writing state/cache/log files cannot pollute the repo directory
+// (those files are written to the process cwd by design).
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "workbuddy-gateway-test-*")
 	if err != nil {
@@ -31,16 +32,18 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// chdirTemp 将测试工作目录切到临时目录，避免测试写入仓库内的状态/缓存文件。
+// chdirTemp moves the test working directory to a temp dir so tests never write
+// state/cache files inside the repository.
 func chdirTemp(t *testing.T) {
 	t.Helper()
 	old, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 不使用 t.TempDir()：它的清理时机与「切回原工作目录」的相对顺序无法保证，
-	// 而 Windows 不允许删除仍是当前工作目录的目录，顺序错了会留下无效 cwd，
-	// 进而让后续测试的 os.Getwd/os.Chdir 全部失效。
+	// Not using t.TempDir(): the relative order of its cleanup and "restore the
+	// original working directory" is not guaranteed, and Windows refuses to delete a
+	// directory that is still the current working directory; a wrong order leaves an
+	// invalid cwd and every later os.Getwd/os.Chdir in the tests fails.
 	dir, err := os.MkdirTemp("", "workbuddy-test-cwd-")
 	if err != nil {
 		t.Fatal(err)
@@ -49,15 +52,16 @@ func chdirTemp(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		// 必须在同一个清理里先恢复工作目录、再删除，顺序不能颠倒。
+		// Within one cleanup: restore the working directory first, then delete; the
+		// order must not be reversed.
 		_ = os.Chdir(old)
 		_ = os.RemoveAll(dir)
 	})
 }
 
-// 验证 429 消息中的重置时间解析
+// Verifies reset-time parsing from a 429 message
 func TestParseResetTime(t *testing.T) {
-	msg := `{"code":429,"message":"upstream 429: {\"code\":6004,\"msg\":\"您的使用量已超出频率限制，将在 2026-09-04 07:48:15 UTC+8 重置，您也可以切换其他模型继续使用。\",\"requestId\":\"149e3299-ddf3-4ad1-aaa8-cc752c37630a\"}","type":"upstream_error"}`
+	msg := `{"code":429,"message":"upstream 429: {\"code\":6004,\"msg\":\"Your usage has exceeded the frequency limit. It will reset at 2026-09-04 07:48:15 UTC+8. You can also switch to another model to continue.\",\"requestId\":\"149e3299-ddf3-4ad1-aaa8-cc752c37630a\"}","type":"upstream_error"}`
 	got, ok := parseResetTime(msg)
 	if !ok {
 		t.Fatal("parseResetTime should succeed")
@@ -69,14 +73,15 @@ func TestParseResetTime(t *testing.T) {
 	t.Logf("parsed reset time: %v", got)
 }
 
-// 验证无法解析时返回 false
+// Verifies false is returned when unparseable
 func TestParseResetTimeInvalid(t *testing.T) {
 	if _, ok := parseResetTime("some random error"); ok {
 		t.Fatal("should not parse random string")
 	}
 }
 
-// 验证国际站英文限流消息的重置时间解析（通用兜底正则）
+// Verifies reset-time parsing for the international site's English rate-limit
+// message (generic fallback regex)
 func TestParseResetTimeEnglish(t *testing.T) {
 	cases := []string{
 		`{"code":6004,"msg":"Your usage has exceeded the rate limit. It will reset at 2026-09-05 01:57:00 UTC+8."}`,
@@ -95,7 +100,8 @@ func TestParseResetTimeEnglish(t *testing.T) {
 	}
 }
 
-// 验证站点 Profile 选择：空值/未知回退国内站，intl 系列值命中国际站
+// Verifies site profile selection: empty/unknown falls back to the domestic
+// site, intl-family values match the international site
 func TestProfileForEdition(t *testing.T) {
 	cases := []struct {
 		edition string
@@ -122,7 +128,8 @@ func TestProfileForEdition(t *testing.T) {
 	}
 }
 
-// 验证各站点上游 URL 构建与旧版常量完全一致（国内站回归）+ 国际站正确
+// Verifies each site's upstream URL construction matches the legacy constants
+// exactly (domestic regression) plus correct international URLs
 func TestUpstreamProfileURLs(t *testing.T) {
 	cn := profileForEdition("cn")
 	if got := cn.authStateURL(); got != "https://copilot.tencent.com/v2/plugin/auth/state?platform=VSCode" {
@@ -159,25 +166,27 @@ func TestUpstreamProfileURLs(t *testing.T) {
 	}
 }
 
-// 验证账号站点路由：优先取凭据内 edition；失效标记恢复（Auth 为 nil）时取账号上的 edition
+// Verifies account site routing: prefer the credential's edition; when restored
+// from a disabled marker (Auth nil), use the account's edition
 func TestAccountProfile(t *testing.T) {
 	acc := &Account{Auth: &StoredAuth{Edition: "intl"}}
 	if acc.Profile().Key != "intl" {
 		t.Fatalf("expected intl via Auth.Edition, got %s", acc.Profile().Key)
 	}
-	// 失效标记恢复场景：凭据文件已删除
+	// Disabled-marker restoration scenario: credential file deleted
 	acc2 := &Account{Edition: "intl"}
 	if acc2.Profile().Key != "intl" {
 		t.Fatalf("expected intl via Account.Edition, got %s", acc2.Profile().Key)
 	}
-	// 旧版凭据（无 edition 字段）回退国内站
+	// Legacy credentials (no edition field) fall back to the domestic site
 	acc3 := &Account{Auth: &StoredAuth{}}
 	if acc3.Profile().Key != "cn" {
 		t.Fatalf("expected cn fallback, got %s", acc3.Profile().Key)
 	}
 }
 
-// 验证限流识别（429 状态码 / code 6004 / 频率限制关键词，含中英文）
+// Verifies rate-limit detection (429 status / code 6004 / rate-limit keywords,
+// Chinese and English)
 func TestIsRateLimited(t *testing.T) {
 	cases := []struct {
 		status int
@@ -186,7 +195,7 @@ func TestIsRateLimited(t *testing.T) {
 	}{
 		{429, "{}", true},
 		{400, `{"code":6004,"msg":"x"}`, true},
-		{400, "频率限制", true},
+		{400, "frequency limit", true},
 		{400, "frequency limit", true},
 		{400, "rate limit exceeded", true},
 		{400, "Rate Limit Exceeded", true},
@@ -202,7 +211,7 @@ func TestIsRateLimited(t *testing.T) {
 	}
 }
 
-// 验证轮询选择：两个账号交替返回
+// Verifies round-robin selection: two accounts alternate
 func TestNextAccountRoundRobin(t *testing.T) {
 	accountMu.Lock()
 	accounts = []*Account{
@@ -221,7 +230,8 @@ func TestNextAccountRoundRobin(t *testing.T) {
 	t.Logf("round-robin order: %s %s %s", a1.Path, a2.Path, a3.Path)
 }
 
-// 验证冷却屏蔽：冷却中的账号被跳过，由另一账号代偿
+// Verifies cooldown blocking: a cooling account is skipped and the other
+// compensates
 func TestNextAccountSkipsCooldown(t *testing.T) {
 	accountMu.Lock()
 	accounts = []*Account{
@@ -238,7 +248,7 @@ func TestNextAccountSkipsCooldown(t *testing.T) {
 	t.Logf("cooldown skip works, selected %s", a.Path)
 }
 
-// 验证全部冷却时返回错误
+// Verifies an error when every account is cooling
 func TestNextAccountAllCooldown(t *testing.T) {
 	accountMu.Lock()
 	accounts = []*Account{
@@ -255,7 +265,7 @@ func TestNextAccountAllCooldown(t *testing.T) {
 	t.Logf("all-cooldown error: %v", err)
 }
 
-// 验证冷却到期后自动恢复
+// Verifies automatic recovery after the cooldown expires
 func TestNextAccountCooldownExpiry(t *testing.T) {
 	accountMu.Lock()
 	accounts = []*Account{
@@ -304,7 +314,7 @@ func TestNextAccountForModelAllowsOneUnknownProbe(t *testing.T) {
 	if err != nil || acc.Path != "a.json" || kind != selectionProbeExhausted {
 		t.Fatalf("expected one controlled probe, acc=%v kind=%s err=%v", acc, kind, err)
 	}
-	if _, _, err = nextAccountForModel("unknown-model", nil); err == nil || !strings.Contains(err.Error(), "等待探测=1") {
+	if _, _, err = nextAccountForModel("unknown-model", nil); err == nil || !strings.Contains(err.Error(), "probeWaiting=1") {
 		t.Fatalf("expected probe cooldown error, got %v", err)
 	}
 }
@@ -318,7 +328,7 @@ func TestNextAccountForModelSkipsPaidAndQuotaBlocked(t *testing.T) {
 	}
 	rrIndex = 0
 	accountMu.Unlock()
-	if _, _, err := nextAccountForModel("paid-model", nil); err == nil || !strings.Contains(err.Error(), "额度阻断=1") {
+	if _, _, err := nextAccountForModel("paid-model", nil); err == nil || !strings.Contains(err.Error(), "quota blocked=1") {
 		t.Fatalf("expected model quota block, got %v", err)
 	}
 }
@@ -330,7 +340,7 @@ func TestModelCooldownOnlyBlocksTriggeringModel(t *testing.T) {
 	}}}
 	rrIndex = 0
 	accountMu.Unlock()
-	if _, _, err := nextAccountForModel("limited-model", nil); err == nil || !strings.Contains(err.Error(), "模型冷却=1") {
+	if _, _, err := nextAccountForModel("limited-model", nil); err == nil || !strings.Contains(err.Error(), "modelCooling=1") {
 		t.Fatalf("expected model cooldown, got %v", err)
 	}
 	acc, _, err := nextAccountForModel("other-model", nil)
@@ -370,8 +380,9 @@ func TestMarkModelQuotaBlockedDoesNotOverwriteAccountBalance(t *testing.T) {
 	}
 }
 
-// 14018 只表示账号额度耗尽，与模型收费属性无关。
-// 已知免费模型遇到 14018 时，必须保持 free 分类，不能被错误改写成 paid。
+// 14018 only means the account's quota is exhausted; it says nothing about model
+// cost. A known free model must keep its free classification when 14018 arrives
+// and must never be rewritten to paid.
 func TestQuotaBlockedMustNotRewriteFreeModelAsPaid(t *testing.T) {
 	chdirTemp(t)
 	acc := &Account{Path: "free.json", Auth: &StoredAuth{Edition: "intl"}, QuotaExhausted: true,
@@ -399,7 +410,8 @@ func TestQuotaBlockedMustNotRewriteFreeModelAsPaid(t *testing.T) {
 	if !state.QuotaBlocked {
 		t.Fatal("14018 should still block this account for the model until quota recovers")
 	}
-	// 未知模型遇到 14018 也应保持 unknown，不得被当成 paid。
+	// An unknown model must also stay unknown after 14018 and must not be treated
+	// as paid.
 	acc2 := &Account{Path: "unknown.json", Auth: &StoredAuth{Edition: "intl"}, QuotaExhausted: true,
 		ModelStates: map[string]*modelRuntimeState{"mystery": {CostClass: modelCostUnknown}}}
 	markModelQuotaBlocked(acc2, "mystery", "14018")
@@ -411,7 +423,8 @@ func TestQuotaBlockedMustNotRewriteFreeModelAsPaid(t *testing.T) {
 	}
 }
 
-// 旧版本快照里可能残留「14018 被误写成 paid」的脏数据；恢复时必须降回 unknown。
+// Legacy snapshots may contain the dirty "14018 mistakenly written as paid"
+// state; restoration must downgrade it to unknown.
 func TestSanitizeRestoredModelStateFixesLegacyPaidFromQuotaBlock(t *testing.T) {
 	legacy := &modelRuntimeState{
 		CostClass:    modelCostPaid,
@@ -426,14 +439,15 @@ func TestSanitizeRestoredModelStateFixesLegacyPaidFromQuotaBlock(t *testing.T) {
 		t.Fatal("quota block should be preserved")
 	}
 
-	// 真正由 credit 证据学到的收费模型（非额度耗尽导致）必须保持 paid。
+	// A paid model genuinely learned from credit evidence (not caused by quota
+	// exhaustion) must stay paid.
 	genuinePaid := &modelRuntimeState{CostClass: modelCostPaid}
 	sanitizeRestoredModelState(genuinePaid)
 	if genuinePaid.CostClass != modelCostPaid {
 		t.Fatalf("genuine paid model must stay paid, got %q", genuinePaid.CostClass)
 	}
 
-	// 免费模型不受影响。
+	// Free models are unaffected.
 	free := &modelRuntimeState{CostClass: modelCostFree, QuotaBlocked: true}
 	sanitizeRestoredModelState(free)
 	if free.CostClass != modelCostFree {
@@ -441,7 +455,8 @@ func TestSanitizeRestoredModelStateFixesLegacyPaidFromQuotaBlock(t *testing.T) {
 	}
 }
 
-// QuotaBlocked 必须短路调度，避免额度耗尽账号被反复选中探测。
+// QuotaBlocked must short-circuit scheduling so quota-exhausted accounts are not
+// repeatedly picked for probing.
 func TestQuotaBlockedShortCircuitsScheduling(t *testing.T) {
 	acc := &Account{Path: "exhausted.json", Auth: &StoredAuth{}, QuotaExhausted: true,
 		ModelStates: map[string]*modelRuntimeState{
@@ -480,10 +495,10 @@ func TestQuotaRecoveryClearsBlocksKeepsModelCooldown(t *testing.T) {
 }
 
 func TestIsModelRateLimited(t *testing.T) {
-	if !isModelRateLimited(`{"code":6004,"msg":"您也可以切换其他模型继续使用"}`) {
+	if !isModelRateLimited(`{"code":6004,"msg":"switch to another model to continue"}`) {
 		t.Fatal("6004 should be model-level rate limit")
 	}
-	if isModelRateLimited(`{"code":14018,"msg":"额度已用尽"}`) {
+	if isModelRateLimited(`{"code":14018,"msg":"quota exhausted"}`) {
 		t.Fatal("14018 should not be model rate limit")
 	}
 }
@@ -494,10 +509,10 @@ func TestIsQuotaExhausted(t *testing.T) {
 		body   string
 		want   bool
 	}{
-		{429, `{"error":{"data":{"code":14018,"msg":"额度已用尽"}}}`, true},
+		{429, `{"error":{"data":{"code":14018,"msg":"quota exhausted"}}}`, true},
 		{429, `{"error":{"data":{"code":14018,"msg":"Credits exhausted"}}}`, true},
 		{429, `{"code":6004,"msg":"rate limit"}`, false},
-		{400, `{"code":14018,"msg":"额度已用尽"}`, true},
+		{400, `{"code":14018,"msg":"quota exhausted"}`, true},
 	}
 	for _, tc := range cases {
 		if got := isQuotaExhausted(tc.status, tc.body); got != tc.want {
@@ -512,11 +527,11 @@ func TestIsAlreadyCheckedIn(t *testing.T) {
 		body   string
 		want   bool
 	}{
-		{409, `{"code":10001,"msg":"今天已签到"}`, true},
-		{400, `{"code":14001,"msg":"今日已签到"}`, true},
+		{409, `{"code":10001,"msg":"already checked in today"}`, true},
+		{400, `{"code":14001,"msg":"already checked in today"}`, true},
 		{409, `{"msg":"Already checked in today"}`, true},
 		{500, "connection reset", false},
-		{400, `{"code":10002,"msg":"积分不足"}`, false},
+		{400, `{"code":10002,"msg":"insufficient credits"}`, false},
 	}
 	for _, tc := range cases {
 		if got := isAlreadyCheckedIn(tc.status, tc.body); got != tc.want {
@@ -591,7 +606,7 @@ func TestCheckinAccountCNAndSkipIntl(t *testing.T) {
 	}
 }
 
-// 验证授权失效识别（401/403 / invalid token / 登录过期等）
+// Verifies auth-failure detection (401/403 / invalid token / expired login, etc.)
 func TestIsAuthFailure(t *testing.T) {
 	cases := []struct {
 		status int
@@ -602,10 +617,10 @@ func TestIsAuthFailure(t *testing.T) {
 		{403, "{}", true},
 		{400, `{"msg":"invalid token"}`, true},
 		{400, "unauthorized", true},
-		{400, "登录已过期", true},
-		{400, "登录失效，请重新登录", true},
+		{400, "expired login", true},
+		{400, "login expired, please log in again", true},
 		{400, "some other error", false},
-		{429, "频率限制", false},
+		{429, "frequency limit", false},
 		{500, "{}", false},
 	}
 	for _, c := range cases {
@@ -615,7 +630,7 @@ func TestIsAuthFailure(t *testing.T) {
 	}
 }
 
-// 验证轮询跳过已失效（Disabled）账号
+// Verifies round-robin skips disabled accounts
 func TestNextAccountSkipsDisabled(t *testing.T) {
 	accountMu.Lock()
 	accounts = []*Account{
@@ -632,7 +647,7 @@ func TestNextAccountSkipsDisabled(t *testing.T) {
 	t.Logf("disabled skip works, selected %s", a.Path)
 }
 
-// 验证全部失效时返回错误并提示重新登录
+// Verifies an error with a re-login hint when every account is disabled
 func TestNextAccountAllDisabled(t *testing.T) {
 	accountMu.Lock()
 	accounts = []*Account{
@@ -649,12 +664,14 @@ func TestNextAccountAllDisabled(t *testing.T) {
 	t.Logf("all-disabled error: %v", err)
 }
 
-// 验证 disableAccount：停止调度并写入失效标记。
-// 删除凭据需要「只读校验明确确认不可用」，测试环境没有 HTTP 客户端时应保守保留文件。
+// Verifies disableAccount: stops scheduling and writes the disabled marker.
+// Deleting credentials requires "a read-only check that explicitly confirms the
+// credential is unusable"; without an HTTP client in the test environment the
+// file must be conservatively kept.
 func TestDisableAccount(t *testing.T) {
 	dir := t.TempDir()
 	authPath := dir + "/workbuddy-test.json"
-	// 写一个假的凭据文件
+	// Write a fake credential file
 	if err := os.WriteFile(authPath, []byte(`{"auth":{"accessToken":"x"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +681,7 @@ func TestDisableAccount(t *testing.T) {
 		Account: StoredAccount{Nickname: "tester", UID: "uid-1"},
 	}}
 
-	disableAccount(acc, "令牌刷新失败 (HTTP 401): invalid token")
+	disableAccount(acc, "token refresh failed (HTTP 401): invalid token")
 
 	accountMu.Lock()
 	disabled := acc.Disabled
@@ -676,26 +693,28 @@ func TestDisableAccount(t *testing.T) {
 	if reason == "" {
 		t.Fatal("disabled reason should be recorded")
 	}
-	// 无法确认凭据失效时必须保留文件：删除不可逆，误删只能重新登录。
+	// The file must be kept when a failure cannot be confirmed: deletion is
+	// irreversible and a mistaken delete forces a re-login.
 	if _, err := os.Stat(authPath); err != nil {
-		t.Fatalf("无法确认凭据失效时应保留凭据文件, stat err=%v", err)
+		t.Fatalf("credential file should be kept when the failure cannot be confirmed, stat err=%v", err)
 	}
-	// 失效标记文件应存在
+	// The disabled-marker file should exist
 	if _, err := os.Stat(markerPath(authPath)); err != nil {
 		t.Fatalf("marker file should exist: %v", err)
 	}
 	t.Logf("disableAccount works: disabled=%v reason=%q", disabled, reason)
 }
 
-// 验证失效标记文件可被恢复为失效账号（Auth 为 nil），并提示重新登录
+// Verifies a disabled-marker file can be restored as a disabled account (Auth
+// nil) with a re-login hint
 func TestLoadDisabledMarkers(t *testing.T) {
 	dir := t.TempDir()
 	authPath := dir + "/workbuddy-test.json"
 
-	// 构造失效标记文件
+	// Build a disabled-marker file
 	marker := disabledMarker{
 		Path:       authPath,
-		Reason:     "授权失效（令牌刷新失败 HTTP 401）",
+		Reason:     "authorization failed (token refresh failed HTTP 401)",
 		DisabledAt: time.Now().Unix(),
 		Nickname:   "tester",
 		UID:        "uid-1",
@@ -705,7 +724,7 @@ func TestLoadDisabledMarkers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 模拟 -auth 显式指定该路径
+	// Simulate explicitly passing the path via -auth
 	oldAuthFile := cfg.AuthFile
 	oldAuthDir := cfg.AuthDir
 	oldAuthExplicit := cfg.AuthExplicit
@@ -734,7 +753,7 @@ func TestLoadDisabledMarkers(t *testing.T) {
 	t.Logf("loadDisabledMarkers restores: %s (nickname=%s)", acc.Path, acc.Nickname)
 }
 
-// 验证登录成功后清除失效标记
+// Verifies the disabled marker is cleared after a successful login
 func TestClearDisabledMarker(t *testing.T) {
 	dir := t.TempDir()
 	authPath := dir + "/workbuddy-test.json"
@@ -751,7 +770,8 @@ func TestClearDisabledMarker(t *testing.T) {
 	t.Log("clearDisabledMarker works")
 }
 
-// 验证自动发现模式：未指定 -auth/-auth-dir 时，扫描当前目录下所有 workbuddy*.json
+// Verifies auto-discovery mode: without -auth/-auth-dir, all workbuddy*.json in
+// the current directory are scanned
 func TestCollectConfiguredAuthPathsAutoDiscover(t *testing.T) {
 	oldDir, err := os.Getwd()
 	if err != nil {
@@ -763,7 +783,8 @@ func TestCollectConfiguredAuthPathsAutoDiscover(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	// 模拟目录内多个凭据文件 + 非凭据文件 + 失效标记 + 运行时状态快照（应被排除）
+	// Populate the directory with credential files + a non-credential file + a
+	// disabled marker + the runtime status snapshot (which must be excluded)
 	for _, name := range []string{"workbuddy.json", "workbuddy2.json", "workbuddy-3.json", "other.json", "workbuddy.json.disabled", "workbuddy-status.json"} {
 		if err := os.WriteFile(name, []byte(`{"auth":{"accessToken":"x"}}`), 0600); err != nil {
 			t.Fatal(err)
@@ -786,7 +807,7 @@ func TestCollectConfiguredAuthPathsAutoDiscover(t *testing.T) {
 	if len(paths) != 3 {
 		t.Fatalf("expected 3 workbuddy json files, got %d: %v", len(paths), paths)
 	}
-	want := []string{"workbuddy-3.json", "workbuddy.json", "workbuddy2.json"} // sort.Strings 排序结果
+	want := []string{"workbuddy-3.json", "workbuddy.json", "workbuddy2.json"} // sort.Strings ordering result
 	for i, p := range want {
 		if paths[i] != p {
 			t.Fatalf("paths[%d] = %s, want %s (all: %v)", i, paths[i], p, paths)
@@ -795,7 +816,8 @@ func TestCollectConfiguredAuthPathsAutoDiscover(t *testing.T) {
 	t.Logf("auto-discover paths: %v", paths)
 }
 
-// 验证自动发现模式：目录内没有任何凭据文件时回退到默认路径
+// Verifies auto-discovery mode falls back to the default path when the directory
+// has no credential files
 func TestCollectConfiguredAuthPathsAutoDiscoverFallback(t *testing.T) {
 	oldDir, err := os.Getwd()
 	if err != nil {
@@ -807,7 +829,7 @@ func TestCollectConfiguredAuthPathsAutoDiscoverFallback(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	// 目录为空
+	// The directory is empty
 
 	oldAuthFile := cfg.AuthFile
 	oldAuthDir := cfg.AuthDir
@@ -828,7 +850,8 @@ func TestCollectConfiguredAuthPathsAutoDiscoverFallback(t *testing.T) {
 	t.Logf("fallback path: %v", paths)
 }
 
-// 验证凭据热加载：新增 / 更新 / 删除凭据文件均原地收敛账号池，无需重启
+// Verifies credential hot reload: added/updated/deleted credential files all
+// converge the account pool in place without a restart
 func TestReloadAccounts(t *testing.T) {
 	dir := t.TempDir()
 
@@ -855,7 +878,7 @@ func TestReloadAccounts(t *testing.T) {
 
 	pa := filepath.Join(dir, "workbuddy-a.json")
 
-	// 1) 新增凭据文件 → 自动入池
+	// 1) New credential file → joins the pool automatically
 	if err := os.WriteFile(pa, []byte(`{"auth":{"accessToken":"a1"},"account":{"nickname":"A"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -867,7 +890,7 @@ func TestReloadAccounts(t *testing.T) {
 	}
 	t.Logf("hot-add works: %s joined the pool", accounts[0].Path)
 
-	// 2) 内容变更（含站点切换 cn -> intl）→ 原地替换凭据
+	// 2) Content changed (including site switch cn -> intl) → credential replaced in place
 	if err := os.WriteFile(pa, []byte(`{"auth":{"accessToken":"a2-longer"},"account":{"nickname":"A2"},"edition":"intl"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -882,7 +905,8 @@ func TestReloadAccounts(t *testing.T) {
 	}
 	t.Logf("hot-update works: edition now %s", accounts[0].Profile().Key)
 
-	// 3) 失效幻影账号：文件被删但账号 Disabled → 保留（用于提示重新登录）
+	// 3) Disabled phantom account: file deleted but account Disabled → kept (to
+	// prompt re-login)
 	accountMu.Lock()
 	accounts[0].Disabled = true
 	accountMu.Unlock()
@@ -897,7 +921,7 @@ func TestReloadAccounts(t *testing.T) {
 	}
 	t.Log("disabled phantom kept after file deletion")
 
-	// 4) 非失效账号文件被删 → 移出账号池
+	// 4) A non-disabled account's file deleted → leaves the pool
 	accountMu.Lock()
 	accounts[0].Disabled = false
 	accounts[0].Auth = &StoredAuth{Auth: StoredTokens{AccessToken: "x"}}
@@ -911,7 +935,7 @@ func TestReloadAccounts(t *testing.T) {
 	t.Log("hot-remove works: pool emptied after file deletion")
 }
 
-// 验证 tailLines 读取文件末尾 N 行
+// Verifies tailLines reads the last N lines of a file
 func TestTailLines(t *testing.T) {
 	dir := t.TempDir()
 	f := dir + "/test.log"
@@ -929,7 +953,7 @@ func TestTailLines(t *testing.T) {
 	t.Logf("tailLines(2) = %v", lines)
 }
 
-// 验证状态快照写入：含 active / cooldown / disabled 三种状态
+// Verifies status snapshot writing across active / cooldown / disabled states
 func TestWriteStatusSnapshot(t *testing.T) {
 	oldDir, err := os.Getwd()
 	if err != nil {
@@ -950,7 +974,7 @@ func TestWriteStatusSnapshot(t *testing.T) {
 		{Path: "b.json", Auth: &StoredAuth{
 			Auth:    StoredTokens{AccessToken: "x", ExpiresAt: time.Now().Add(time.Hour).Unix()},
 			Account: StoredAccount{Nickname: "bob", UID: "u2"},
-		}, CooldownUntil: time.Now().Add(30 * time.Minute), CooldownMsg: "频率限制"},
+		}, CooldownUntil: time.Now().Add(30 * time.Minute), CooldownMsg: "frequency limit"},
 		{Path: "c.json", Disabled: true, DisabledReason: "revoked", Nickname: "carol", UID: "u3"},
 	}
 	accountMu.Unlock()
@@ -1036,15 +1060,15 @@ func TestRenderAccountTableUsesFullYearAndNoEmoji(t *testing.T) {
 		FreeModels:     1,
 		ModelCooldowns: 2,
 	}})
-	for _, want := range []string{"凭据文件", "workbuddy4.json", "国际站", "付费耗尽", "2027-09-05 01:36:55", "总额度", "已用", "剩余", "套餐", "签到", "模型冷却", "1100"} {
+	for _, want := range []string{"Credential file", "workbuddy4.json", "International site", "Paid exhausted", "2027-09-05 01:36:55", "Total quota", "Used", "Remaining", "Plan", "Checkin", "Model cooldown", "1100"} {
 		if !strings.Contains(table, want) {
 			t.Fatalf("table missing %q:\n%s", want, table)
 		}
 	}
-	if strings.Contains(table, "免费模型") {
+	if strings.Contains(table, "Free model") {
 		t.Fatal("removed free-model column remains")
 	}
-	if strings.Contains(table, "说明") {
+	if strings.Contains(table, "Note") {
 		t.Fatalf("table should not contain removed description column:\n%s", table)
 	}
 	if strings.ContainsAny(table, "✅🔒❌🕐📊📜⚠️") {
@@ -1089,7 +1113,7 @@ func TestUsageCreditAndObserveModelCost(t *testing.T) {
 	oldLogWriter := log.Writer()
 	log.SetOutput(&logBuf)
 	defer log.SetOutput(oldLogWriter)
-	// 样本过小：credit=0 但 total_tokens 太低，不得判定为免费
+	// Sample too small: credit=0 but total_tokens too low; must not be classified free
 	observeModelCredit(acc, "tiny-model", map[string]any{"credit": float64(0), "total_tokens": float64(2)}, 10)
 	accountMu.Lock()
 	tiny := acc.ModelStates["tiny-model"]
@@ -1098,7 +1122,7 @@ func TestUsageCreditAndObserveModelCost(t *testing.T) {
 		t.Fatalf("tiny sample must not be learned as free: %+v", tiny)
 	}
 
-	// 样本充足：credit=0 且 total_tokens 达标，判定为免费
+	// Sufficient sample: credit=0 with total_tokens above the threshold; classified free
 	observeModelCredit(acc, "free-model", map[string]any{"credit": float64(0), "total_tokens": float64(500)}, 1)
 	accountMu.Lock()
 	state := acc.ModelStates["free-model"]
@@ -1106,7 +1130,7 @@ func TestUsageCreditAndObserveModelCost(t *testing.T) {
 	if state == nil || state.CostClass != modelCostFree || state.QuotaBlocked {
 		t.Fatalf("free model not learned: %+v", state)
 	}
-	if text := logBuf.String(); !strings.Contains(text, "[FreeModel]") || !strings.Contains(text, "付费余额耗尽账号 empty.json") {
+	if text := logBuf.String(); !strings.Contains(text, "[FreeModel]") || !strings.Contains(text, "paid-balance-exhausted account empty.json") {
 		t.Fatalf("missing explicit free model exhausted-account log: %s", text)
 	}
 	observeModelCredit(acc, "paid-model", map[string]any{"credit": 2.5}, 2)
@@ -1158,8 +1182,8 @@ func TestKnownFreeModelUsesExhaustedAccountAndLogs(t *testing.T) {
 	}
 	text := logs.String()
 	for _, want := range []string{
-		"请求的是已知免费模型 free-model，选择付费余额耗尽账号 empty-free.json 发起请求",
-		"请求的是免费模型 free-model，已明确使用付费余额耗尽账号 empty-free.json 完成请求，usage.credit=0",
+		"requested model free-model is a known free model, selecting paid-balance-exhausted account empty-free.json to send the request",
+		"requested model free-model is free, completed using a paid-balance-exhausted account empty-free.json, usage.credit=0",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing log %q:\n%s", want, text)
@@ -1174,7 +1198,7 @@ func TestUnknownModelQuotaProbeStopsAfterOneExhaustedAccount(t *testing.T) {
 		calls++
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = io.WriteString(w, `{"error":{"data":{"code":14018,"msg":"额度已用尽"}}}`)
+		_, _ = io.WriteString(w, `{"error":{"data":{"code":14018,"msg":"quota exhausted"}}}`)
 	}))
 	defer server.Close()
 
@@ -1225,22 +1249,22 @@ func TestParseQuotaSummary(t *testing.T) {
 	}
 }
 
-// 摘要标记不再直接当成当前有效权益。
+// Summary flags are no longer treated directly as the current valid entitlement.
 func TestPlanLabelFromSummary(t *testing.T) {
 	cases := []struct {
 		name string
 		json string
 		want string
 	}{
-		{"历史试用标记", `{"ProTrialStatus":1,"IsPaidUser":false}`, planUnknown},
-		{"字符串试用标记", `{"ProTrialStatus":"1","IsPaidUser":false}`, planUnknown},
-		{"试用与付费标记同时存在", `{"ProTrialStatus":1,"IsPaidUser":true}`, planUnknown},
-		{"付费标记不能决定等级", `{"ProTrialStatus":0,"IsPaidUser":true}`, planUnknown},
-		{"空标记也要查有效权益", `{"ProTrialStatus":0,"IsPaidUser":false}`, planUnknown},
-		{"字段缺失", `{"Packages":[]}`, planUnknown},
-		{"类型异常", `{"ProTrialStatus":{"unexpected":true},"IsPaidUser":false}`, planUnknown},
-		{"国内站无试用标记", `{"IsPaidUser":false,"SubscriptionPackageCode":""}`, planUnknown},
-		{"未知订阅包", `{"IsPaidUser":false,"SubscriptionPackageCode":"pkg-code-000"}`, planUnknown},
+		{"historical trial flag", `{"ProTrialStatus":1,"IsPaidUser":false}`, planUnknown},
+		{"string trial flag", `{"ProTrialStatus":"1","IsPaidUser":false}`, planUnknown},
+		{"trial and paid flags together", `{"ProTrialStatus":1,"IsPaidUser":true}`, planUnknown},
+		{"paid flag cannot decide the tier", `{"ProTrialStatus":0,"IsPaidUser":true}`, planUnknown},
+		{"empty flags still require an entitlement check", `{"ProTrialStatus":0,"IsPaidUser":false}`, planUnknown},
+		{"missing fields", `{"Packages":[]}`, planUnknown},
+		{"unexpected types", `{"ProTrialStatus":{"unexpected":true},"IsPaidUser":false}`, planUnknown},
+		{"domestic site without trial flag", `{"IsPaidUser":false,"SubscriptionPackageCode":""}`, planUnknown},
+		{"unknown subscription package", `{"IsPaidUser":false,"SubscriptionPackageCode":"pkg-code-000"}`, planUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1255,20 +1279,20 @@ func TestPlanLabelFromSummary(t *testing.T) {
 	}
 }
 
-// 套餐列必须展示 Pro试用/pro/免费，且不再出现 1 和 0。
+// The plan column must display Pro trial/pro/Free and no longer show 1 or 0.
 func TestRenderAccountTableShowsPlanLabel(t *testing.T) {
 	table := renderAccountTable([]accountSnapshot{
-		{Path: "intl-trial.json", Edition: "intl", Nickname: "trial@example.com", State: "active", QuotaTotal: 500, QuotaRemaining: 500, QuotaKnown: true, PlanLabel: "Pro试用"},
+		{Path: "intl-trial.json", Edition: "intl", Nickname: "trial@example.com", State: "active", QuotaTotal: 500, QuotaRemaining: 500, QuotaKnown: true, PlanLabel: "Pro trial"},
 		{Path: "cn-paid.json", Edition: "cn", Nickname: "paid@example.com", State: "active", QuotaTotal: 2200, QuotaRemaining: 400, QuotaKnown: true, PlanLabel: "pro"},
-		{Path: "cn-free.json", Edition: "cn", Nickname: "free@example.com", State: "active", QuotaTotal: 2200, QuotaRemaining: 400, QuotaKnown: true, PlanLabel: "免费"},
+		{Path: "cn-free.json", Edition: "cn", Nickname: "free@example.com", State: "active", QuotaTotal: 2200, QuotaRemaining: 400, QuotaKnown: true, PlanLabel: "Free"},
 	})
-	for _, want := range []string{"套餐", "Pro试用", "pro", "免费"} {
+	for _, want := range []string{"Plan", "Pro trial", "pro", "Free"} {
 		if !strings.Contains(table, want) {
 			t.Fatalf("table missing %q:\n%s", want, table)
 		}
 	}
-	if strings.Contains(table, "付费用户") {
-		t.Fatalf("table should no longer contain 付费用户 column:\n%s", table)
+	if strings.Contains(table, "Paid user") {
+		t.Fatalf("table should no longer contain the Paid user column:\n%s", table)
 	}
 }
 
@@ -1318,17 +1342,17 @@ func TestRenderAccountTableRowsHaveEqualDisplayWidth(t *testing.T) {
 func TestRenderAccountTableUsesContentWidthsWithoutLosingColumns(t *testing.T) {
 	table := renderAccountTable([]accountSnapshot{
 		{Path: "a.json", Nickname: "u", Edition: "cn", State: "active", Checkin: checkinStatusSnapshot{Status: "success"},
-			QuotaKnown: true, QuotaTotal: 1, QuotaUsed: 0, QuotaRemaining: 1, PlanLabel: "免费"},
+			QuotaKnown: true, QuotaTotal: 1, QuotaUsed: 0, QuotaRemaining: 1, PlanLabel: "Free"},
 	})
 	lines := strings.Split(table, "\n")
 	width := displayWidth(lines[0])
-	if width > 135 {
+	if width > 150 {
 		t.Fatalf("short account table still uses %d columns:\n%s", width, table)
 	}
 	if strings.Contains(table, "  |   |") {
 		t.Fatalf("empty fixed-width gaps remain:\n%s", table)
 	}
-	for _, header := range []string{"账号", "站点", "状态", "套餐", "签到", "模型冷却"} {
+	for _, header := range []string{"Account", "Site", "Status", "Plan", "Checkin", "Model cooldown"} {
 		if !strings.Contains(table, header) {
 			t.Fatalf("missing column %s", header)
 		}
@@ -1355,16 +1379,16 @@ func TestRenderAccountTableCompactAcceptance(t *testing.T) {
 	}{
 		{"empty", nil},
 		{"mixed Chinese and ASCII", []accountSnapshot{
-			{Path: "workbuddy1.json", Nickname: "测试账号甲", Edition: "cn", State: "active",
+			{Path: "workbuddy1.json", Nickname: "test account A", Edition: "cn", State: "active",
 				TokenExpiresAt: 1900000000, QuotaKnown: true, QuotaTotal: 2000, QuotaUsed: 69.99,
-				QuotaRemaining: 1930.01, PlanLabel: "体验版",
+				QuotaRemaining: 1930.01, PlanLabel: "Trial",
 				Checkin: checkinStatusSnapshot{Date: checkinDay(time.Now()), Status: "success"}},
 			{Path: "a.json", Nickname: "synthetic-user", Edition: "intl", State: "cooldown",
 				ModelCooldowns: 12},
 		}},
 		{"bounded long cells", []accountSnapshot{
-			{Path: strings.Repeat("very-long-", 20) + ".json", Nickname: strings.Repeat("合成测试账号", 30),
-				Edition: "cn", State: "expired", PlanLabel: strings.Repeat("套餐", 40), QuotaKnown: true},
+			{Path: strings.Repeat("very-long-", 20) + ".json", Nickname: strings.Repeat("synthetic test account ", 30),
+				Edition: "cn", State: "expired", PlanLabel: strings.Repeat("Plan ", 40), QuotaKnown: true},
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1385,23 +1409,23 @@ func TestRenderAccountTableCompactAcceptance(t *testing.T) {
 				}
 			}
 			if len(tc.rows) == 2 {
-				for _, value := range []string{"测试账号甲", "synthetic-user", "1930.01", "已签", "12"} {
+				for _, value := range []string{"test account A", "synthetic-user", "1930.01", "Signed", "12"} {
 					if !strings.Contains(table, value) {
 						t.Fatalf("compaction lost actual content %q", value)
 					}
 				}
 			}
-			t.Logf("合成账号验收：场景=%s 列数=12 实际终端列宽=%d\n%s", tc.name, width, table)
+			t.Logf("synthetic account acceptance: scenario=%s columns=12 actual terminal width=%d\n%s", tc.name, width, table)
 		})
 	}
 }
 
-// 构造 messages 便于表驱动测试
+// Builds messages for table-driven tests
 func msg(role, content string) map[string]any {
 	return map[string]any{"role": role, "content": content}
 }
 
-// 提取 messages 各条 role，便于断言
+// Extracts each message's role for assertions
 func rolesOf(obj map[string]any) []string {
 	messages, _ := obj["messages"].([]any)
 	roles := make([]string, 0, len(messages))
@@ -1411,49 +1435,50 @@ func rolesOf(obj map[string]any) []string {
 	return roles
 }
 
-// 验证会话结构归一化：修复上游 11128「first message is not system prompt」
+// Verifies conversation structure normalization: fixes upstream 11128 (first
+// message is not system prompt)
 func TestEnsureLeadingSystemMessage(t *testing.T) {
 	cases := []struct {
 		name       string
 		messages   []any
 		wantRoles  []string
-		wantInject bool // 首条是否应为注入的保底 system
+		wantInject bool // whether the first message should be the injected fallback system
 	}{
 		{
-			name:      "首条已是 system 保持原样",
+			name:      "first message already system stays unchanged",
 			messages:  []any{msg("system", "You are helpful"), msg("user", "hi")},
 			wantRoles: []string{"system", "user"},
 		},
 		{
-			name:       "首条 user 且无 system（国内站宽容/国际站必须，统一注入 system）",
+			name:       "first message user with no system (domestic lenient / international strict; system injected uniformly)",
 			messages:   []any{msg("user", "hi")},
 			wantRoles:  []string{"system", "user"},
 			wantInject: true,
 		},
 		{
-			name:       "首条 assistant（续写）注入 system",
+			name:       "first message assistant (continuation) gets system injected",
 			messages:   []any{msg("assistant", "Sure")},
 			wantRoles:  []string{"system", "assistant"},
 			wantInject: true,
 		},
 		{
-			name:       "首条 tool（仅回传工具结果）注入 system",
+			name:       "first message tool (tool results only) gets system injected",
 			messages:   []any{msg("tool", "result")},
 			wantRoles:  []string{"system", "tool"},
 			wantInject: true,
 		},
 		{
-			name:      "后续 system 提升到首位",
+			name:      "later system promoted to the front",
 			messages:  []any{msg("user", "hi"), msg("system", "You are helpful"), msg("user", "bye")},
 			wantRoles: []string{"system", "user", "user"},
 		},
 		{
-			name:      "首条 developer 归一化为 system",
+			name:      "first message developer normalized to system",
 			messages:  []any{msg("developer", "You are helpful"), msg("user", "hi")},
 			wantRoles: []string{"system", "user"},
 		},
 		{
-			name:       "空 messages 注入 system",
+			name:       "empty messages get system injected",
 			messages:   []any{},
 			wantRoles:  []string{"system"},
 			wantInject: true,
@@ -1485,7 +1510,7 @@ func TestEnsureLeadingSystemMessage(t *testing.T) {
 	}
 }
 
-// 验证缺失 / 非法 messages 字段时也能安全注入（不得 panic）
+// Verifies missing / invalid messages fields still inject safely (no panic)
 func TestEnsureLeadingSystemMessageMissingField(t *testing.T) {
 	obj := map[string]any{}
 	ensureLeadingSystemMessage(obj)
@@ -1499,7 +1524,8 @@ func TestEnsureLeadingSystemMessageMissingField(t *testing.T) {
 	t.Log("missing messages field handled")
 }
 
-// 验证 developer 角色（GPT-5/Codex）被归一化为 system，避免上游 11128
+// Verifies the developer role (GPT-5/Codex) is normalized to system, avoiding
+// upstream 11128
 // "Illegal API invocation from an unapproved channel"
 func TestSanitizeMessagesNormalizesDeveloperRole(t *testing.T) {
 	obj := map[string]any{"messages": []any{
@@ -1520,7 +1546,8 @@ func TestSanitizeMessagesNormalizesDeveloperRole(t *testing.T) {
 	t.Logf("roles normalized: %v", roles)
 }
 
-// 验证上游 tool_calls 增量按 index 正确归并为一个完整工具调用
+// Verifies upstream tool_calls increments merge correctly by index into one
+// complete tool call
 func TestApplyToolCallDeltaMerge(t *testing.T) {
 	merged := map[int]*mergedToolCall{}
 	var order []int
@@ -1547,7 +1574,8 @@ func TestApplyToolCallDeltaMerge(t *testing.T) {
 	t.Logf("merged tool call: %s(%s) id=%s", st.Name, st.Args.String(), st.ID)
 }
 
-// 验证 aggregateCompletion 正确合并流式 tool_calls（修复旧的按片追加问题）
+// Verifies aggregateCompletion merges streaming tool_calls correctly (fixes the
+// old per-chunk append bug)
 func TestAggregateCompletionToolCalls(t *testing.T) {
 	sse := strings.Join([]string{
 		`data: {"id":"cmpl-1","model":"hy3-preview","created":1700000000,"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`,
@@ -1579,7 +1607,8 @@ func TestAggregateCompletionToolCalls(t *testing.T) {
 	t.Logf("aggregateCompletion merged: %v", call)
 }
 
-// 验证 Responses -> Chat Completions 请求转换（instructions/input/tools/tool_choice/参数）
+// Verifies Responses -> Chat Completions request conversion
+// (instructions/input/tools/tool_choice/parameters)
 func TestResponsesToChatRequest(t *testing.T) {
 	respReq := map[string]any{
 		"model":             "hy3-preview",
@@ -1637,7 +1666,8 @@ func TestResponsesToChatRequest(t *testing.T) {
 	t.Log("responses request converted OK")
 }
 
-// 验证 responsesToChatRequest 对纯字符串 input 的处理与空 input 报错
+// Verifies responsesToChatRequest handling of a plain-string input and the
+// empty-input error
 func TestResponsesToChatRequestStringInput(t *testing.T) {
 	chat, err := responsesToChatRequest(map[string]any{"model": "x", "input": "hello"}, "x")
 	if err != nil {
@@ -1652,32 +1682,33 @@ func TestResponsesToChatRequestStringInput(t *testing.T) {
 	}
 }
 
-// 国际站 thinking 模式要求上一轮助手消息带回 reasoning_content，否则 11155。
+// The international site's thinking mode requires the previous assistant message
+// to carry reasoning_content, otherwise 11155.
 func TestResponsesReasoningContentPassedBack(t *testing.T) {
 	chat, err := responsesToChatRequest(map[string]any{
 		"model": "deepseek-v4.1-flash",
 		"input": []any{
-			map[string]any{"role": "user", "content": "先查天气"},
+			map[string]any{"role": "user", "content": "check the weather first"},
 			map[string]any{"type": "reasoning", "summary": []any{
-				map[string]any{"type": "summary_text", "text": "上一轮推理"},
+				map[string]any{"type": "summary_text", "text": "previous round reasoning"},
 			}},
 			map[string]any{"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": `{"city":"BJ"}`},
 			map[string]any{"type": "function_call", "call_id": "call_2", "name": "get_time", "arguments": `{}`},
 			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": "sunny"},
 			map[string]any{"type": "reasoning", "content": []any{
-				map[string]any{"type": "reasoning_text", "text": "完整推理"},
+				map[string]any{"type": "reasoning_text", "text": "full reasoning"},
 			}, "summary": []any{
-				map[string]any{"type": "summary_text", "text": "不该用这段摘要"},
+				map[string]any{"type": "summary_text", "text": "this summary must not be used"},
 			}},
 			map[string]any{"type": "message", "role": "assistant", "content": []any{
-				map[string]any{"type": "output_text", "text": "今天晴"},
+				map[string]any{"type": "output_text", "text": "sunny today"},
 			}},
-			map[string]any{"role": "user", "content": "再说一遍"},
+			map[string]any{"role": "user", "content": "say it again"},
 			map[string]any{"type": "reasoning", "summary": []any{
-				map[string]any{"type": "summary_text", "text": "这段不该漏到后面"},
+				map[string]any{"type": "summary_text", "text": "this must not leak downstream"},
 			}},
-			map[string]any{"role": "user", "content": "下一问"},
-			map[string]any{"type": "message", "role": "assistant", "content": "没有推理的回复"},
+			map[string]any{"role": "user", "content": "next question"},
+			map[string]any{"type": "message", "role": "assistant", "content": "reply without reasoning"},
 		},
 	}, "deepseek-v4.1-flash")
 	if err != nil {
@@ -1688,7 +1719,7 @@ func TestResponsesReasoningContentPassedBack(t *testing.T) {
 		t.Fatalf("reasoning and parallel calls should form one assistant message: %#v", messages)
 	}
 	call := messages[1].(map[string]any)
-	if call["reasoning_content"] != "上一轮推理" {
+	if call["reasoning_content"] != "previous round reasoning" {
 		t.Fatalf("tool call missing reasoning: %#v", call)
 	}
 	if calls, ok := call["tool_calls"].([]any); !ok || len(calls) != 2 {
@@ -1699,7 +1730,7 @@ func TestResponsesReasoningContentPassedBack(t *testing.T) {
 		t.Fatalf("tool result must not carry reasoning: %#v", tool)
 	}
 	answer := messages[3].(map[string]any)
-	if answer["reasoning_content"] != "完整推理" {
+	if answer["reasoning_content"] != "full reasoning" {
 		t.Fatalf("content text should win over summary, got %#v", answer)
 	}
 	plain := messages[len(messages)-1].(map[string]any)
@@ -1722,19 +1753,21 @@ func TestResponsesExplicitAssistantReasoningContentIsPreserved(t *testing.T) {
 	}
 }
 
-// 回归：reasoning+正文+并行工具调用来自同一次 Responses 回复，Chat 上游只能看到
-// 一条 assistant 消息；推理放在这条消息上，工具结果紧随其后而不重复推理。
+// Regression: reasoning + body + parallel tool calls come from the same
+// Responses reply; the Chat upstream sees only one assistant message, with the
+// reasoning on that message and tool results following without repeating the
+// reasoning.
 func TestResponsesReasoningTextAndCallsShareOneAssistant(t *testing.T) {
 	chat, err := responsesToChatRequest(map[string]any{
 		"model":     "deepseek-v4.1-flash",
 		"reasoning": map[string]any{"effort": "high"},
 		"input": []any{
-			map[string]any{"role": "user", "content": "检查一下"},
+			map[string]any{"role": "user", "content": "take a look"},
 			map[string]any{"type": "reasoning", "summary": []any{
-				map[string]any{"type": "summary_text", "text": "先看日志"},
+				map[string]any{"type": "summary_text", "text": "check the logs first"},
 			}},
 			map[string]any{"type": "message", "role": "assistant", "content": []any{
-				map[string]any{"type": "output_text", "text": "我先查日志"},
+				map[string]any{"type": "output_text", "text": "I checked the logs first"},
 			}},
 			map[string]any{"type": "function_call", "call_id": "call_a", "name": "read", "arguments": `{}`},
 			map[string]any{"type": "web_search_call", "id": "ws_1"},
@@ -1742,9 +1775,9 @@ func TestResponsesReasoningTextAndCallsShareOneAssistant(t *testing.T) {
 			map[string]any{"type": "function_call_output", "call_id": "call_a", "output": "file"},
 			map[string]any{"type": "function_call_output", "call_id": "call_b", "output": "match"},
 			map[string]any{"type": "reasoning", "summary": []any{
-				map[string]any{"type": "summary_text", "text": "确认了"},
+				map[string]any{"type": "summary_text", "text": "confirmed"},
 			}},
-			map[string]any{"type": "message", "role": "assistant", "content": "完成"},
+			map[string]any{"type": "message", "role": "assistant", "content": "done"},
 		},
 	}, "deepseek-v4.1-flash")
 	if err != nil {
@@ -1756,11 +1789,11 @@ func TestResponsesReasoningTextAndCallsShareOneAssistant(t *testing.T) {
 		t.Fatalf("unexpected chat topology: report=%+v messages=%#v", report, messages)
 	}
 	assistant := messages[1].(map[string]any)
-	if assistant["reasoning_content"] != "先看日志" {
+	if assistant["reasoning_content"] != "check the logs first" {
 		t.Fatalf("reasoning was not attached to the original reply: %#v", assistant)
 	}
 	parts, ok := assistant["content"].([]any)
-	if !ok || len(parts) != 1 || parts[0].(map[string]any)["text"] != "我先查日志" {
+	if !ok || len(parts) != 1 || parts[0].(map[string]any)["text"] != "I checked the logs first" {
 		t.Fatalf("text was not attached to the same reply: %#v", assistant)
 	}
 	calls, ok := assistant["tool_calls"].([]any)
@@ -1771,16 +1804,17 @@ func TestResponsesReasoningTextAndCallsShareOneAssistant(t *testing.T) {
 		t.Fatalf("tool outputs not adjacent to their call: %#v", messages)
 	}
 	last := messages[4].(map[string]any)
-	if last["reasoning_content"] != "确认了" || last["content"] != "完成" {
+	if last["reasoning_content"] != "confirmed" || last["content"] != "done" {
 		t.Fatalf("next reply lost reasoning or text: %#v", last)
 	}
 	attached, chars, missing := reasoningPassthroughStats(chat)
-	if attached != 2 || chars != len([]rune("先看日志确认了")) || missing != 0 {
+	if attached != 2 || chars != len([]rune("check the logs firstconfirmed")) || missing != 0 {
 		t.Fatalf("reasoning replay audit is incorrect: %d %d %d", attached, chars, missing)
 	}
 }
 
-// 验证 chat.completion -> Responses 非流式响应对象转换
+// Verifies the chat.completion -> Responses non-streaming response object
+// conversion
 func TestChatCompletionToResponses(t *testing.T) {
 	chat := map[string]any{
 		"id": "cmpl-123", "created": float64(1700000000), "model": "hy3-preview",

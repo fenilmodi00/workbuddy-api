@@ -34,17 +34,17 @@ func TestCredentialIdentityExtractsAccountAndRealm(t *testing.T) {
 		t.Fatalf("id=%q realm=%q", id, realm)
 	}
 	if id, realm := credentialIdentity(StoredTokens{AccessToken: "opaque"}); id != "" || realm != "" {
-		t.Fatalf("不可解析的令牌应返回空: %q %q", id, realm)
+		t.Fatalf("unparseable token should return empty: %q %q", id, realm)
 	}
 	if shortID("user-abc") == shortID("user-abd") {
-		t.Fatal("短标识应能区分不同账号")
+		t.Fatal("short identifiers should distinguish different accounts")
 	}
 	if strings.Contains(shortID("user-abc"), "user-abc") {
-		t.Fatal("短标识不应包含原文")
+		t.Fatal("short identifier should not contain the original text")
 	}
 }
 
-// credTestServer 同时提供刷新接口与只读校验接口。
+// credTestServer serves both the refresh API and the read-only verification API.
 func credTestServer(t *testing.T, refreshToken, refreshSub string, verifyStatus int, verifyBody string) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +60,7 @@ func credTestServer(t *testing.T, refreshToken, refreshSub string, verifyStatus 
 			w.WriteHeader(verifyStatus)
 			_, _ = w.Write([]byte(verifyBody))
 		default:
-			t.Errorf("非预期路径: %s", r.URL.Path)
+			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -93,10 +93,10 @@ func TestRefreshCommitsOnlyVerifiedCredential(t *testing.T) {
 		verifyBody    string
 		wantCommitted bool
 	}{
-		{"账号一致且校验通过", "user-A", 200, `{"code":0,"data":{"Packages":[]}}`, true},
-		{"账号标识不一致", "user-B", 200, `{"code":0,"data":{"Packages":[]}}`, false},
-		{"新凭据校验被拒", "user-A", 401, `{"code":12153,"msg":"invalid_grant"}`, false},
-		{"权限403无法判定不丢弃新凭据", "user-A", 403, `{"code":10002,"msg":"forbidden"}`, true},
+		{"account consistent and verification passed", "user-A", 200, `{"code":0,"data":{"Packages":[]}}`, true},
+		{"account identifier mismatch", "user-B", 200, `{"code":0,"data":{"Packages":[]}}`, false},
+		{"new credential verification rejected", "user-A", 401, `{"code":12153,"msg":"invalid_grant"}`, false},
+		{"permission 403 undeterminable, new credential not discarded", "user-A", 403, `{"code":10002,"msg":"forbidden"}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			chdirTemp(t)
@@ -104,7 +104,7 @@ func TestRefreshCommitsOnlyVerifiedCredential(t *testing.T) {
 			acc := newVerifiedTestAccount(t, "user-A")
 			oldAccess := acc.Auth.Auth.AccessToken
 
-			err := refreshAccountToken(acc, "单元测试")
+			err := refreshAccountToken(acc, "unit test")
 
 			var onDisk StoredAuth
 			raw, readErr := os.ReadFile(acc.Path)
@@ -116,37 +116,37 @@ func TestRefreshCommitsOnlyVerifiedCredential(t *testing.T) {
 			}
 			if tc.wantCommitted {
 				if err != nil {
-					t.Fatalf("应提交新凭据: %v", err)
+					t.Fatalf("should commit new credential: %v", err)
 				}
 				if onDisk.Auth.RefreshToken != "new-refresh" {
-					t.Fatalf("磁盘未写入新刷新令牌: %+v", onDisk.Auth)
+					t.Fatalf("new refresh token not written to disk: %+v", onDisk.Auth)
 				}
 				if acc.RefreshFailCount != 0 {
-					t.Fatal("成功提交后应清零失败计数")
+					t.Fatal("failure count should be reset to zero after successful commit")
 				}
 			} else {
 				if err == nil {
-					t.Fatal("应拒绝提交")
+					t.Fatal("commit should be refused")
 				}
 				if onDisk.Auth.RefreshToken != "old-refresh" || onDisk.Auth.AccessToken != oldAccess {
-					t.Fatalf("旧凭据应原样保留: %+v", onDisk.Auth)
+					t.Fatalf("old credential should be preserved unchanged: %+v", onDisk.Auth)
 				}
 				if acc.Auth.Auth.RefreshToken != "old-refresh" {
-					t.Fatal("内存中的旧凭据也应保留")
+					t.Fatal("old credential in memory should also be preserved")
 				}
-				// 校验失败不应累计到「判定失效」的计数里，否则会把还能用的账号停掉。
+				// Verification failures should not count toward the "judged expired" counter, otherwise accounts that still work would get disabled.
 				if acc.RefreshFailCount != 0 {
-					t.Fatalf("覆盖前校验失败不应计入失效计数: %d", acc.RefreshFailCount)
+					t.Fatalf("pre-overwrite verification failure should not count toward the expiry counter: %d", acc.RefreshFailCount)
 				}
-				if !strings.Contains(acc.LastRefreshError, "覆盖前校验") {
-					t.Fatalf("应记录告警: %q", acc.LastRefreshError)
+				if !strings.Contains(acc.LastRefreshError, "pre-overwrite validation") {
+					t.Fatalf("warning should be recorded: %q", acc.LastRefreshError)
 				}
 			}
 		})
 	}
 }
 
-// 覆盖前校验必须在日志里可见，否则生产上无法确认它真的执行过。
+// Pre-overwrite verification must be visible in the logs, otherwise production cannot confirm it actually ran.
 func TestOverwriteVerificationIsObservable(t *testing.T) {
 	chdirTemp(t)
 	credTestServer(t, "new-refresh", "user-A", 200, `{"code":0,"data":{"Packages":[]}}`)
@@ -156,27 +156,27 @@ func TestOverwriteVerificationIsObservable(t *testing.T) {
 	log.SetOutput(&buf)
 	defer log.SetOutput(oldWriter)
 
-	if err := refreshAccountToken(acc, "单元测试"); err != nil {
+	if err := refreshAccountToken(acc, "unit test"); err != nil {
 		t.Fatal(err)
 	}
 	log.SetOutput(oldWriter)
 	out := buf.String()
-	for _, want := range []string{"阶段=覆盖前校验", "结果=通过", "与旧凭据一致", "允许覆盖旧凭据"} {
+	for _, want := range []string{"stage=pre-overwrite check", "result=passed", "matches old credential", "allowing overwrite of old credential"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("覆盖前校验缺少可观测日志 %q:\n%s", want, out)
+			t.Fatalf("pre-overwrite verification missing observable log %q:\n%s", want, out)
 		}
 	}
-	// 拒绝覆盖时也必须留下原因。
+	// When overwriting is refused, a reason must also be recorded.
 	credTestServer(t, "new-refresh", "user-B", 200, `{"code":0,"data":{"Packages":[]}}`)
 	acc2 := newVerifiedTestAccount(t, "user-A")
 	buf.Reset()
 	log.SetOutput(&buf)
-	if err := refreshAccountToken(acc2, "单元测试"); err == nil {
-		t.Fatal("账号不一致时应拒绝覆盖")
+	if err := refreshAccountToken(acc2, "unit test"); err == nil {
+		t.Fatal("overwrite should be refused on account mismatch")
 	}
 	log.SetOutput(oldWriter)
-	if !strings.Contains(buf.String(), "账号标识与旧凭据不一致") {
-		t.Fatalf("拒绝覆盖应说明原因:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "account identifier differs from old credential") {
+		t.Fatalf("refused overwrite should state the reason:\n%s", buf.String())
 	}
 }
 
@@ -188,11 +188,11 @@ func TestVerifyAccountUsableDistinguishesDeadFromUnknown(t *testing.T) {
 		wantUsable bool
 		wantErr    bool
 	}{
-		{"可用", 200, `{"code":0,"data":{}}`, true, false},
-		{"明确失效401", 401, `{"code":12153,"msg":"invalid_grant"}`, false, false},
-		{"权限或风控403无法确认失效", 403, `{"code":10002,"msg":"forbidden"}`, false, true},
-		{"明确令牌无效403", 403, `{"code":10002,"msg":"invalid token"}`, false, false},
-		{"无法判定500", 500, `{"code":500,"msg":"oops"}`, false, true},
+		{"usable", 200, `{"code":0,"data":{}}`, true, false},
+		{"explicitly expired 401", 401, `{"code":12153,"msg":"invalid_grant"}`, false, false},
+		{"permission or risk-control 403 cannot confirm expiry", 403, `{"code":10002,"msg":"forbidden"}`, false, true},
+		{"explicitly invalid token 403", 403, `{"code":10002,"msg":"invalid token"}`, false, false},
+		{"undeterminable 500", 500, `{"code":500,"msg":"oops"}`, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			chdirTemp(t)
@@ -211,9 +211,9 @@ func TestVerifyAccountUsableDistinguishesDeadFromUnknown(t *testing.T) {
 			}
 		})
 	}
-	// 缺少令牌时不得发起请求，也不得判定为可用。
+	// When the token is missing, no request may be issued and the credential must not be judged usable.
 	if usable, err := verifyAccountUsable(t.Context(), StoredAuth{}); usable || err == nil {
-		t.Fatal("缺少访问令牌应返回不可用且带原因")
+		t.Fatal("missing access token should return unusable with a reason")
 	}
 }
 
@@ -224,17 +224,17 @@ func TestDisableAccountKeepsOrDeletesBasedOnVerification(t *testing.T) {
 		body        string
 		wantDeleted bool
 	}{
-		{"凭据仍可用则保留", 200, `{"code":0,"data":{}}`, false},
-		{"无法判定则保守保留", 500, `{"code":500,"msg":"oops"}`, false},
-		{"普通403保留文件但仍停止调度", 403, `{"code":10002,"msg":"forbidden"}`, false},
-		{"明确令牌无效403才删除", 403, `{"code":10002,"msg":"invalid token"}`, true},
-		{"确认失效才删除", 401, `{"code":12153,"msg":"invalid_grant"}`, true},
+		{"credential still usable, keep", 200, `{"code":0,"data":{}}`, false},
+		{"undeterminable, conservatively keep", 500, `{"code":500,"msg":"oops"}`, false},
+		{"plain 403 keeps file but stops scheduling", 403, `{"code":10002,"msg":"forbidden"}`, false},
+		{"explicitly invalid token 403 deletes", 403, `{"code":10002,"msg":"invalid token"}`, true},
+		{"confirmed expiry deletes", 401, `{"code":12153,"msg":"invalid_grant"}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			chdirTemp(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer still-valid" {
-					t.Error("缺少鉴权头")
+					t.Error("missing Authorization header")
 				}
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
@@ -250,32 +250,32 @@ func TestDisableAccountKeepsOrDeletesBasedOnVerification(t *testing.T) {
 			}
 			acc := &Account{Path: authPath, Auth: &StoredAuth{Auth: StoredTokens{AccessToken: "still-valid"}}}
 
-			disableAccount(acc, "测试")
+			disableAccount(acc, "test")
 
 			if !acc.Disabled {
-				t.Fatal("无论是否删除都应停止调度")
+				t.Fatal("scheduling should stop regardless of deletion")
 			}
 			_, statErr := os.Stat(authPath)
 			if deleted := os.IsNotExist(statErr); deleted != tc.wantDeleted {
 				t.Fatalf("deleted=%v want=%v", deleted, tc.wantDeleted)
 			}
 			if _, err := os.Stat(markerPath(authPath)); err != nil {
-				t.Fatalf("失效标记应始终写入: %v", err)
+				t.Fatalf("expiry marker should always be written: %v", err)
 			}
 		})
 	}
 }
 
-// 凭据文件仍在但存在失效标记时，重启后账号必须保持失效，不能被重新调度。
+// When the credential file still exists but an expiry marker is present, the account must remain disabled after restart and must not be rescheduled.
 func TestDisabledMarkerWinsWhenCredentialFileRemains(t *testing.T) {
 	chdirTemp(t)
-	// 用工作目录内的相对路径，才能走到「自动发现」这条真实扫描路径。
+	// Only a relative path inside the working directory reaches the real "auto-discovery" scan path.
 	path := "workbuddy1.json"
 	if err := os.WriteFile(path, []byte(`{"auth":{"accessToken":"kept"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	// 标记必须比凭据文件新，才代表「凭据之后没有被重新登录覆盖」。
-	marker := disabledMarker{Path: path, Reason: "测试保留", DisabledAt: time.Now().Unix()}
+	// The marker must be newer than the credential file, meaning "the credential was not overwritten by a later re-login".
+	marker := disabledMarker{Path: path, Reason: "test kept", DisabledAt: time.Now().Unix()}
 	data, _ := json.Marshal(marker)
 	if err := os.WriteFile(markerPath(path), data, 0600); err != nil {
 		t.Fatal(err)
@@ -298,21 +298,21 @@ func TestDisabledMarkerWinsWhenCredentialFileRemains(t *testing.T) {
 	})
 
 	if !got.Disabled {
-		t.Fatal("存在失效标记时，凭据文件仍在也必须保持失效")
+		t.Fatal("with an expiry marker present, the account must stay disabled even though the credential file remains")
 	}
-	if got.DisabledReason != "测试保留" {
-		t.Fatalf("失效原因未恢复: %q", got.DisabledReason)
+	if got.DisabledReason != "test kept" {
+		t.Fatalf("expiry reason not restored: %q", got.DisabledReason)
 	}
 }
 
-// 凭据文件比标记新，说明用户已重新登录或手动续期，旧标记应自动清除。
+// When the credential file is newer than the marker, the user has re-logged in or manually renewed, and the old marker should be cleared automatically.
 func TestStaleDisabledMarkerClearedWhenCredentialIsNewer(t *testing.T) {
 	chdirTemp(t)
 	path := "workbuddy2.json"
 	if err := os.WriteFile(path, []byte(`{"auth":{"accessToken":"renewed"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	marker := disabledMarker{Path: path, Reason: "旧标记", DisabledAt: time.Now().Add(-time.Hour).Unix()}
+	marker := disabledMarker{Path: path, Reason: "old marker", DisabledAt: time.Now().Add(-time.Hour).Unix()}
 	data, _ := json.Marshal(marker)
 	if err := os.WriteFile(markerPath(path), data, 0600); err != nil {
 		t.Fatal(err)
@@ -335,9 +335,9 @@ func TestStaleDisabledMarkerClearedWhenCredentialIsNewer(t *testing.T) {
 	})
 
 	if got.Disabled {
-		t.Fatal("凭据文件更新后不应再被判为失效")
+		t.Fatal("account should not be judged expired after the credential file was updated")
 	}
 	if _, err := os.Stat(markerPath(path)); !os.IsNotExist(err) {
-		t.Fatalf("过期标记应被清除: %v", err)
+		t.Fatalf("expired marker should be cleared: %v", err)
 	}
 }

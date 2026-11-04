@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// 场景 A：任意模型（非 dsv4.1、接口未写明免费、无促销日期）首次实测 credit=0
-// 必须被识别为免费——证明识别逻辑不依赖任何模型名白名单。
+// Scenario A: any model (not dsv4.1, not declared free by the API, no promo dates)
+// measured at credit=0 for the first time must be recognized as free — proving the
+// recognition logic depends on no model-name whitelist.
 func TestAnyModelLearnedFreeFromCreditZero(t *testing.T) {
 	resetModelStats()
 	chdirTemp(t)
@@ -39,7 +40,7 @@ func TestAnyModelLearnedFreeFromCreditZero(t *testing.T) {
 		accountMu.Unlock()
 	}()
 
-	// 一个全新的、从未见过的模型名，接口目录里也没有它
+	// A brand-new, never-seen model name that is not in the API catalog either
 	const brandNew = "some-brand-new-free-model-2099"
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"`+brandNew+`","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
@@ -53,12 +54,12 @@ func TestAnyModelLearnedFreeFromCreditZero(t *testing.T) {
 	state := acc.ModelStates[brandNew]
 	accountMu.Unlock()
 	if state == nil || state.CostClass != modelCostFree {
-		t.Fatalf("任意新模型实测 credit=0 应识别为免费，got %+v", state)
+		t.Fatalf("any new model measured at credit=0 should be recognized as free, got %+v", state)
 	}
-	t.Logf("模型 %s 已按 credit=0 动态识别为免费（无任何硬编码）", brandNew)
+	t.Logf("model %s dynamically recognized as free from credit=0 (no hardcoding)", brandNew)
 }
 
-// 场景 B：原本免费的模型后来恢复收费，必须能自动改判为收费。
+// Scenario B: a model that was originally free and later becomes paid must be re-classified as paid automatically.
 func TestFreeModelCanFlipToPaidWhenCreditReturns(t *testing.T) {
 	resetModelStats()
 	chdirTemp(t)
@@ -98,40 +99,40 @@ func TestFreeModelCanFlipToPaidWhenCreditReturns(t *testing.T) {
 		handleChatCompletions(rec, req)
 	}
 
-	// 第一轮：限时免费中，credit=0
+	// Round 1: limited-time free, credit=0
 	call()
 	accountMu.Lock()
 	afterFree := acc.ModelStates[model].CostClass
 	accountMu.Unlock()
 	if afterFree != modelCostFree {
-		t.Fatalf("限时免费期间应为 free, got %q", afterFree)
+		t.Fatalf("should be free during the limited-time free period, got %q", afterFree)
 	}
 
-	// 第二轮：限时免费结束，上游开始计费 credit=1.25
+	// Round 2: limited-time free ended, upstream starts charging, credit=1.25
 	credit = 1.25
 	call()
 	accountMu.Lock()
 	afterPaid := acc.ModelStates[model].CostClass
 	accountMu.Unlock()
 	if afterPaid != modelCostPaid {
-		t.Fatalf("恢复收费后应自动改判为 paid, got %q", afterPaid)
+		t.Fatalf("after becoming paid again it should be re-classified as paid automatically, got %q", afterPaid)
 	}
-	t.Logf("模型 %s 已随 credit 变化自动从 free 改判为 paid", model)
+	t.Logf("model %s automatically re-classified from free to paid as credit changed", model)
 
-	// 第三轮：再次限时免费，credit 回到 0，应能改回 free
+	// Round 3: limited-time free again, credit back to 0, should switch back to free
 	credit = 0
 	call()
 	accountMu.Lock()
 	backToFree := acc.ModelStates[model].CostClass
 	accountMu.Unlock()
 	if backToFree != modelCostFree {
-		t.Fatalf("再次免费后应改回 free, got %q", backToFree)
+		t.Fatalf("after becoming free again it should switch back to free, got %q", backToFree)
 	}
-	t.Logf("模型 %s 已再次自动改回 free", model)
+	t.Logf("model %s automatically switched back to free again", model)
 }
 
-// 场景 C：小样本（探针/极短请求）credit=0 不得误判为免费，
-// 避免把真正收费的模型错标成免费。
+// Scenario C: a tiny sample (probe/very short request) with credit=0 must not be misjudged as free,
+// to avoid mislabeling truly paid models as free.
 func TestTinySampleCreditZeroNotLearnedFree(t *testing.T) {
 	resetModelStats()
 	chdirTemp(t)
@@ -170,12 +171,12 @@ func TestTinySampleCreditZeroNotLearnedFree(t *testing.T) {
 	state := acc.ModelStates[model]
 	accountMu.Unlock()
 	if state != nil && state.CostClass == modelCostFree {
-		t.Fatalf("小样本 credit=0 不得判为免费，got %+v", state)
+		t.Fatalf("credit=0 with a tiny sample must not be judged free, got %+v", state)
 	}
 }
 
-// 场景 D：14018（账号额度耗尽）绝不能改写模型收费属性，
-// 且额度恢复后应自动解除阻断、重新按 credit 学习。
+// Scenario D: 14018 (account quota exhausted) must never rewrite a model's paid attribute,
+// and after quota recovers the block should lift automatically and learning by credit resume.
 func TestQuotaExhaustedDoesNotPolluteCostClassAndRecovers(t *testing.T) {
 	chdirTemp(t)
 	acc := &Account{Path: "intl.json", Auth: &StoredAuth{Edition: "intl"}, QuotaExhausted: true,
@@ -192,19 +193,19 @@ func TestQuotaExhaustedDoesNotPolluteCostClassAndRecovers(t *testing.T) {
 		accountMu.Unlock()
 	}()
 
-	// 免费模型遇 14018：保持 free
+	// Free model meets 14018: stays free
 	markModelQuotaBlocked(acc, "limited-free", "14018 Credits exhausted")
 	accountMu.Lock()
 	if got := acc.ModelStates["limited-free"].CostClass; got != modelCostFree {
-		t.Fatalf("14018 不得改写免费模型分类, got %q", got)
+		t.Fatalf("14018 must not rewrite the free model classification, got %q", got)
 	}
 	blocked := acc.ModelStates["limited-free"].QuotaBlocked
 	accountMu.Unlock()
 	if !blocked {
-		t.Fatal("14018 应设置额度阻断")
+		t.Fatal("14018 should set the quota block")
 	}
 
-	// 模拟额度恢复：刷新逻辑会清除 QuotaBlocked
+	// Simulate quota recovery: the refresh logic clears QuotaBlocked
 	accountMu.Lock()
 	acc.QuotaExhausted = false
 	acc.QuotaRemaining = 500
@@ -218,15 +219,15 @@ func TestQuotaExhaustedDoesNotPolluteCostClassAndRecovers(t *testing.T) {
 	class := acc.ModelStates["limited-free"].CostClass
 	accountMu.Unlock()
 	if !recovered {
-		t.Fatal("额度恢复后应解除阻断")
+		t.Fatal("block should lift after quota recovery")
 	}
 	if class != modelCostFree {
-		t.Fatalf("额度恢复后免费分类应保留, got %q", class)
+		t.Fatalf("free classification should be retained after quota recovery, got %q", class)
 	}
 }
 
-// 场景 E：接口促销日期已过期、但上游实际仍免费时，
-// 必须靠真实请求的 credit=0 覆盖「过期=未知」的保守判断。
+// Scenario E: when the API's promo date has expired but upstream is actually still free,
+// a real request's credit=0 must override the conservative "expired = unknown" judgment.
 func TestExpiredPromoStillFreeIsCorrectedByLiveEvidence(t *testing.T) {
 	resetModelsStateT(t)
 	resetModelStats()
@@ -241,7 +242,7 @@ func TestExpiredPromoStillFreeIsCorrectedByLiveEvidence(t *testing.T) {
 	defer resetModelsStateT(t)
 
 	if !modelNeedsProbe("intl", "expired-but-free", 0) {
-		t.Fatal("促销过期的模型应被安排探测，以确认真实收费属性")
+		t.Fatal("a model with an expired promo should be scheduled for probing to confirm its real cost class")
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -278,12 +279,12 @@ func TestExpiredPromoStillFreeIsCorrectedByLiveEvidence(t *testing.T) {
 	state := acc.ModelStates["expired-but-free"]
 	accountMu.Unlock()
 	if state == nil || state.CostClass != modelCostFree {
-		t.Fatalf("促销日期过期但实测免费，应识别为 free，got %+v", state)
+		t.Fatalf("with an expired promo but measured free, it should be recognized as free, got %+v", state)
 	}
 	if !siteKnownFree("intl", "expired-but-free") {
-		t.Fatal("实测免费后，该站点应被判定为免费站点")
+		t.Fatal("after a measured free result, the site should be judged a free site")
 	}
-	t.Log("促销过期但实际免费：已通过实测 credit=0 纠正为免费")
+	t.Log("promo expired but actually free: corrected to free via measured credit=0")
 }
 
 func itoa(n int) string {

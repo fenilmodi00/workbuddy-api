@@ -179,7 +179,7 @@ func TestOfficialHeadersModelOnlyAndInternationalFallback(t *testing.T) {
 			if req.Header.Get("Authorization") != "Bearer synthetic-access" {
 				t.Fatal("model access token was lost")
 			}
-			// 控制接口仍使用原鉴权函数，不受模型兼容层修改。
+			// Control endpoints still use the original auth function and are unaffected by model-compat changes.
 			control := httptest.NewRequest("POST", prof.authTokenURL("test"), nil)
 			backendHeaders(control, auth, prof)
 			applyObservedDesktopHeaders(control, prof, profile)
@@ -296,9 +296,9 @@ func TestOfficialThreeProtocolsReachSameDecodedUpstream(t *testing.T) {
 	rrIndex = 0
 	for _, stream := range []bool{true, false} {
 		for _, tc := range []struct{ route, body string }{
-			{"/v1/chat/completions", `{"messages":[{"role":"developer","content":"synthetic rules"},{"role":"user","content":"测试"}],"reasoning_effort":"max","max_tokens":128000,"tools":[{"type":"function","function":{"name":"noop","description":"synthetic","parameters":{"type":"object"}}}]}`},
-			{"/v1/responses", `{"instructions":"synthetic rules","input":"测试","reasoning":{"effort":"max"},"max_output_tokens":128000,"tools":[{"type":"function","name":"noop","description":"synthetic","parameters":{"type":"object"}}]}`},
-			{"/v1/messages", `{"system":"synthetic rules","messages":[{"role":"user","content":"测试"}],"thinking":{"type":"adaptive"},"output_config":{"effort":"max"},"max_tokens":128000,"tools":[{"name":"noop","description":"synthetic","input_schema":{"type":"object"}}]}`},
+			{"/v1/chat/completions", `{"messages":[{"role":"developer","content":"synthetic rules"},{"role":"user","content":"test"}],"reasoning_effort":"max","max_tokens":128000,"tools":[{"type":"function","function":{"name":"noop","description":"synthetic","parameters":{"type":"object"}}}]}`},
+			{"/v1/responses", `{"instructions":"synthetic rules","input":"test","reasoning":{"effort":"max"},"max_output_tokens":128000,"tools":[{"type":"function","name":"noop","description":"synthetic","parameters":{"type":"object"}}]}`},
+			{"/v1/messages", `{"system":"synthetic rules","messages":[{"role":"user","content":"test"}],"thinking":{"type":"adaptive"},"output_config":{"effort":"max"},"max_tokens":128000,"tools":[{"name":"noop","description":"synthetic","input_schema":{"type":"object"}}]}`},
 		} {
 			obj := decodeObject(t, []byte(tc.body))
 			obj["model"], obj["stream"] = "deepseek-v4.1-flash", stream
@@ -348,7 +348,7 @@ func TestOfficialThreeProtocolsReachSameDecodedUpstream(t *testing.T) {
 		b, _ := os.ReadFile(name)
 		audit = append(audit, b...)
 	}
-	if !bytes.Contains(audit, []byte("[出站兼容]")) || !bytes.Contains(audit, []byte("official-three-protocol-test")) ||
+	if !bytes.Contains(audit, []byte("[Outbound compat]")) || !bytes.Contains(audit, []byte("official-three-protocol-test")) ||
 		bytes.Contains(audit, []byte("synthetic-access")) || bytes.Contains(audit, []byte("synthetic rules")) {
 		t.Fatal("persisted audit missing or leaked private content")
 	}
@@ -379,7 +379,7 @@ func TestOfficialGzipSafeRetryKeepsPayloadAndIdentity(t *testing.T) {
 		}
 		if count.Add(1) == 1 {
 			previous, previousID = b, req.Header.Get("X-Request-ID")
-			setRequestProfile("legacy") // 在飞请求不能因热加载而改变重试封装。
+			setRequestProfile("legacy") // In-flight requests must not change retry wrapping due to hot reload.
 			return nil, io.EOF
 		}
 		if !bytes.Equal(b, previous) || req.Header.Get("X-Request-ID") != previousID {
@@ -400,7 +400,7 @@ func TestOfficialGzipSafeRetryKeepsPayloadAndIdentity(t *testing.T) {
 	}
 }
 
-// 可选本机私有证据重放。只读完整脱敏日志，不调用上游，不把提示词或凭据带入公共夹具。
+// Optional local private-evidence replay. Reads only fully redacted logs, does not call upstream, and never brings prompts or credentials into public fixtures.
 func TestOfficialPrivateCaptureReplay(t *testing.T) {
 	path := os.Getenv("WORKBUDDY_COMPAT_CAPTURE")
 	if path == "" {

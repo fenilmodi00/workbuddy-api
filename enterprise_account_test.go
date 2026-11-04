@@ -57,8 +57,8 @@ func TestEnterpriseUsageSchemaValidation(t *testing.T) {
 	}
 }
 
-// 全链路本地集成：真实 HTTP 客户端→真实鉴权/三个 API 入口→选号→模拟上游 SSE。
-// 不只测「函数可选号」；验证修复后真正有正文返回，以及确实耗尽/14018仍被阻断。
+// Full-chain local integration: real HTTP client → real auth/three API entry points → account selection → simulated upstream SSE.
+// Not just testing that the "function can pick an account"; verifies the fix actually returns a body, and that exhaustion/14018 is still blocked.
 func TestEnterpriseQuotaFullHTTPFlow(t *testing.T) {
 	isolatedGatewayConfig(t)
 	resetModelFilter()
@@ -223,7 +223,7 @@ func TestEnterpriseQuotaFullHTTPFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := chatCalls.Load()
-	if status, raw := request("/v1/chat/completions", chatBody, "synthetic-api-key"); status != 503 || !strings.Contains(raw, "额度阻断=1") || chatCalls.Load() != before {
+	if status, raw := request("/v1/chat/completions", chatBody, "synthetic-api-key"); status != 503 || !strings.Contains(raw, "quota blocked=1") || chatCalls.Load() != before {
 		t.Fatalf("exhausted flow status=%d response=%s calls=%d", status, raw, chatCalls.Load())
 	}
 	mode.Store(5)
@@ -235,14 +235,14 @@ func TestEnterpriseQuotaFullHTTPFlow(t *testing.T) {
 	if status, _ := request("/v1/chat/completions", chatBody, "synthetic-api-key"); status != 503 || chatCalls.Load() != before {
 		t.Fatal("unlimited display must not bypass a real upstream 14018 block")
 	}
-	// 中间件、选号拒绝、外部调用和返回全链路普通日志实际落盘。
+	// Ordinary logs across the full chain — middleware, selection rejection, external calls, and responses — actually land on disk.
 	logs, _ := filepath.Glob(filepath.Join(logDir, "gateway-*.log"))
 	var audit strings.Builder
 	for _, p := range logs {
 		raw, _ := os.ReadFile(p)
 		audit.Write(raw)
 	}
-	for _, marker := range []string{"请求到达", "中间件-鉴权", "请求被拦截", "业务入口", "企业分配额度", "外部接口", "响应返回", "enterprise-http-test"} {
+	for _, marker := range []string{"[Request received]", "[Middleware-Auth]", "[Request intercepted]", "[Business entry]", "enterprise allocated quota", "[External API]", "[Response returned]", "enterprise-http-test"} {
 		if !strings.Contains(audit.String(), marker) {
 			t.Fatalf("missing persisted audit stage %s", marker)
 		}

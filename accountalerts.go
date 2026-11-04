@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// accountAlertMark 是写进状态快照的精简告警标记：只记状态、首次时间与日志位置，
-// 不复制任何日志正文。页面据此渲染告警，因此不再依赖后台的日志扫描。
+// accountAlertMark is a compact alert marker written into the status snapshot: it records only the state,
+// first-seen time and log position, without copying any log body. The page renders alerts from it, so the
+// background log scan is no longer required.
 type accountAlertMark struct {
 	State     string `json:"state"`
 	At        int64  `json:"at"`
@@ -20,7 +21,7 @@ type accountAlertMark struct {
 	LogOffset int64  `json:"logOffset,omitempty"`
 }
 
-// alertSourceSnapshot 写入快照，用来区分「新版内联告警」与「旧版快照需要回退扫日志」。
+// alertSourceSnapshot is written into the snapshot to distinguish "new inline alerts" from "old snapshots that need a log-scan fallback".
 const alertSourceSnapshot = "snapshot"
 
 var accountAlertMarks = struct {
@@ -29,8 +30,8 @@ var accountAlertMarks = struct {
 	last    map[string]string
 }{current: map[string]accountAlertMark{}, last: map[string]string{}}
 
-// logWriteOffset 返回当天日志文件当前长度，也就是下一条日志的字节偏移。
-// 日志是追加写，所以这个偏移正好指向即将写入的那一行。
+// logWriteOffset returns the current length of today's log file, i.e. the byte offset of the next log line.
+// Logs are append-only, so this offset points exactly at the line about to be written.
 func logWriteOffset() (string, int64) {
 	name := "gateway-" + time.Now().Format("2006-01-02") + ".log"
 	info, err := os.Stat(filepath.Join(logDir, name))
@@ -40,8 +41,8 @@ func logWriteOffset() (string, int64) {
 	return name, info.Size()
 }
 
-// recordAccountAlertMarks 在状态变化时写一条普通日志，并把当前异常记成快照用的精简标记。
-// 返回按凭据路径分组的标记，供 writeStatusSnapshot 一并落盘。
+// recordAccountAlertMarks writes a regular log line on state changes and records current anomalies as compact
+// markers for the snapshot. Returns markers grouped by credential path for writeStatusSnapshot to persist.
 func recordAccountAlertMarks(accs []accountSnapshot, now int64) map[string][]accountAlertMark {
 	accountAlertMarks.Lock()
 	defer accountAlertMarks.Unlock()
@@ -54,10 +55,10 @@ func recordAccountAlertMarks(accs []accountSnapshot, now int64) map[string][]acc
 		next[acc.Path] = signature
 		changed := accountAlertMarks.last[acc.Path] != signature
 		if len(kinds) == 0 {
-			// 恢复正常也要留一条审计日志，但不再生成告警标记。
+			// Recovery also leaves an audit log line, but no alert marker is generated.
 			if changed {
 				if raw, err := json.Marshal(accountLogEvent{At: now, Account: acc.Path, State: acc.State, Trace: trace}); err == nil {
-					log.Printf("[账号状态] %s", raw)
+					log.Printf("[Account status] %s", raw)
 				}
 			}
 			continue
@@ -68,11 +69,11 @@ func recordAccountAlertMarks(accs []accountSnapshot, now int64) map[string][]acc
 			if !seen || mark.At <= 0 {
 				mark = accountAlertMark{State: kind, At: now}
 			}
-			// 只有状态真的变化时才写日志，并记下那一行的文件与偏移。
+			// Log only when the state actually changes, recording that line's file and offset.
 			if changed && !seen {
 				file, offset := logWriteOffset()
 				if raw, err := json.Marshal(accountLogEvent{At: now, Account: acc.Path, State: kind, Trace: trace}); err == nil {
-					log.Printf("[账号状态] %s", raw)
+					log.Printf("[Account status] %s", raw)
 				}
 				mark.LogFile, mark.LogOffset = file, offset
 			}
@@ -81,7 +82,7 @@ func recordAccountAlertMarks(accs []accountSnapshot, now int64) map[string][]acc
 		}
 	}
 	accountAlertMarks.last = next
-	// 必须写回：否则标记每轮都会重建，定位符丢失、首次时间也会被刷新。
+	// Must write back: otherwise markers are rebuilt every round, losing locators and refreshing the first-seen time.
 	accountAlertMarks.current = current
 	out := make(map[string][]accountAlertMark, len(accs))
 	for key, mark := range current {
@@ -91,7 +92,7 @@ func recordAccountAlertMarks(accs []accountSnapshot, now int64) map[string][]acc
 	return out
 }
 
-// sortAccountAlerts 统一排序：时间倒序（最新在上），同秒按账号、类别稳定排序。
+// sortAccountAlerts applies one uniform order: newest first, ties on the same second sorted stably by account and kind.
 func sortAccountAlerts(out []accountAlertView) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].At != out[j].At {
@@ -104,8 +105,9 @@ func sortAccountAlerts(out []accountAlertView) {
 	})
 }
 
-// currentAlertsFromSnapshot 直接按快照里的标记生成告警视图，不再扫描日志文件。
-// 快照标记与账号当前状态不一致时（例如刚恢复）不展示，保证「恢复即消除」。
+// currentAlertsFromSnapshot builds alert views directly from snapshot markers without scanning log files.
+// A marker inconsistent with the account's current state (e.g. just recovered) is not shown, guaranteeing
+// "recovery removes the alert".
 func currentAlertsFromSnapshot(accs []accountSnapshot) []accountAlertView {
 	out := []accountAlertView{}
 	for _, acc := range accs {

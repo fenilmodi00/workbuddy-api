@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// withCatalog 在测试期间替换目录快照，结束后恢复。
+// withCatalog swaps the catalog snapshot for the duration of the test and restores it afterwards.
 func withCatalog(t *testing.T, catalogs map[string][]catalogModel) {
 	t.Helper()
 	modelsMu.Lock()
@@ -49,7 +49,7 @@ func callModels(t *testing.T) []byte {
 	return rec.Body.Bytes()
 }
 
-// npm 目录此前只读 id/name/credits，能力字段被整段丢弃；这里锁定已补齐。
+// The npm catalog previously only read id/name/credits, dropping capability fields entirely; this locks in the backfill.
 func TestParseNPMCatalogRetainsCapabilityFields(t *testing.T) {
 	models, err := parseNPMCatalog([]byte(`{"models":[
 		{"id":"deepseek-v4.1-flash","name":"Deepseek-V4.1-Flash","credits":"x0.03 credits",
@@ -66,22 +66,22 @@ func TestParseNPMCatalogRetainsCapabilityFields(t *testing.T) {
 	}
 	ds := byID["deepseek-v4.1-flash"]
 	if ds.MaxInputTokens != 1000000 || ds.MaxOutputTokens != 128000 || ds.MaxAllowedSize != 1000000 {
-		t.Fatalf("npm 能力字段丢失: %+v", ds)
+		t.Fatalf("npm capability fields lost: %+v", ds)
 	}
 	if ds.ContextDefaultLength != 300000 {
-		t.Fatalf("npm 默认预算丢失: %+v", ds)
+		t.Fatalf("npm default budget lost: %+v", ds)
 	}
-	// 档位必须排序，且默认预算与能力上限是两个字段，不能合并。
+	// Tiers must be sorted, and the default budget and capability ceiling are two separate fields that must not be merged.
 	want := []int{300000, 1000000}
 	if len(ds.ContextLengths) != 2 || ds.ContextLengths[0] != want[0] || ds.ContextLengths[1] != want[1] {
-		t.Fatalf("npm 档位未规范化: %v", ds.ContextLengths)
+		t.Fatalf("npm tiers not normalized: %v", ds.ContextLengths)
 	}
 	if hy := byID["hy3"]; hy.MaxInputTokens != 192000 || hy.ContextDefaultLength != 0 || len(hy.ContextLengths) != 0 {
-		t.Fatalf("无 contextWindow 的模型不得编造档位: %+v", hy)
+		t.Fatalf("models without contextWindow must not get fabricated tiers: %+v", hy)
 	}
 }
 
-// 生产实测：实时接口返回 contextWindow（三档）与 maxAllowedSize，必须保留。
+// Production measurement: the live API returns contextWindow (three tiers) and maxAllowedSize; both must be retained.
 func TestParseLiveCatalogRetainsContextWindow(t *testing.T) {
 	models, _, err := parseLiveCatalog([]byte(`{"models":[
 		{"id":"deepseek-v4.1-flash","name":"Deepseek-V4.1-Flash","credits":"x0.11 credits",
@@ -96,17 +96,17 @@ func TestParseLiveCatalogRetainsContextWindow(t *testing.T) {
 	}
 	m := models[0]
 	if m.MaxInputTokens != 1000000 || m.MaxOutputTokens != 128000 || m.MaxAllowedSize != 1000000 {
-		t.Fatalf("实时能力字段丢失: %+v", m)
+		t.Fatalf("live capability fields lost: %+v", m)
 	}
 	if m.ContextDefaultLength != 300000 {
-		t.Fatalf("默认预算错误: %d", m.ContextDefaultLength)
+		t.Fatalf("wrong default budget: %d", m.ContextDefaultLength)
 	}
 	if len(m.ContextLengths) != 3 || m.ContextLengths[2] != 1000000 {
-		t.Fatalf("三档未保留: %v", m.ContextLengths)
+		t.Fatalf("three tiers not retained: %v", m.ContextLengths)
 	}
 }
 
-// 合并时 npm 只补齐实时目录缺失的能力字段，绝不覆盖实时值。
+// On merge, npm only backfills capability fields missing from the live catalog and never overwrites live values.
 func TestMergeCatalogsBackfillsCapabilityWithoutOverwriting(t *testing.T) {
 	live := []catalogModel{{ID: "a", FromLive: true, MaxInputTokens: 1000000}}
 	npm := []catalogModel{{
@@ -119,10 +119,10 @@ func TestMergeCatalogsBackfillsCapabilityWithoutOverwriting(t *testing.T) {
 	}
 	got := merged[0]
 	if got.MaxInputTokens != 1000000 {
-		t.Fatalf("实时值被覆盖: %d", got.MaxInputTokens)
+		t.Fatalf("live value overwritten: %d", got.MaxInputTokens)
 	}
 	if got.MaxOutputTokens != 128000 || got.ContextDefaultLength != 300000 || len(got.ContextLengths) != 2 {
-		t.Fatalf("npm 未补齐缺失字段: %+v", got)
+		t.Fatalf("npm did not backfill missing fields: %+v", got)
 	}
 }
 
@@ -132,11 +132,11 @@ func TestNormalizeContextLengthsFiltersUnusable(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 	if single := normalizeContextLengths([]int{300000}, 1000000); len(single) != 1 {
-		t.Fatalf("单档应保留给调用方判断: %v", single)
+		t.Fatalf("a single tier should be kept for the caller to judge: %v", single)
 	}
 }
 
-// 只有单一站点有数据时给出顶层标量，不附分站点明细。
+// When only one site has data, give top-level scalars without per-site details.
 func TestModelCapabilitySingleSiteGivesScalars(t *testing.T) {
 	withCatalog(t, map[string][]catalogModel{"cn": {{
 		ID: "m", MaxInputTokens: 1000000, MaxOutputTokens: 128000,
@@ -144,14 +144,14 @@ func TestModelCapabilitySingleSiteGivesScalars(t *testing.T) {
 	}}})
 	mc, ok := modelCapabilityFor("m")
 	if !ok || mc.Ceiling != 1000000 || mc.MaxOutput != 128000 || mc.Default != 300000 {
-		t.Fatalf("单站点能力汇总错误: %+v ok=%t", mc, ok)
+		t.Fatalf("wrong single-site capability summary: %+v ok=%t", mc, ok)
 	}
 	if len(mc.BySite) != 0 {
-		t.Fatalf("单站点不应有分站点明细: %+v", mc.BySite)
+		t.Fatalf("single site should have no per-site details: %+v", mc.BySite)
 	}
 }
 
-// 站点能力不一致时不得取最大值：顶层留空，改为给出分站点明细。
+// When site capabilities disagree, never take the maximum: leave the top level empty and give per-site details instead.
 func TestModelCapabilityCrossSiteDisagreementOmitsScalars(t *testing.T) {
 	withCatalog(t, map[string][]catalogModel{
 		"cn":   {{ID: "m", MaxInputTokens: 192000, MaxOutputTokens: 64000}},
@@ -159,17 +159,17 @@ func TestModelCapabilityCrossSiteDisagreementOmitsScalars(t *testing.T) {
 	})
 	mc, ok := modelCapabilityFor("m")
 	if !ok {
-		t.Fatal("应识别到能力数据")
+		t.Fatal("capability data should be recognized")
 	}
 	if mc.Ceiling != 0 || mc.MaxOutput != 0 {
-		t.Fatalf("不一致时顶层不得给值（尤其不能取 1000000）: %+v", mc)
+		t.Fatalf("top level must not get a value on disagreement (especially not 1000000): %+v", mc)
 	}
 	if len(mc.BySite) != 2 || mc.BySite["cn"].Ceiling != 192000 || mc.BySite["intl"].Ceiling != 1000000 {
-		t.Fatalf("缺少分站点明细: %+v", mc.BySite)
+		t.Fatalf("per-site details missing: %+v", mc.BySite)
 	}
 }
 
-// 站点一致时给出顶层标量，且默认预算与能力上限分开返回。
+// When sites agree, give top-level scalars, with the default budget returned separately from the capability ceiling.
 func TestHandleModelsEmitsCapabilityFields(t *testing.T) {
 	resetModelFilter()
 	t.Cleanup(resetModelFilter)
@@ -179,24 +179,24 @@ func TestHandleModelsEmitsCapabilityFields(t *testing.T) {
 	}}})
 	row := capabilityByID(t, callModels(t), "deepseek-v4.1-flash")
 	if row["context_length"] != float64(1000000) {
-		t.Fatalf("context_length 应为能力上限: %v", row["context_length"])
+		t.Fatalf("context_length should be the capability ceiling: %v", row["context_length"])
 	}
 	if row["default_context_length"] != float64(300000) {
-		t.Fatalf("默认预算必须与能力上限分开: %v", row["default_context_length"])
+		t.Fatalf("default budget must be separate from the capability ceiling: %v", row["default_context_length"])
 	}
 	if row["max_output_tokens"] != float64(128000) {
 		t.Fatalf("max_output_tokens=%v", row["max_output_tokens"])
 	}
 	opts, ok := row["context_length_options"].([]any)
 	if !ok || len(opts) != 3 {
-		t.Fatalf("档位列表=%v", row["context_length_options"])
+		t.Fatalf("tier list=%v", row["context_length_options"])
 	}
 	if _, exists := row["capabilities_by_site"]; exists {
-		t.Fatal("站点一致时不需要分站点明细")
+		t.Fatal("no per-site details needed when sites agree")
 	}
 }
 
-// 未知能力必须省略字段，不得兜底成 1M；也不得往模型列表里塞上游请求参数。
+// Unknown capabilities must omit the fields, never fall back to 1M; upstream request parameters must not be stuffed into the model list either.
 func TestHandleModelsOmitsUnknownCapability(t *testing.T) {
 	resetModelFilter()
 	t.Cleanup(resetModelFilter)
@@ -207,7 +207,7 @@ func TestHandleModelsOmitsUnknownCapability(t *testing.T) {
 		"context_length_options", "capabilities_by_site", "context_window",
 	} {
 		if _, exists := row[key]; exists {
-			t.Fatalf("未知能力不得输出 %s：%v", key, row[key])
+			t.Fatalf("unknown capability must not output %s: %v", key, row[key])
 		}
 	}
 }

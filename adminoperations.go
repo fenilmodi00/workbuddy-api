@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-// 调用方持有 runtimeConfigMu；先校验、落盘，再应用，失败恢复旧配置。
+// The caller holds runtimeConfigMu; validate first, persist, then apply; on failure restore the old config.
 func persistRuntimeDocument(doc map[string]json.RawMessage, old []byte, trace string) error {
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -24,7 +24,7 @@ func persistRuntimeDocument(doc map[string]json.RawMessage, old []byte, trace st
 	}
 	if err := applyRuntimeConfig(c, true, trace); err != nil {
 		if restoreErr := writeConfigPreservingFile(old, data); restoreErr != nil {
-			return errors.New("配置应用失败且旧配置无法恢复，请检查服务器日志")
+			return errors.New("config apply failed and the old config could not be restored; check the server logs")
 		}
 		return err
 	}
@@ -41,6 +41,6 @@ func writeAdminOperationError(w http.ResponseWriter, r *http.Request, operation 
 	if errors.Is(err, errConfigChange) || errors.Is(err, errCredentialChanged) {
 		status = http.StatusConflict
 	}
-	log.Printf("[管理操作失败] traceId=%s 操作=%s 状态码=%d 原因=%s 说明=未成功修改，页面应保留用户输入供修正或重试", debugTraceID(r), operation, status, safeDebugError(err))
+	log.Printf("[Admin operation failed] traceId=%s operation=%s status-code=%d reason=%s note=modification not completed; the page should keep user input for correction or retry", debugTraceID(r), operation, status, safeDebugError(err))
 	writeJSONError(w, status, safeDebugError(err))
 }

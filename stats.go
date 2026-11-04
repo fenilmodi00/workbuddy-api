@@ -23,8 +23,8 @@ const statsFile = "stats.json"
 const statsSchema = 1
 const statsMaxFileBytes = 64 << 20
 
-// 只记录统计事实，不记录凭据、请求/响应正文、提示词或令牌。
-// identity 是账号身份摘要，避免同一文件换成另一个账号后继承旧模型阻断。
+// Records statistics facts only; never credentials, request/response bodies, prompts, or tokens.
+// identity is the account identity digest, preventing a file swapped to a different account from inheriting old model blocks.
 type statsAccount struct {
 	File        string                        `json:"file"`
 	Edition     string                        `json:"edition"`
@@ -34,17 +34,17 @@ type statsAccount struct {
 type statsRequest struct {
 	Account      string   `json:"account"`
 	Model        string   `json:"model"`
-	At           int64    `json:"at"` // 完成时间，Unix 毫秒，按该时刻归桶
+	At           int64    `json:"at"` // Completion time, Unix milliseconds; bucketed by this moment
 	Status       int      `json:"status"`
 	Complete     bool     `json:"complete"`
 	TotalTokens  *int64   `json:"totalTokens,omitempty"`
 	InputTokens  *int64   `json:"inputTokens,omitempty"`
 	OutputTokens *int64   `json:"outputTokens,omitempty"`
-	CachedTokens *int64   `json:"cachedTokens,omitempty"` // 已包含在输入里，不再加到总Token
-	Credit       *float64 `json:"credit,omitempty"`       // usage.credit，而不是余额差
+	CachedTokens *int64   `json:"cachedTokens,omitempty"` // Already included in input; not added to total tokens again
+	Credit       *float64 `json:"credit,omitempty"`       // usage.credit, not the balance delta
 	LatencyMS    float64  `json:"latencyMs"`
 	TTFTMS       *float64 `json:"ttftMs,omitempty"`
-	TTFTMetric   string   `json:"ttftMetric,omitempty"` // 空=旧首响应体；v2=有效内容增量，仅v2参与新均值
+	TTFTMetric   string   `json:"ttftMetric,omitempty"` // empty=legacy first response body; v2=useful-content delta, only v2 joins new averages
 }
 
 type statsDocument struct {
@@ -61,14 +61,14 @@ var requestStats = struct {
 	saved     uint64
 	lastSaved int64
 	mode      string // pending / file / memory
-	problem   string // 安全的白话原因，不回传底层错误或用户文件内容
-	blocked   bool   // 坏文件或符号链接不得被自动覆盖
+	problem   string // safe, plain-language reason; never exposes underlying errors or user file contents
+	blocked   bool   // bad files or symlinks must not be overwritten automatically
 	enabled   bool
 }{document: statsDocument{Schema: statsSchema, Accounts: map[string]statsAccount{}, Requests: []statsRequest{}}, mode: "pending"}
 
 var statsWriteMu sync.Mutex
 
-// 调用方持有 accountMu。摘要不含 Token，续期不改变归属，企业/站点切换改变归属。
+// Caller holds accountMu. The digest excludes tokens; renewal does not change ownership, but enterprise/site switches do.
 func statsAccountIDLocked(acc *Account) (string, statsAccount) {
 	if acc == nil || acc.Auth == nil {
 		return "", statsAccount{}
@@ -95,7 +95,7 @@ func statsModelStatesLocked(acc *Account) map[string]modelStateSnapshot {
 	return out
 }
 
-// 和既有状态快照一起捕获账本；这里不做文件I/O，持锁顺序始终 accountMu→requestStats。
+// Captures the ledger together with the existing state snapshot; no file I/O here, and lock order is always accountMu→requestStats.
 func captureAccountStatsLocked() {
 	requestStats.Lock()
 	defer requestStats.Unlock()
@@ -148,18 +148,18 @@ func loadOptionalStats() {
 	requestStats.enabled = true
 	info, err := os.Lstat(statsFile)
 	if errors.Is(err, os.ErrNotExist) {
-		log.Printf("[统计文件] traceId=%s 阶段=启动读取 结果=文件不存在 业务影响=从空统计启动，不影响网关；首次有数据后尝试落盘", trace)
+		log.Printf("[Stats file] traceId=%s stage=startup read result=file missing businessImpact=starts from empty stats, gateway unaffected; persistence attempted after first data", trace)
 		return
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Size() > statsMaxFileBytes {
-		requestStats.mode, requestStats.problem, requestStats.blocked = "memory", "统计文件不可安全读取，保留原文件，仅使用内存", true
-		log.Printf("[统计文件] traceId=%s 阶段=启动读取 结果=跳过 业务影响=%s", trace, requestStats.problem)
+		requestStats.mode, requestStats.problem, requestStats.blocked = "memory", "stats file cannot be read safely; original file kept, memory-only in use", true
+		log.Printf("[Stats file] traceId=%s stage=startup read result=skipped businessImpact=%s", trace, requestStats.problem)
 		return
 	}
 	f, err := os.Open(statsFile)
 	if err != nil {
-		requestStats.mode, requestStats.problem, requestStats.blocked = "memory", "统计文件无法读取，保留原文件，仅使用内存", true
-		log.Printf("[统计文件] traceId=%s 阶段=启动读取 结果=失败 业务影响=%s", trace, requestStats.problem)
+		requestStats.mode, requestStats.problem, requestStats.blocked = "memory", "stats file unreadable; original file kept, memory-only in use", true
+		log.Printf("[Stats file] traceId=%s stage=startup read result=failed businessImpact=%s", trace, requestStats.problem)
 		return
 	}
 	defer f.Close()
@@ -168,8 +168,8 @@ func loadOptionalStats() {
 	err = decoder.Decode(&doc)
 	var trailing any
 	if err != nil || decoder.Decode(&trailing) != io.EOF || !validStatsDocument(doc) {
-		requestStats.mode, requestStats.problem, requestStats.blocked = "memory", "统计文件格式无效，保留原文件，仅使用内存", true
-		log.Printf("[统计文件] traceId=%s 阶段=启动读取 结果=失败 业务影响=%s", trace, requestStats.problem)
+		requestStats.mode, requestStats.problem, requestStats.blocked = "memory", "stats file format invalid; original file kept, memory-only in use", true
+		log.Printf("[Stats file] traceId=%s stage=startup read result=failed businessImpact=%s", trace, requestStats.problem)
 		return
 	}
 	if doc.Requests == nil {
@@ -177,7 +177,7 @@ func loadOptionalStats() {
 	}
 	requestStats.document, requestStats.mode = doc, "file"
 	requestStats.lastSaved = info.ModTime().UnixMilli()
-	log.Printf("[统计文件] traceId=%s 阶段=启动读取 结果=成功 账号=%d 请求记录=%d 说明=不含凭据或正文", trace, len(doc.Accounts), len(doc.Requests))
+	log.Printf("[Stats file] traceId=%s stage=startup read result=success accounts=%d request records=%d note=contains no credentials or bodies", trace, len(doc.Accounts), len(doc.Requests))
 }
 
 func validStatsDocument(doc statsDocument) bool {
@@ -218,7 +218,7 @@ func flushOptionalStats() error {
 	raw, err := json.Marshal(requestStats.document)
 	requestStats.Unlock()
 	if err == nil && len(raw) > statsMaxFileBytes {
-		err = errors.New("统计文件达到安全大小上限")
+		err = errors.New("stats file reached the safe size limit")
 	}
 	if err == nil {
 		err = writeOptionalStatsFile(raw)
@@ -226,27 +226,27 @@ func flushOptionalStats() error {
 	requestStats.Lock()
 	previous := requestStats.mode
 	if err != nil {
-		requestStats.mode, requestStats.problem = "memory", "统计暂时无法写入，仍在内存统计，稍后自动重试"
+		requestStats.mode, requestStats.problem = "memory", "stats temporarily unwritable; still counting in memory, will retry automatically later"
 	} else {
 		requestStats.saved, requestStats.mode, requestStats.problem = revision, "file", ""
 		requestStats.lastSaved = time.Now().UnixMilli()
 	}
 	requestStats.Unlock()
 	if err != nil && previous != "memory" {
-		log.Printf("[统计文件] traceId=%s 阶段=原子落盘 结果=失败 业务影响=继续内存统计，不阻塞模型请求，旧文件保留", newTraceID())
+		log.Printf("[Stats file] traceId=%s stage=atomic persist result=failed businessImpact=continues memory stats, model requests not blocked, old file kept", newTraceID())
 	} else if err == nil && previous != "file" {
-		log.Printf("[统计文件] traceId=%s 阶段=原子落盘 结果=成功 字节=%d 业务影响=统计已保存或已恢复写入", newTraceID(), len(raw))
+		log.Printf("[Stats file] traceId=%s stage=atomic persist result=success bytes=%d businessImpact=stats saved or write restored", newTraceID(), len(raw))
 	}
 	return err
 }
 
 func writeOptionalStatsFile(raw []byte) error {
 	if info, err := os.Lstat(statsFile); err == nil && !info.Mode().IsRegular() {
-		return errors.New("统计路径不是普通文件")
+		return errors.New("stats path is not a regular file")
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	// 临时文件在同一工作目录，0600；完整写入、sync、关闭后才原子替换旧文件。
+	// Temp file lives in the same working directory with 0600; old file is atomically replaced only after full write, sync, and close.
 	f, err := os.CreateTemp(".", ".stats-*.tmp")
 	if err != nil {
 		return err
@@ -345,7 +345,7 @@ func statsCachedValue(usage map[string]any) *int64 {
 	return fallback
 }
 
-// 每次实际账号上游调用结束记录一次，失败重试的账号也单独记；未选号的鉴权拒绝不算账号消耗。
+// Records once per actual account upstream call; accounts from failed retries are recorded separately; auth rejections without an account selection do not count as account usage.
 func statsFinishAttempt(r *http.Request, status int) {
 	p := statsAttemptFor(r)
 	if p == nil || p.id == "" {
@@ -376,12 +376,12 @@ func statsFinishAttempt(r *http.Request, status int) {
 	requestStats.document.Requests = append(requestStats.document.Requests, row)
 	requestStats.revision++
 	requestStats.Unlock()
-	log.Printf("[请求统计] traceId=%s 账号=%s 模型=%s 状态=%d 完整=%t 有Token=%t 有积分=%t 总耗时ms=%.2f TTFT口径=%s 有首Token=%t 说明=只记录实测usage，不记录正文；文件写入由后台执行",
+	log.Printf("[Request stats] traceId=%s account=%s model=%s status=%d complete=%t hasTokens=%t hasCredits=%t totalDurationMs=%.2f TTFTMetric=%s hasFirstToken=%t note=records observed usage only, no bodies; file writing handled in background",
 		debugTraceID(r), p.account.File, p.model, row.Status, row.Complete, row.TotalTokens != nil, row.Credit != nil, row.LatencyMS, row.TTFTMetric, row.TTFTMS != nil)
 	*p = statsAttempt{}
 }
 
-// 指标中每种未知都有样本数，0费用与缺失费用、未知首字与真正0均可区分。
+// Every unknown in the metrics has a sample count; zero cost vs missing cost and unknown first byte vs true zero are distinguishable.
 type statsTotals struct {
 	Requests          int64    `json:"requests"`
 	Success           int64    `json:"success"`
@@ -394,7 +394,7 @@ type statsTotals struct {
 	Credits           float64  `json:"credits"`
 	CreditSamples     int64    `json:"creditSamples"`
 	TTFTSamples       int64    `json:"ttftSamples"`
-	LegacyTTFTSamples int64    `json:"legacyTtftSamples"` // 保留历史，但不当作新口径Token样本
+	LegacyTTFTSamples int64    `json:"legacyTtftSamples"` // kept for history, but not counted as a new-metric token sample
 	AvgLatencyMS      *float64 `json:"avgLatencyMs"`
 	AvgTTFTMS         *float64 `json:"avgTtftMs"`
 	latencySum        float64
@@ -452,13 +452,13 @@ type statsBucket struct {
 	statsTotals
 }
 
-// statsModelRow 是明细表的按模型聚合：同一时间范围与账号过滤下按用量排名。
+// statsModelRow is the per-model aggregation of the detail table: ranked by usage under the same time range and account filter.
 type statsModelRow struct {
 	Model string `json:"model"`
 	statsTotals
 }
 
-// statsModelLatency 与时间桶一一对应。没有调用的桶保持 nil，前端断线，不画成 0。
+// statsModelLatency maps one-to-one to time buckets. Buckets without calls stay null; the frontend draws no line for them, not 0.
 type statsModelLatency struct {
 	Model        string     `json:"model"`
 	AvgLatencyMS []*float64 `json:"avgLatencyMs"`
@@ -472,8 +472,8 @@ type statsLatencyCell struct {
 	ttftN   int
 }
 
-// modelWindowStats 是按时间窗口从 stats.json 记录聚合出的单模型摘要。
-// 模型列表复用它与总览相同的持久化数据源，避免服务重启后只显示内存里的少量样本。
+// modelWindowStats is a per-model summary aggregated from stats.json records over a time window.
+// The model list reuses the same persisted data source as the overview, so a service restart doesn't limit display to the few in-memory samples.
 type modelWindowStats struct {
 	Requests     int64
 	Success      int64
@@ -562,10 +562,10 @@ func statsNextBucket(at time.Time, period string) time.Time {
 	}
 }
 
-// 只读且走既有管理鉴权。UTC+8 日历日，周从周一开始；end 为包含的结束日。
+// Read-only and goes through existing admin auth. UTC+8 calendar days; weeks start Monday; end is the inclusive last day.
 func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "统计接口只读，仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Stats API is read-only; only GET is supported")
 		return
 	}
 	q := r.URL.Query()
@@ -574,7 +574,7 @@ func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 		period = "day"
 	}
 	if period != "hour" && period != "day" && period != "week" && period != "month" {
-		writeJSONError(w, http.StatusBadRequest, "时间维度只能是 hour/day/week/month")
+		writeJSONError(w, http.StatusBadRequest, "time period must be hour/day/week/month")
 		return
 	}
 	now := time.Now().In(statsZone)
@@ -591,7 +591,7 @@ func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 	if q.Get("start") != "" {
 		t, err := time.ParseInLocation("2006-01-02", q.Get("start"), statsZone)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "开始日期格式应为 YYYY-MM-DD")
+			writeJSONError(w, http.StatusBadRequest, "start date must be formatted YYYY-MM-DD")
 			return
 		}
 		from = t
@@ -599,20 +599,20 @@ func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 	if q.Get("end") != "" {
 		t, err := time.ParseInLocation("2006-01-02", q.Get("end"), statsZone)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "结束日期格式应为 YYYY-MM-DD")
+			writeJSONError(w, http.StatusBadRequest, "end date must be formatted YYYY-MM-DD")
 			return
 		}
 		to = t.AddDate(0, 0, 1)
 	}
 	if !from.Before(to) || to.Sub(from) > 10*366*24*time.Hour {
-		writeJSONError(w, http.StatusBadRequest, "日期范围无效或超过10年")
+		writeJSONError(w, http.StatusBadRequest, "date range is invalid or exceeds 10 years")
 		return
 	}
 	buckets := []statsBucket{}
 	index := map[int64]int{}
 	for at := statsBucketStart(from, period); at.Before(to); at = statsNextBucket(at, period) {
 		if len(buckets) >= 800 {
-			writeJSONError(w, http.StatusBadRequest, "时间桶超过800，请缩小范围或选择日/周/月")
+			writeJSONError(w, http.StatusBadRequest, "more than 800 time buckets; narrow the range or pick day/week/month")
 			return
 		}
 		label := at.Format("2006-01-02")
@@ -629,13 +629,13 @@ func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 	site := q.Get("site")
 	if site != "" && site != "cn" && site != "intl" {
 		requestStats.Unlock()
-		writeJSONError(w, http.StatusBadRequest, "站点维度只能是 cn 或 intl")
+		writeJSONError(w, http.StatusBadRequest, "site dimension must be cn or intl")
 		return
 	}
 	if account != "" {
 		if _, ok := requestStats.document.Accounts[account]; !ok {
 			requestStats.Unlock()
-			writeJSONError(w, http.StatusBadRequest, "账号统计标识不存在")
+			writeJSONError(w, http.StatusBadRequest, "account stats ID does not exist")
 			return
 		}
 	}
@@ -675,7 +675,7 @@ func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 		}
 		cells[i].sum += row.LatencyMS
 		cells[i].n++
-		// 首字与总耗时同一时间桶、同一模型分别平均，口径与总览摘要一致。
+		// First byte and total duration are averaged separately within the same time bucket and model, consistent with the overview summary.
 		if row.TTFTMS != nil && row.TTFTMetric == ttftMetric && row.Complete && row.Status < 400 {
 			cells[i].ttftSum += *row.TTFTMS
 			cells[i].ttftN++
@@ -687,7 +687,7 @@ func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 	for i := range buckets {
 		buckets[i].average()
 	}
-	// 明细按模型排名：有调用的才列出，用量（Token）多的在前，Token 未知时用请求数兜底。
+	// Detail is ranked by model: only models with calls are listed, higher usage (tokens) first, falling back to request count when tokens are unknown.
 	models := make([]*statsModelRow, 0, len(byModel))
 	for _, m := range byModel {
 		if m.Requests <= 0 {
@@ -705,7 +705,7 @@ func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 		}
 		return models[i].Model < models[j].Model
 	})
-	// 耗时线与排名使用同一批模型、同一时间和账号范围，每条线只平均该模型自己的调用。
+	// Latency lines and ranking use the same set of models and the same time and account range; each line averages only that model's own calls.
 	modelLatency := make([]statsModelLatency, 0, len(models))
 	for _, m := range models {
 		points := make([]*float64, len(buckets))
@@ -730,7 +730,7 @@ func handleWebUIStats(w http.ResponseWriter, r *http.Request) {
 			futureBuckets++
 		}
 	}
-	log.Printf("[统计查询] traceId=%s 维度=%s 单账号=%t 时间桶=%d 尚未开始的桶=%d 图表截止毫秒=%d 请求记录=%d 耗时线条=%d 存储=%s 结果=成功 说明=未来桶保留时间轴但不画点线柱、不补零；当前桶与过去零值正常展示；耗时按模型分别平均；UTC+8，周一开周；仅读内存聚合，不请求上游", debugTraceID(r), period, account != "", len(buckets), futureBuckets, now.UnixMilli(), summary.Requests, len(modelLatency), mode)
+	log.Printf("[Stats query] traceId=%s period=%s singleAccount=%t timeBuckets=%d notYetStartedBuckets=%d chartCutoffMs=%d requestRecords=%d latencyLines=%d storage=%s result=success note=future buckets keep the timeline but draw no points/lines/bars and no zero-fill; current and past zero values shown normally; duration averaged per model; UTC+8, weeks start Monday; reads in-memory aggregation only, no upstream requests", debugTraceID(r), period, account != "", len(buckets), futureBuckets, now.UnixMilli(), summary.Requests, len(modelLatency), mode)
 	writeAdminData(w, r, map[string]any{
 		"period": period, "account": account, "site": site, "timezone": "Asia/Shanghai",
 		"start": from.Format("2006-01-02"), "end": to.AddDate(0, 0, -1).Format("2006-01-02"),

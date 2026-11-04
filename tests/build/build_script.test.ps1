@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    构建脚本回归测试：使用模拟 Go 命令验证目标矩阵、失败处理、环境恢复与清理边界。
+    Build script regression tests: uses a mocked Go command to verify the target matrix, failure handling, environment restore, and cleaning boundaries.
 .DESCRIPTION
-    此测试不替代真实交叉编译。文件仅写入项目 .codex-tmp/ 与 logs/，不清理用户目录。
-    从 tests/build/ 推导项目根目录，允许从任意工作目录调用。
+    These tests do not replace real cross-compilation. Files are only written to the project .codex-tmp/ and logs/, never cleaning user directories.
+    The project root is derived from tests/build/, so the script can be called from any working directory.
 .EXAMPLE
     .\tests\build\build_script.test.ps1
 #>
@@ -52,7 +52,7 @@ function global:go {
         }
         'build' {
             $index = [Array]::IndexOf($Arguments, '-o')
-            if ($index -lt 0) { throw '模拟构建没有 -o 参数' }
+            if ($index -lt 0) { throw 'simulated build missing -o argument' }
             [IO.File]::WriteAllText($Arguments[$index + 1], "mock $env:GOOS/$env:GOARCH GOARM=$env:GOARM")
         }
     }
@@ -62,7 +62,7 @@ function Test-ExpectedFailure {
     param([string]$Name, [hashtable]$Arguments)
     $thrown = $false
     try { & $scriptPath @Arguments } catch { $thrown = $true }
-    Assert-Build $thrown "$Name 未拒绝错误输入"
+    Assert-Build $thrown "$Name did not reject invalid input"
     Write-TestResult $Name
 }
 
@@ -72,11 +72,11 @@ try {
     $allPath = Join-Path $testRoot 'all'
     & $scriptPath -OutputDir $allPath
     $manifest = Get-Content -LiteralPath (Join-Path $allPath 'build-manifest.json') -Raw | ConvertFrom-Json
-    Assert-Build ($manifest.artifacts.Count -eq 9) '默认目标数不是 9'
-    Assert-Build (@($manifest.artifacts | Where-Object { $_.goos -eq 'windows' }).Count -eq 3) 'Windows 目标数错误'
-    Assert-Build (@($manifest.artifacts | Where-Object { $_.goos -eq 'linux' }).Count -eq 4) 'Linux 目标数错误'
-    Assert-Build (@($manifest.artifacts | Where-Object { $_.goarch -eq 'arm' })[0].goarm -eq '7') 'ARM 默认值不是 7'
-    Assert-Build (@(Get-Content -LiteralPath (Join-Path $allPath 'SHA256SUMS')).Count -eq 11) '校验和未覆盖全部二进制/清单/示例'
+    Assert-Build ($manifest.artifacts.Count -eq 9) 'default target count is not 9'
+    Assert-Build (@($manifest.artifacts | Where-Object { $_.goos -eq 'windows' }).Count -eq 3) 'wrong Windows target count'
+    Assert-Build (@($manifest.artifacts | Where-Object { $_.goos -eq 'linux' }).Count -eq 4) 'wrong Linux target count'
+    Assert-Build (@($manifest.artifacts | Where-Object { $_.goarch -eq 'arm' })[0].goarm -eq '7') 'ARM default is not 7'
+    Assert-Build (@(Get-Content -LiteralPath (Join-Path $allPath 'SHA256SUMS')).Count -eq 11) 'checksums do not cover all binaries/manifest/example'
     Write-TestResult 'default-matrix-and-checksums'
 
     $values = @{ GOOS = 'freebsd'; GOARCH = 'arm'; CGO_ENABLED = '1'; GOARM = '6'; GOAMD64 = 'v3'; GO386 = 'softfloat'; GOARM64 = 'v8.2' }
@@ -85,26 +85,26 @@ try {
     $global:BuildMockCalls = @()
     & $scriptPath -Only windows -OutputDir (Join-Path $testRoot 'windows')
     foreach ($name in $envNames) {
-        Assert-Build ([Environment]::GetEnvironmentVariable($name, 'Process') -eq $values[$name]) "成功后环境未恢复：$name"
+        Assert-Build ([Environment]::GetEnvironmentVariable($name, 'Process') -eq $values[$name]) "environment not restored after success: $name"
     }
-    Assert-Build ((Get-Location).Path -eq $beforeLocation) '成功后工作目录未恢复'
+    Assert-Build ((Get-Location).Path -eq $beforeLocation) 'working directory not restored after success'
     $checks = @($global:BuildMockCalls | Where-Object { $_.args[0] -in @('vet', 'test') })
-    Assert-Build ($checks.Count -eq 2 -and -not $checks[0].os -and -not $checks[0].arch -and $checks[0].cgo -eq '0') '检查阶段未清空交叉编译环境'
+    Assert-Build ($checks.Count -eq 2 -and -not $checks[0].os -and -not $checks[0].arch -and $checks[0].cgo -eq '0') 'check phase did not clear cross-compilation environment'
     $builds = @($global:BuildMockCalls | Where-Object { $_.args[0] -eq 'build' })
-    Assert-Build ($builds.Count -eq 3) 'Windows 过滤没有输出三个目标'
+    Assert-Build ($builds.Count -eq 3) 'Windows filter did not produce three targets'
     Write-TestResult 'windows-filter-and-success-environment-restore'
 
     & $scriptPath -Only linux -Architecture arm -ArmVersion 6 -SkipTests -OutputDir (Join-Path $testRoot 'arm6')
-    Assert-Build (Test-Path -LiteralPath (Join-Path $testRoot 'arm6/workbuddy-gateway-linux-armv6')) 'ARMv6 文件名错误'
+    Assert-Build (Test-Path -LiteralPath (Join-Path $testRoot 'arm6/workbuddy-gateway-linux-armv6')) 'wrong ARMv6 file name'
     Write-TestResult 'linux-arm-version-filter'
 
     [IO.File]::WriteAllText((Join-Path $allPath 'keep.txt'), 'keep')
     [IO.Directory]::CreateDirectory((Join-Path $allPath 'nested')) | Out-Null
     [IO.File]::WriteAllText((Join-Path $allPath 'nested/config.json'), 'keep nested')
     & $scriptPath -Only windows -Architecture amd64 -SkipTests -Clean -OutputDir $allPath
-    Assert-Build ((Get-Content -LiteralPath (Join-Path $allPath 'keep.txt')) -eq 'keep') 'Clean 删除了无关文件'
-    Assert-Build (Test-Path -LiteralPath (Join-Path $allPath 'nested/config.json')) 'Clean 递归清理了子目录'
-    Assert-Build (@(Get-ChildItem -LiteralPath $allPath -Filter 'workbuddy-gateway-*' -File).Count -eq 1) '旧构建文件未清理'
+    Assert-Build ((Get-Content -LiteralPath (Join-Path $allPath 'keep.txt')) -eq 'keep') 'Clean deleted unrelated files'
+    Assert-Build (Test-Path -LiteralPath (Join-Path $allPath 'nested/config.json')) 'Clean recursively removed subdirectories'
+    Assert-Build (@(Get-ChildItem -LiteralPath $allPath -Filter 'workbuddy-gateway-*' -File).Count -eq 1) 'old build files were not cleaned'
     Write-TestResult 'clean-only-known-files'
 
     Test-ExpectedFailure 'reject-windows-arm32' @{ Only = 'windows'; Architecture = 'arm'; SkipTests = $true; OutputDir = (Join-Path $testRoot 'unsupported') }
@@ -114,13 +114,13 @@ try {
     $global:BuildMockFail = 'build'
     Test-ExpectedFailure 'go-build-failure' @{ Only = 'linux'; Architecture = 'amd64'; SkipTests = $true; OutputDir = (Join-Path $testRoot 'failed') }
     foreach ($name in $envNames) {
-        Assert-Build ([Environment]::GetEnvironmentVariable($name, 'Process') -eq $values[$name]) "失败后环境未恢复：$name"
+        Assert-Build ([Environment]::GetEnvironmentVariable($name, 'Process') -eq $values[$name]) "environment not restored after failure: $name"
     }
-    Assert-Build ((Get-Location).Path -eq $beforeLocation) '失败后工作目录未恢复'
-    Assert-Build (-not (Test-Path -LiteralPath (Join-Path $testRoot 'failed/build-manifest.json'))) '失败构建生成了成功清单'
-    Assert-Build (@(Get-ChildItem -LiteralPath (Join-Path $testRoot 'failed') -Filter '*.tmp' -File).Count -eq 0) '失败构建遗留了暂存文件'
+    Assert-Build ((Get-Location).Path -eq $beforeLocation) 'working directory not restored after failure'
+    Assert-Build (-not (Test-Path -LiteralPath (Join-Path $testRoot 'failed/build-manifest.json'))) 'failed build produced a success manifest'
+    Assert-Build (@(Get-ChildItem -LiteralPath (Join-Path $testRoot 'failed') -Filter '*.tmp' -File).Count -eq 0) 'failed build left temporary files behind'
     Write-TestResult 'failure-environment-and-partial-output'
-    Write-Host "全部构建脚本回归通过；日志：$testLog"
+    Write-Host "All build script regressions passed; log: $testLog"
 } catch {
     $row = @{ time = [DateTimeOffset]::Now.ToString('o'); trace_id = $testTrace; event = 'build_regression_failed'; error = $_.Exception.Message }
     [IO.File]::AppendAllText($testLog, ($row | ConvertTo-Json -Compress) + "`n", $encoding)

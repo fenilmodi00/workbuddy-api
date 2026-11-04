@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 )
 
-// 完整请求日志是显式开关，普通 debug 仍不记录正文。所有采集只读副本。
+// Full request logging is an explicit switch; normal debug still does not record bodies. All captures are read-only copies.
 var debugFullRequests atomic.Bool
 var fullRequestTokenPattern = regexp.MustCompile(`(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{16,})`)
 var fullRequestPrivateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
@@ -41,7 +41,7 @@ func fullRequestLoggingEnabled(r *http.Request) bool {
 	case "/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses", "/v1/messages", "/messages":
 		return true
 	}
-	return false // 管理配置、登录、凭据接口不记录正文。
+	return false // admin config, login, and credential endpoints do not record bodies.
 }
 
 func fullRequestSecretField(key string) bool {
@@ -173,7 +173,7 @@ func debugFullIncomingHeaders(r *http.Request) {
 	}
 	debugEvent(r, "info", "full_request_inbound_headers", map[string]any{
 		"request": fullRequestEnvelope(r), "body_capture": "not_read_yet",
-		"message": "入站请求头已记录；正文仅在通过鉴权并读取后另行记录，未为采集额外读取请求流",
+		"message": "inbound request headers recorded; body recorded separately only after auth passes and the body is read; no extra read of the request stream for capture",
 	})
 }
 
@@ -195,7 +195,7 @@ func debugFullUpstreamRequest(r, req *http.Request, raw []byte, attempt int) {
 	fields["content_encoding"] = req.Header.Get("Content-Encoding")
 	fields["wire_body_bytes"] = req.ContentLength
 	fields["body_representation"] = "decoded_json_before_content_encoding"
-	fields["message"] = "协议转换和全部修复之后、HTTP发送之前的完整请求；不是TLS原始抓包；不改变上游请求"
+	fields["message"] = "full request after protocol conversion and all fixes, before HTTP send; not a TLS raw capture; does not modify the upstream request"
 	debugEvent(r, "info", "full_request_upstream", fields)
 }
 
@@ -224,6 +224,6 @@ func debugFullUpstreamError(r *http.Request, resp *http.Response, raw []byte) {
 	if resp.Request != nil {
 		fields["upstream_request_id"] = resp.Request.Header.Get("X-Request-ID")
 	}
-	fields["message"] = "上游错误JSON已记录；成功响应流不被采集或预读"
+	fields["message"] = "upstream error JSON recorded; successful response streams are not captured or pre-read"
 	debugEvent(r, "warn", "full_request_upstream_error", fields)
 }

@@ -92,7 +92,7 @@ func TestProbeAccountModelQuotaBlocksOnlyThatModel(t *testing.T) {
 	withProbeAccount(t, acc, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"data":{"code":14018,"msg":"额度已用尽"}}}`))
+		_, _ = w.Write([]byte(`{"error":{"data":{"code":14018,"msg":"quota exhausted"}}}`))
 	})
 	res := probeAccountModel(context.Background(), acc, "deepseek-v4.1-flash")
 	if res.Status != "quota" || res.HTTP != http.StatusTooManyRequests {

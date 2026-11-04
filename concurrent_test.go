@@ -484,8 +484,8 @@ func TestConcurrentLimitsSharedAcrossProtocols(t *testing.T) {
 		raw, _ := os.ReadFile(path)
 		audit += string(raw)
 	}
-	for _, stage := range []string{"阶段=排队", "阶段=准入", "阶段=释放"} {
-		if !strings.Contains(audit, "[模型并发] traceId=") || !strings.Contains(audit, stage) {
+	for _, stage := range []string{"stage=queued", "stage=admitted", "stage=released"} {
+		if !strings.Contains(audit, "[Model concurrency] traceId=") || !strings.Contains(audit, stage) {
 			t.Fatalf("missing persisted concurrency audit: %s", stage)
 		}
 	}

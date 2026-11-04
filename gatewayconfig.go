@@ -17,7 +17,7 @@ const (
 	defaultWebPort = 8316
 )
 
-// Key 按用户配置以明文落盘；APIKeyEnabled 只影响模型 API，绝不能关闭管理鉴权。
+// Keys are persisted in plaintext as configured by the user; APIKeyEnabled only affects the model API and must never disable admin authentication.
 type gatewayFileConfig struct {
 	APIPort       int    `json:"apiPort"`
 	WebPort       int    `json:"webPort"`
@@ -31,10 +31,10 @@ type gatewayValidationError string
 func (e gatewayValidationError) Error() string { return string(e) }
 
 var (
-	gatewayConfigMu sync.RWMutex // 串行配置写入及运行时 Key 切换；不持锁调用 HTTP handler
+	gatewayConfigMu sync.RWMutex // serializes config writes and runtime Key switches; HTTP handlers are called without the lock
 	gatewaySettings gatewayFileConfig
-	errSetupDone    = errors.New("管理 Key 已配置；外部修改后请等待配置热加载并重新登录")
-	errConfigChange = errors.New("管理 Key 已被外部修改，请等待配置热加载并使用新 Key 重新登录")
+	errSetupDone    = errors.New("admin Key already configured; after external changes wait for config hot reload and log in again")
+	errConfigChange = errors.New("admin Key was changed externally; wait for config hot reload and log in again with the new Key")
 )
 
 func normalizeGatewayConfig(g gatewayFileConfig) (gatewayFileConfig, error) {
@@ -45,20 +45,20 @@ func normalizeGatewayConfig(g gatewayFileConfig) (gatewayFileConfig, error) {
 		g.WebPort = defaultWebPort
 	}
 	if g.APIPort < 1 || g.APIPort > 65535 || g.WebPort < 1 || g.WebPort > 65535 {
-		return g, gatewayValidationError("gateway.apiPort/webPort 必须为 1～65535，省略或 0 使用默认值")
+		return g, gatewayValidationError("gateway.apiPort/webPort must be 1–65535; omitted or 0 uses the default")
 	}
 	if g.APIPort == g.WebPort {
-		return g, gatewayValidationError("API 端口和 Web 端口不能相同")
+		return g, gatewayValidationError("API port and Web port cannot be the same")
 	}
 	for name, value := range map[string]string{"adminKey": g.AdminKey, "apiKey": g.APIKey} {
 		for _, c := range value {
 			if c < 33 || c > 126 {
-				return g, gatewayValidationError(fmt.Sprintf("gateway.%s 只能包含非空白可打印 ASCII 字符", name))
+				return g, gatewayValidationError(fmt.Sprintf("gateway.%s can only contain non-whitespace printable ASCII characters", name))
 			}
 		}
 	}
 	if g.APIKeyEnabled && g.APIKey == "" {
-		return g, gatewayValidationError("启用 API Key 校验时必须设置 gateway.apiKey")
+		return g, gatewayValidationError("gateway.apiKey must be set when API Key validation is enabled")
 	}
 	return g, nil
 }
@@ -73,7 +73,7 @@ func applyGatewayConfig(g gatewayFileConfig) error {
 		apiPort = cfg.Port
 	}
 	if apiPort < 1 || apiPort > 65535 || cfg.WebUI && apiPort == g.WebPort {
-		return errors.New("API 监听端口无效或与 Web 监听端口冲突")
+		return errors.New("API listen port invalid or conflicts with the Web listen port")
 	}
 	gatewayConfigMu.Lock()
 	defer gatewayConfigMu.Unlock()
@@ -104,7 +104,7 @@ func currentAdminKey() string {
 	return cfg.AdminKey
 }
 
-// readGatewayDocumentLocked 保留其他配置段，不将提示词/账号规则重新构造为默认值。
+// readGatewayDocumentLocked preserves other config sections; it never rebuilds prompts/account rules as defaults.
 func readGatewayDocumentLocked() (map[string]json.RawMessage, gatewayFileConfig, []byte, error) {
 	data, err := os.ReadFile(runtimeConfigFile)
 	if errors.Is(err, os.ErrNotExist) {
@@ -116,18 +116,18 @@ func readGatewayDocumentLocked() (map[string]json.RawMessage, gatewayFileConfig,
 	}
 	typed, err := parseRuntimeConfig(data)
 	if err != nil {
-		return nil, gatewayFileConfig{}, nil, fmt.Errorf("配置文件不可解析，拒绝覆盖: %w", err)
+		return nil, gatewayFileConfig{}, nil, fmt.Errorf("config file unparseable, refusing to overwrite: %w", err)
 	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(data, &doc); err != nil || doc == nil {
-		return nil, gatewayFileConfig{}, nil, errors.New("config.json 必须是 JSON 对象")
+		return nil, gatewayFileConfig{}, nil, errors.New("config.json must be a JSON object")
 	}
 	g, err := normalizeGatewayConfig(typed.Gateway)
 	return doc, g, data, err
 }
 
-// writeConfigPreservingFile 原位写入以保留现有文件 ACL；失败时尽力恢复原文。
-// 不创建含密钥的临时替换文件，不声称提供断电事务保证。
+// writeConfigPreservingFile writes in place to preserve existing file ACLs; on failure it best-effort restores the original text.
+// It does not create temporary replacement files containing secrets and does not claim power-failure transactional guarantees.
 func writeConfigPreservingFile(data, previous []byte) error {
 	f, err := os.OpenFile(runtimeConfigFile, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -150,7 +150,7 @@ func writeConfigPreservingFile(data, previous []byte) error {
 	if err := write(data); err != nil {
 		if previous != nil {
 			if restoreErr := write(previous); restoreErr != nil {
-				return fmt.Errorf("配置写入失败: %v；恢复原文件也失败，请检查文件: %w", err, restoreErr)
+				return fmt.Errorf("config write failed: %v; restoring the original file also failed, please check the file: %w", err, restoreErr)
 			}
 		}
 		return err
@@ -168,22 +168,22 @@ func persistGatewayConfigLocked(doc map[string]json.RawMessage, g gatewayFileCon
 	if err != nil {
 		return err
 	}
-	log.Printf("[管理配置] traceId=%s 阶段=写入配置 文件=%s API鉴权启用=%t Key已隐藏=true 说明=先落盘再切换运行时配置，其他配置段保留", trace, runtimeConfigFile, g.APIKeyEnabled)
+	log.Printf("[Admin config] traceId=%s stage=write-config file=%s api-auth-enabled=%t key-hidden=true note=persist to disk before switching runtime config; other config sections preserved", trace, runtimeConfigFile, g.APIKeyEnabled)
 	if err := writeConfigPreservingFile(append(data, '\n'), old); err != nil {
-		log.Printf("[管理配置] traceId=%s 阶段=写入配置 结果=失败 原因=%v 业务影响=运行时配置未切换", trace, err)
+		log.Printf("[Admin config] traceId=%s stage=write-config result=failed reason=%v business-impact=runtime config not switched", trace, err)
 		return err
 	}
 	if err := applyGatewayListenerPortsLocked(g, trace); err != nil {
 		if restoreErr := writeConfigPreservingFile(old, append(data, '\n')); restoreErr != nil {
-			return fmt.Errorf("监听端口切换失败: %v；恢复原配置也失败，请检查服务器日志: %w", err, restoreErr)
+			return fmt.Errorf("listen port switch failed: %v; restoring the original config also failed, please check the server logs: %w", err, restoreErr)
 		}
 		return err
 	}
 	gatewaySettings = g
 	setGatewayKeysLocked(g)
-	// 本函数只应用 gateway 段；强制下轮完整重载其他外部编辑的配置。
+	// This function only applies the gateway section; force a full reload next round for other externally edited config.
 	runtimeHasAppliedHash = false
-	log.Printf("[管理配置] traceId=%s 结果=保存成功 API鉴权启用=%t 实际API端口=%d 实际Web端口=%d 说明=后续请求使用新鉴权状态，管理鉴权始终独立启用；监听端口已热切换，旧连接保留", trace, g.APIKeyEnabled, cfg.Port, cfg.WebPort)
+	log.Printf("[Admin config] traceId=%s result=save-success api-auth-enabled=%t actual-api-port=%d actual-web-port=%d note=following requests use the new auth state; admin auth always stays independently enabled; listen ports hot-switched, old connections retained", trace, g.APIKeyEnabled, cfg.Port, cfg.WebPort)
 	return nil
 }
 
@@ -199,7 +199,7 @@ func applyGatewayListenerPortsLocked(g gatewayFileConfig, trace string, beforeCo
 	}
 	actualAPI, actualWeb, err := gatewayServers.applyWith(g, apiPort, cfg.WebUI, prepare)
 	if err != nil {
-		log.Printf("[监听热切换] traceId=%s 目标API端口=%d 目标Web端口=%d 结果=失败 原因=%v 业务影响=原监听继续服务", trace, apiPort, g.WebPort, err)
+		log.Printf("[Listener hot switch] traceId=%s target-api-port=%d target-web-port=%d result=failed reason=%v business-impact=original listener keeps serving", trace, apiPort, g.WebPort, err)
 		return gatewayValidationError(err.Error())
 	}
 	if actualAPI > 0 {
@@ -235,9 +235,9 @@ func initializeAdminKey(trace string) (string, error) {
 	}
 	var entropy [16]byte
 	if _, err := rand.Read(entropy[:]); err != nil {
-		return "", fmt.Errorf("生成管理 Key 失败: %w", err)
+		return "", fmt.Errorf("failed to generate admin Key: %w", err)
 	}
-	g.AdminKey = hex.EncodeToString(entropy[:]) // 精确 32 字符，128 位随机熵。
+	g.AdminKey = hex.EncodeToString(entropy[:]) // exactly 32 characters, 128 bits of random entropy.
 	registerSecrets(g.AdminKey)
 	if err := persistGatewayConfigLocked(doc, g, old, trace); err != nil {
 		return "", err
@@ -270,7 +270,7 @@ func saveGatewaySettings(enabled *bool, key string, apiPort, webPort *int, trace
 	if webPort != nil {
 		g.WebPort = *webPort
 	}
-	// 空输入表示保留已配置 Key；关闭校验不删除原 Key。
+	// Empty input means keep the configured Key; disabling validation does not delete the original Key.
 	if key != "" {
 		g.APIKey = key
 	}
@@ -283,9 +283,9 @@ func saveGatewaySettings(enabled *bool, key string, apiPort, webPort *int, trace
 		effectiveAPIPort = cfg.Port
 	}
 	if cfg.WebUI && effectiveAPIPort == g.WebPort {
-		return gatewayValidationError("Web 端口不能与实际 API 端口冲突（含 -port 命令行覆盖）")
+		return gatewayValidationError("Web port cannot conflict with the actual API port (including the -port command-line override)")
 	}
-	log.Printf("[管理端口设置] traceId=%s 配置API端口=%d 配置Web端口=%d 当前API端口=%d 当前Web端口=%d 说明=保存等效于编辑gateway配置，监听端口将在校验后热切换",
+	log.Printf("[Admin port settings] traceId=%s configured-api-port=%d configured-web-port=%d current-api-port=%d current-web-port=%d note=saving is equivalent to editing the gateway config; listen ports hot-switch after validation",
 		trace, g.APIPort, g.WebPort, cfg.Port, cfg.WebPort)
 	registerSecrets(g.APIKey)
 	return persistGatewayConfigLocked(doc, g, old, trace)
@@ -311,12 +311,12 @@ func gatewaySettingsView() map[string]any {
 	}
 }
 
-// ignoreLegacyAPIKeyFlag 只是吞掉旧 systemd 单元/脚本里残留的 -api-key，避免升级后启动失败。
+// ignoreLegacyAPIKeyFlag just swallows a leftover -api-key from old systemd units/scripts, preventing startup failures after upgrades.
 //
-// 该参数在新版本中**完全静默、不产生任何作用**：不写日志、不写盘、不修改 config.json、
-// 不影响模型 API 鉴权；模型 API 鉴权一律只由 config.json 的 gateway.apiKeyEnabled / apiKey 决定。
+// In the new version this flag is **completely silent and has no effect**: it writes no logs, writes no files, does not modify config.json,
+// and does not affect model API authentication; model API authentication is decided solely by config.json's gateway.apiKeyEnabled / apiKey.
 //
-// TODO(remove): 这是纯兼容占位，计划在后续版本彻底删除该参数与 main.go 中的注册代码；
-// 删除后旧启动命令会因未知参数而启动失败，届时应在发布说明中提示用户先移除该参数。
+// TODO(remove): this is a pure compatibility placeholder, planned for full removal in a later version along with its registration in main.go;
+// after removal, old startup commands will fail on the unknown flag, and release notes should then tell users to remove it first.
 func ignoreLegacyAPIKeyFlag(_ string) {
 }

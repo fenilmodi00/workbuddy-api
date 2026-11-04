@@ -15,7 +15,7 @@ import (
 const (
 	requestProfileLegacy   = "legacy"
 	requestProfileOfficial = "official"
-	// 固定为 2026-10-21 国内桌面实抓版本，不声称跟随官网最新版本。
+	// Fixed to the 2026-10-21 domestically captured desktop version; does not claim to follow the latest official site.
 	observedDesktopUA = "WorkBuddy/5.8.3 WorkBuddy/5.8.3 CLI/2.161.0"
 )
 
@@ -30,16 +30,16 @@ func normalizeRequestProfile(value string) (string, error) {
 	case requestProfileOfficial:
 		return requestProfileOfficial, nil
 	default:
-		return "", fmt.Errorf("upstream.requestProfile 只支持 legacy 或 official")
+		return "", fmt.Errorf("upstream.requestProfile only supports legacy or official")
 	}
 }
 
 func setRequestProfile(value string) {
-	profile, _ := normalizeRequestProfile(value) // 整份配置已在应用前校验。
+	profile, _ := normalizeRequestProfile(value) // The whole config has already been validated before applying.
 	officialRequests.Store(profile == requestProfileOfficial)
 }
 
-// 一次逻辑请求只取一次快照，避免热加载使正文、请求头和重试使用不同配置。
+// Snapshot the profile once per logical request so hot reload cannot make body, headers, and retries use different configs.
 func requestProfileFor(r *http.Request) string {
 	if r != nil {
 		if value, ok := r.Context().Value(requestProfileContextKey{}).(string); ok {
@@ -56,13 +56,13 @@ func requestProfileFor(r *http.Request) string {
 	return profile
 }
 
-// 三个入口在协议转译后共用此处。不要提升 user 角色，不替换客户端指令或工具。
+// All three entry points share this after protocol translation. Do not promote user roles, or replace client instructions or tools.
 func prepareUpstreamChatRequest(obj map[string]any, r *http.Request, requestID uint64, model string) {
 	profile := requestProfileFor(r)
 	trace := debugTraceID(r)
 	applyThinkingRules(obj, model)
 	normalizeDeveloperRoles(obj, r, requestID)
-	// 首位通配只在客户端原始块上执行一次，不跨协议合并后的文本块边界。
+	// The leading-wildcard rule runs once on the client's original blocks, not across protocol-merged text block boundaries.
 	applyOriginalIdentityReplacements(obj, r, requestID)
 	if profile == requestProfileOfficial {
 		mergeLeadingInstructionMessages(obj, r, requestID)
@@ -86,13 +86,13 @@ func applyOfficialBodyDefaults(obj map[string]any, r *http.Request, id uint64, m
 			added = append(added, key)
 		}
 	}
-	// Chat 新旧输出预算字段等价；只有没有 max_tokens 时才转换，冲突值不擅自覆盖。
+	// Chat's old and new output budget fields are equivalent; convert only when max_tokens is absent, and never override conflicting values.
 	if value := obj["max_completion_tokens"]; value != nil && obj["max_tokens"] == nil {
 		obj["max_tokens"] = value
 		delete(obj, "max_completion_tokens")
 		added = append(added, "max_completion_tokens->max_tokens")
 	}
-	// 上游总是 SSE，独立的 usage 事件有助于三个下游协议得到相同计费数据。
+	// The upstream always uses SSE; a separate usage event helps all three downstream protocols get the same billing data.
 	if value, exists := obj["stream_options"]; !exists || value == nil {
 		obj["stream_options"] = map[string]any{"include_usage": true}
 		added = append(added, "stream_options.include_usage")
@@ -102,10 +102,10 @@ func applyOfficialBodyDefaults(obj map[string]any, r *http.Request, id uint64, m
 			added = append(added, "stream_options.include_usage")
 		}
 	}
-	// 只有该模型有完整桌面样本。其他模型不猜测其 temperature/verbosity 支持范围。
+	// Only this model has a complete desktop sample. Do not guess temperature/verbosity support for other models.
 	if normalizeModelName(model) == "deepseek-v4.1-flash" {
 		if !clientDeclaredOutputBudget(obj) {
-			put("max_tokens", 128000) // 目录尚未就绪时，使用已验证的样本输出上限。
+			put("max_tokens", 128000) // Use the verified sample output cap while the model catalog is not ready.
 		}
 		if obj["top_p"] == nil {
 			put("temperature", 1)
@@ -113,17 +113,17 @@ func applyOfficialBodyDefaults(obj map[string]any, r *http.Request, id uint64, m
 		put("verbosity", "high")
 	}
 	sort.Strings(added)
-	log.Printf("[出站兼容] traceId=%s requestId=%d profile=official 阶段=正文准备 模型=%s 补入字段=%v 结果=完成 说明=保留显式档位、用户角色、原文与工具；不复制官方私有提示词",
+	log.Printf("[Outbound compat] traceId=%s requestId=%d profile=official stage=body-preparation model=%s added-fields=%v result=completed note=keeps explicit effort, user roles, original text, and tools; does not copy the official private prompt",
 		debugTraceID(r), id, model, added)
 	debugEvent(r, "debug", "official_request_body_prepared", map[string]any{
 		"profile": requestProfileOfficial, "defaulted_fields": added,
 		"reasoning_effort": obj["reasoning_effort"],
-		"business_impact":  "统一三个入口的已验证默认字段；不将high强制升级max，不提升user指令层级",
+		"business_impact":  "applies verified default fields across the three entry points; does not force high to max, does not promote user instructions",
 	})
 }
 
-// 仅合并连续前导、无附加元数据的纯文本 system。user、图片、cache_control、
-// 中途插入的 system 及其他字段均不猜测或丢弃；强制提示词在合并后才追加。
+// Merges only consecutive leading plain-text system messages without extra metadata. user, images, cache_control,
+// system messages inserted mid-conversation, and other fields are never guessed or discarded; forced prompts are appended after merging.
 func mergeLeadingInstructionMessages(obj map[string]any, r *http.Request, id uint64) {
 	messages, _ := obj["messages"].([]any)
 	var texts []string
@@ -171,9 +171,9 @@ func mergeLeadingInstructionMessages(obj map[string]any, r *http.Request, id uin
 	out = append(out, first)
 	out = append(out, messages[count:]...)
 	obj["messages"] = out
-	log.Printf("[出站兼容] traceId=%s requestId=%d 阶段=指令结构 结果=合并连续前导纯文本system 合并消息数=%d 说明=保留文本顺序，不跨user边界，不记录正文", debugTraceID(r), id, count)
+	log.Printf("[Outbound compat] traceId=%s requestId=%d stage=instruction-structure result=merged consecutive leading plain-text system merged-message-count=%d note=keeps text order, does not cross user boundary, does not log body", debugTraceID(r), id, count)
 	debugEvent(r, "debug", "official_instruction_messages_merged", map[string]any{
-		"messages_merged": count, "business_impact": "仅把已明确标注为system的连续纯文本合并；不提升user角色",
+		"messages_merged": count, "business_impact": "merges only explicitly labeled system consecutive plain text; does not promote user roles",
 	})
 }
 
@@ -181,8 +181,8 @@ func usesObservedDesktopHeaders(profile string, prof *upstreamProfile) bool {
 	return profile == requestProfileOfficial && prof.Key == "cn"
 }
 
-// 只用于模型请求。登录/刷新/额度接口继续沿用原有鉴权逻辑。
-// 不伪造 X-Device-Token、SDK/Node 运行时信息或其他无法取得的客户端凭证。
+// Only for model requests. Login/refresh/quota endpoints keep the original authentication logic.
+// Does not fake X-Device-Token, SDK/Node runtime info, or other client credentials that cannot be obtained.
 func applyObservedDesktopHeaders(req *http.Request, prof *upstreamProfile, profile string) {
 	if !usesObservedDesktopHeaders(profile, prof) || req.Method != http.MethodPost || req.URL.Path != "/v2/chat/completions" {
 		return
@@ -193,8 +193,8 @@ func applyObservedDesktopHeaders(req *http.Request, prof *upstreamProfile, profi
 	} {
 		req.Header.Del(name)
 	}
-	// 2026-10-21 国内桌面实抓的静态客户端身份。设备令牌、用户身份和会话标识
-	// 仍由真实账号/会话提供；不伪造无法取得的 X-Device-Token。
+	// Static client identity captured from a domestic desktop on 2026-10-21. Device tokens, user identity, and session
+	// identifiers still come from the real account/session; X-Device-Token that cannot be obtained is not faked.
 	for name, value := range map[string]string{
 		"Accept":                      "application/json",
 		"User-Agent":                  observedDesktopUA,
@@ -218,7 +218,7 @@ func applyObservedDesktopHeaders(req *http.Request, prof *upstreamProfile, profi
 	} {
 		req.Header.Set(name, value)
 	}
-	// 保持同一逻辑请求的 message/request ID 相等；重试沿用，不改变本地审计 TraceID。
+	// Keep message/request IDs identical for the same logical request; retries reuse them, and the local audit TraceID is unchanged.
 	message := strings.ReplaceAll(req.Header.Get(conversationMessageIDHeader), "-", "")
 	req.Header.Set(conversationMessageIDHeader, message)
 	req.Header.Set("X-Request-ID", message)

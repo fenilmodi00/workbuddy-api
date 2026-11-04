@@ -22,10 +22,10 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// accountFileNamePattern 限定新增账号只能填一个文件名，不接受目录或通配符。
+// accountFileNamePattern restricts new accounts to a single file name; directories and wildcards are not accepted.
 var accountFileNamePattern = regexp.MustCompile(`^workbuddy[A-Za-z0-9._-]*\.json$`)
 
-// accountCredentialDir 返回凭据落地目录：-auth-dir 优先，否则就是程序运行目录。
+// accountCredentialDir returns the credential directory: -auth-dir takes precedence, otherwise the program working directory.
 func accountCredentialDir() (string, error) {
 	accountMu.Lock()
 	dir := strings.TrimSpace(cfg.AuthDir)
@@ -35,22 +35,22 @@ func accountCredentialDir() (string, error) {
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return "", fmt.Errorf("无法解析凭据目录：%w", err)
+		return "", fmt.Errorf("Failed to resolve credential directory: %w", err)
 	}
 	return abs, nil
 }
 
-// resolveCredentialPath 把用户填写的文件名解析成运行目录下的绝对路径，绝不接受目录。
+// resolveCredentialPath resolves the user-provided file name into an absolute path under the working directory; directories are never accepted.
 func resolveCredentialPath(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", errors.New("请填写凭据名")
+		return "", errors.New("Please provide a credential name")
 	}
 	if name != filepath.Base(name) || strings.ContainsAny(name, `/\*?[]`) {
-		return "", errors.New("凭据名只能是文件名，不能包含目录或通配符")
+		return "", errors.New("Credential name must be a file name; directories and wildcards are not allowed")
 	}
 	if !accountFileNamePattern.MatchString(name) {
-		return "", errors.New("凭据名需以 workbuddy 开头、以 .json 结尾，只能用字母数字和 . _ -")
+		return "", errors.New("Credential name must start with workbuddy, end with .json, and use only letters, digits and . _ -")
 	}
 	dir, err := accountCredentialDir()
 	if err != nil {
@@ -59,7 +59,7 @@ func resolveCredentialPath(name string) (string, error) {
 	return filepath.Join(dir, name), nil
 }
 
-// suggestCredentialFileName 取目录下第一个没被占用的 workbuddyN.json。
+// suggestCredentialFileName picks the first unused workbuddyN.json in the directory.
 func suggestCredentialFileName() string {
 	used := map[int]bool{}
 	dir, err := accountCredentialDir()
@@ -83,8 +83,8 @@ func suggestCredentialFileName() string {
 	}
 }
 
-// loginSession 是一次进行中的扫码登录。CLI 的 login 与网页新增账号共用这条路径，
-// 区别只在谁来展示二维码、谁把凭据路径拼出来。
+// loginSession is an in-progress QR login. The CLI login and the web account-add flow share this path;
+// only who renders the QR code and who assembles the credential path differ.
 type loginSession struct {
 	ID      string
 	Site    string
@@ -109,10 +109,10 @@ var (
 	loginSessions   = map[string]*loginSession{}
 )
 
-// loginSessionRetention 让已结束的登录会话在内存中多保留一段时间。
-// CLI 直接持有 *loginSession，不依赖会话表；网页只拿到 id，必须再查一次才能看到
-// expired / failed / done。若结束时立刻删除，前端轮询几乎总是拿到 404，表现为
-// 「链接失效了但控制台还在等」。
+// loginSessionRetention keeps finished login sessions in memory for a while longer.
+// The CLI holds *loginSession directly and does not depend on the session table; the web UI only gets an id
+// and must query again to see expired / failed / done. Deleting immediately on finish would make frontend
+// polling almost always get a 404, appearing as "the link is dead but the console keeps waiting".
 var loginSessionRetention = 2 * time.Minute
 
 func newLoginSessionID() string {
@@ -123,7 +123,7 @@ func newLoginSessionID() string {
 	return "login-" + hex.EncodeToString(buf)
 }
 
-// qrDataURI 生成二维码图片；失败只影响展示，不影响登录流程本身。
+// qrDataURI generates the QR code image; failure only affects the display, not the login flow itself.
 func (s *loginSession) qrDataURI() string {
 	code, err := qrcode.New(s.AuthURL, qrcode.Medium)
 	if err != nil {
@@ -182,14 +182,14 @@ func forgetLoginSession(id string) {
 	loginSessionsMu.Unlock()
 }
 
-// scheduleForgetLoginSession 延迟清理已结束的会话，给网页轮询留出读取终态的时间。
+// scheduleForgetLoginSession delays cleanup of finished sessions, giving web polling time to read the final state.
 func scheduleForgetLoginSession(id string) {
 	time.AfterFunc(loginSessionRetention, func() {
 		forgetLoginSession(id)
 	})
 }
 
-// beginAccountLogin 复用 CLI login 的同一条流程：先取 state 与二维码，再轮询换取 token 并落地凭据。
+// beginAccountLogin reuses the same flow as CLI login: fetch state and QR code first, then poll for the token and save credentials.
 func beginAccountLogin(site, targetPath string) (*loginSession, error) {
 	prof := profileForEdition(site)
 	client := &http.Client{Timeout: 30 * time.Second, Jar: cfg.HttpClient.Jar}
@@ -199,12 +199,12 @@ func beginAccountLogin(site, targetPath string) (*loginSession, error) {
 	}
 	data, _, err := doJSON(client, http.MethodPost, prof.authStateURL(), nil, bytes.NewReader([]byte("{}")))
 	if err != nil {
-		return nil, fmt.Errorf("获取登录状态失败: %w", err)
+		return nil, fmt.Errorf("Failed to get login state: %w", err)
 	}
 	var st authStateData
 	_ = json.Unmarshal(data, &st)
 	if st.State == "" || st.AuthURL == "" {
-		return nil, errors.New("上游返回的登录状态信息异常，请重试")
+		return nil, errors.New("Upstream returned abnormal login state information, please retry")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &loginSession{
@@ -218,7 +218,7 @@ func beginAccountLogin(site, targetPath string) (*loginSession, error) {
 
 func (s *loginSession) run(ctx context.Context, targetPath string, pollHeaders func(*http.Request)) {
 	trace := newTraceID()
-	log.Printf("[网页登录] traceId=%s 阶段=开始 站点=%s 凭据=%s 说明=已复用 CLI login 同一流程，等待扫码授权",
+	log.Printf("[Web login] traceId=%s stage=started site=%s credential=%s note=reused the same CLI login flow, waiting for QR authorization",
 		trace, s.Site, filepath.Base(targetPath))
 	defer scheduleForgetLoginSession(s.ID)
 	defer s.cancel()
@@ -231,8 +231,8 @@ func (s *loginSession) run(ctx context.Context, targetPath string, pollHeaders f
 			return
 		case <-ticker.C:
 			if time.Now().After(s.deadline) {
-				log.Printf("[网页登录] traceId=%s 阶段=等待扫码 结果=超时 站点=%s 业务影响=未写入凭据，账号池不变", trace, s.Site)
-				s.finish("expired", "登录已超时，请重新获取登录接口", nil, "")
+				log.Printf("[Web login] traceId=%s stage=waiting for scan result=timeout site=%s business impact=no credentials written, account pool unchanged", trace, s.Site)
+				s.finish("expired", "Login timed out, please request the login endpoint again", nil, "")
 				return
 			}
 			tokRaw, _, errTok := doJSON(s.client, http.MethodGet, s.prof.authTokenURL(s.state), pollHeaders, nil)
@@ -262,17 +262,17 @@ func (s *loginSession) run(ctx context.Context, targetPath string, pollHeaders f
 				Account: StoredAccount{UID: acct.UID, EnterpriseID: acct.EnterpriseID, Nickname: acct.Nickname},
 			}
 			if err := saveAuthTo(targetPath, sa); err != nil {
-				log.Printf("[网页登录] traceId=%s 阶段=写入凭据 结果=失败 凭据=%s 原因=%v 业务影响=账号未加入账号池",
+				log.Printf("[Web login] traceId=%s stage=write credentials result=failed credential=%s reason=%v business impact=account not added to the account pool",
 					trace, filepath.Base(targetPath), err)
-				s.finish("failed", "保存凭据失败："+err.Error(), nil, "")
+				s.finish("failed", "Failed to save credentials: "+err.Error(), nil, "")
 				return
 			}
 			if err := ensureAccountLoaded(targetPath); err != nil {
-				log.Printf("[网页登录] traceId=%s 阶段=加入账号池 结果=失败 凭据=%s 原因=%v 业务影响=文件已写入，可在下次扫描时加载",
+				log.Printf("[Web login] traceId=%s stage=join account pool result=failed credential=%s reason=%v business impact=file written, will load on next scan",
 					trace, filepath.Base(targetPath), err)
 			}
 			requestQuotaScan()
-			log.Printf("[网页登录] traceId=%s 阶段=完成 站点=%s 凭据=%s 账号=%s 结果=成功 说明=凭据已自动加载，无需重启",
+			log.Printf("[Web login] traceId=%s stage=completed site=%s credential=%s account=%s result=success note=credentials loaded automatically, no restart needed",
 				trace, s.Site, filepath.Base(targetPath), sa.Account.UID)
 			s.finish("done", "", sa, targetPath)
 			return
@@ -280,7 +280,7 @@ func (s *loginSession) run(ctx context.Context, targetPath string, pollHeaders f
 	}
 }
 
-// ensureAccountLoaded 让刚写入的凭据立刻进入账号池，不依赖目录扫描是否覆盖该文件。
+// ensureAccountLoaded makes freshly written credentials enter the account pool immediately, without relying on the directory scan covering the file.
 func ensureAccountLoaded(path string) error {
 	if _, err := reloadAccountsResult(); err != nil {
 		return err
@@ -300,7 +300,7 @@ func ensureAccountLoaded(path string) error {
 	accountMu.Lock()
 	accounts = append(accounts, &Account{Path: path, Auth: sa, Edition: profileForEdition(sa.Edition).Key})
 	accountMu.Unlock()
-	log.Printf("[账号新增] 凭据=%s 结果=已加入账号池 说明=目录扫描未覆盖该文件时由网页新增流程直接补入", filepath.Base(path))
+	log.Printf("[Account added] credential=%s result=added to account pool note=added directly by the web add flow when the directory scan missed the file", filepath.Base(path))
 	return nil
 }
 
@@ -310,11 +310,11 @@ func findLoginSession(id string) *loginSession {
 	return loginSessions[id]
 }
 
-// deleteAccountCredential 删除指定凭据文件（只认账号池里已有的那个路径）。
+// deleteAccountCredential deletes the given credential file (only the path already in the account pool is recognized).
 func deleteAccountCredential(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || name != filepath.Base(name) {
-		return "", errors.New("凭据名无效")
+		return "", errors.New("Invalid credential name")
 	}
 	accountMu.Lock()
 	target, duplicates := "", 0
@@ -326,34 +326,34 @@ func deleteAccountCredential(name string) (string, error) {
 	}
 	accountMu.Unlock()
 	if duplicates > 1 {
-		return "", errors.New("存在同名凭据，无法确定要删除哪一个")
+		return "", errors.New("Duplicate credential names exist; cannot determine which one to delete")
 	}
 	if target == "" {
-		return "", errors.New("账号不存在或已删除")
+		return "", errors.New("Account does not exist or was already deleted")
 	}
 	if !accountFileNamePattern.MatchString(filepath.Base(target)) {
-		return "", errors.New("凭据名不符合 workbuddy*.json，拒绝删除")
+		return "", errors.New("Credential name does not match workbuddy*.json; refusing to delete")
 	}
 	info, err := os.Lstat(target)
 	switch {
 	case err == nil:
 		if !info.Mode().IsRegular() {
-			return "", errors.New("凭据不是普通文件，拒绝删除")
+			return "", errors.New("Credential is not a regular file; refusing to delete")
 		}
 		if err := os.Remove(target); err != nil {
-			return "", fmt.Errorf("删除凭据失败：%w", err)
+			return "", fmt.Errorf("Failed to delete credential: %w", err)
 		}
 	case errors.Is(err, os.ErrNotExist):
-		// 授权失效流程可能已经删掉了凭据文件，只在账号池里留下失效提示项。
-		// 这种条目仍应允许用户从网页显式删除。
+		// The authorization-expiry flow may already have deleted the credential file, leaving only an expired-marker
+		// entry in the account pool. Such entries should still be deletable explicitly from the web UI.
 	default:
-		return "", fmt.Errorf("凭据不可读取：%w", err)
+		return "", fmt.Errorf("Credential is unreadable: %w", err)
 	}
 	if err := os.Remove(markerPath(target)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Printf("[账号删除] 凭据=%s 失效标记清除失败：%v", filepath.Base(target), err)
+		log.Printf("[Account delete] credential=%s failed to clear expiry marker: %v", filepath.Base(target), err)
 	}
-	// 显式删除必须无条件移出账号池：热加载收敛会保留 Disabled 的失效提示项，
-	// 只删除凭据文件无法让网页和 CLI 里的条目消失。
+	// Explicit deletion must unconditionally remove the entry from the account pool: hot-reload reconciliation keeps
+	// Disabled expired-marker entries, so deleting only the credential file would not remove entries from the web UI and CLI.
 	accountMu.Lock()
 	kept := make([]*Account, 0, len(accounts))
 	for _, acc := range accounts {
@@ -371,29 +371,29 @@ func deleteAccountCredential(name string) (string, error) {
 	accountMu.Unlock()
 	reloadAccountsResult()
 	requestQuotaScan()
-	// 立即刷新状态快照，避免网页在下一次 3 秒快照前继续显示已删除账号。
+	// Refresh the status snapshot immediately so the web UI stops showing the deleted account before the next 3-second snapshot.
 	if err := writeStatusSnapshot(); err != nil {
-		log.Printf("[账号删除] 凭据=%s 状态快照刷新失败：%v", filepath.Base(target), err)
+		log.Printf("[Account delete] credential=%s failed to refresh status snapshot: %v", filepath.Base(target), err)
 	}
 	return target, nil
 }
 
-// handleWebUIAccountAdd 支持读取默认名（GET）、发起登录（POST）、查询进度（GET ?id=）。
+// handleWebUIAccountAdd supports reading the default name (GET), starting a login (POST), and querying progress (GET ?id=).
 func handleWebUIAccountAdd(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
-			log.Printf("[账号新增] traceId=%s 阶段=读取默认凭据名 结果=成功 业务影响=只返回文件名，绝对路径不返回前端",
+			log.Printf("[Account added] traceId=%s stage=read default credential name result=success business impact=only the file name is returned; absolute paths are not sent to the frontend",
 				debugTraceID(r))
 			writeAdminData(w, r, map[string]any{"defaultFile": suggestCredentialFileName()})
 			return
 		}
 		s := findLoginSession(id)
 		if s == nil {
-			log.Printf("[账号新增] traceId=%s 阶段=查询登录进度 id=%s 结果=会话不存在或已结束 业务影响=前端应提示重新获取登录接口",
+			log.Printf("[Account added] traceId=%s stage=query login progress id=%s result=session missing or finished business impact=frontend should prompt to re-request the login endpoint",
 				debugTraceID(r), id)
-			writeJSONError(w, http.StatusNotFound, "登录会话不存在或已结束，请重新获取登录接口")
+			writeJSONError(w, http.StatusNotFound, "Login session does not exist or has finished, please request the login endpoint again")
 			return
 		}
 		writeAdminData(w, r, s.snapshot())
@@ -403,96 +403,96 @@ func handleWebUIAccountAdd(w http.ResponseWriter, r *http.Request) {
 			File string `json:"file"`
 		}
 		if err := decodeAdminJSON(w, r, &input); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "新增账号请求格式无效")
+			writeJSONError(w, http.StatusBadRequest, "Invalid add-account request format")
 			return
 		}
 		trace := debugTraceID(r)
 		site := strings.ToLower(strings.TrimSpace(input.Site))
 		if site != "cn" && site != "intl" {
-			log.Printf("[账号新增] traceId=%s 阶段=参数校验 结果=拒绝 站点=%s 原因=站点只能是 cn 或 intl 返回状态码=400 业务影响=未创建登录会话",
+			log.Printf("[Account added] traceId=%s stage=parameter validation result=rejected site=%s reason=site must be cn or intl response status code=400 business impact=no login session created",
 				trace, input.Site)
-			writeJSONError(w, http.StatusBadRequest, "站点只能选择国内站或国际站")
+			writeJSONError(w, http.StatusBadRequest, "Site must be the domestic site or the international site")
 			return
 		}
 		target, err := resolveCredentialPath(input.File)
 		if err != nil {
-			log.Printf("[账号新增] traceId=%s 阶段=参数校验 结果=拒绝 原因=%v 返回状态码=400 业务影响=未创建登录会话", trace, err)
+			log.Printf("[Account added] traceId=%s stage=parameter validation result=rejected reason=%v response status code=400 business impact=no login session created", trace, err)
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if _, err := os.Lstat(target); err == nil {
-			log.Printf("[账号新增] traceId=%s 阶段=参数校验 结果=拒绝 凭据=%s 原因=同名文件已存在 返回状态码=409 业务影响=未覆盖已有凭据",
+			log.Printf("[Account added] traceId=%s stage=parameter validation result=rejected credential=%s reason=file with the same name already exists response status code=409 business impact=existing credentials not overwritten",
 				trace, filepath.Base(target))
-			writeJSONError(w, http.StatusConflict, "同名凭据已存在，请换一个名字")
+			writeJSONError(w, http.StatusConflict, "A credential with the same name already exists, please choose another name")
 			return
 		}
 		s, err := beginAccountLogin(site, target)
 		if err != nil {
-			log.Printf("[账号新增] traceId=%s 阶段=获取登录接口 结果=失败 站点=%s 原因=%v 业务影响=未创建登录会话", trace, site, err)
+			log.Printf("[Account added] traceId=%s stage=fetch login endpoint result=failed site=%s reason=%v business impact=no login session created", trace, site, err)
 			writeJSONError(w, http.StatusBadGateway, err.Error())
 			return
 		}
 		loginSessionsMu.Lock()
 		loginSessions[s.ID] = s
 		loginSessionsMu.Unlock()
-		log.Printf("[账号新增] traceId=%s 阶段=获取登录接口 结果=成功 站点=%s 凭据=%s 会话=%s 业务影响=等待扫码后自动写入并加载",
+		log.Printf("[Account added] traceId=%s stage=fetch login endpoint result=success site=%s credential=%s session=%s business impact=auto-write and load after QR scan",
 			trace, site, filepath.Base(target), s.ID)
 		body := s.snapshot()
 		body["qrPng"] = s.qrDataURI()
 		writeAdminData(w, r, body)
 	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET/POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET/POST are supported")
 	}
 }
 
-// handleWebUIAccountCancel 取消进行中的登录会话，避免后台持续轮询。
+// handleWebUIAccountCancel cancels an in-progress login session, stopping background polling.
 func handleWebUIAccountCancel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only POST is supported")
 		return
 	}
 	var input struct {
 		ID string `json:"id"`
 	}
 	if err := decodeAdminJSON(w, r, &input); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "取消登录请求格式无效")
+		writeJSONError(w, http.StatusBadRequest, "Invalid cancel-login request format")
 		return
 	}
 	trace := debugTraceID(r)
 	s := findLoginSession(strings.TrimSpace(input.ID))
 	if s == nil {
-		log.Printf("[账号新增] traceId=%s 阶段=取消登录 结果=会话不存在 业务影响=无需取消", trace)
+		log.Printf("[Account added] traceId=%s stage=cancel login result=session missing business impact=nothing to cancel", trace)
 		writeAdminData(w, r, map[string]any{"cancelled": false})
 		return
 	}
 	s.cancel()
-	log.Printf("[账号新增] traceId=%s 阶段=取消登录 结果=成功 站点=%s 凭据=%s 业务影响=停止轮询，未写入任何凭据",
+	log.Printf("[Account added] traceId=%s stage=cancel login result=success site=%s credential=%s business impact=polling stopped, no credentials written",
 		trace, s.Site, s.File)
 	writeAdminData(w, r, map[string]any{"cancelled": true})
 }
 
-// handleWebUIAccountDelete 删除指定凭据文件。
+// handleWebUIAccountDelete deletes the given credential file.
 func handleWebUIAccountDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only POST is supported")
 		return
 	}
 	var input struct {
 		File string `json:"file"`
 	}
 	if err := decodeAdminJSON(w, r, &input); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "删除账号请求格式无效")
+		writeJSONError(w, http.StatusBadRequest, "Invalid delete-account request format")
 		return
 	}
 	trace := debugTraceID(r)
 	target, err := deleteAccountCredential(input.File)
 	if err != nil {
-		log.Printf("[账号删除] traceId=%s 阶段=删除凭据 结果=失败 凭据=%s 原因=%v 返回状态码=400 业务影响=凭据与账号池均未变化",
+		log.Printf("[Account delete] traceId=%s stage=delete credential result=failed credential=%s reason=%v response status code=400 business impact=credentials and account pool unchanged",
 			trace, input.File, err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	log.Printf("[账号删除] traceId=%s 阶段=删除凭据 结果=成功 凭据=%s 业务影响=凭据文件已删除，账号池已同步移除，统计与历史日志保留",
+	log.Printf("[Account delete] traceId=%s stage=delete credential result=success credential=%s business impact=credential file deleted, account pool updated in sync, statistics and history logs retained",
 		trace, filepath.Base(target))
 	writeAdminData(w, r, map[string]any{"deleted": filepath.Base(target)})
 }

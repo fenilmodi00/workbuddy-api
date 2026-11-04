@@ -21,8 +21,9 @@ type accountHealth struct {
 	State   string   `json:"state"` // healthy / degraded / unavailable / empty / unknown
 }
 
-// 保持账号表的可用口径；全局主动停用也在分母内，不能被排除后虚报100%。
-// 这不是某个指定模型的可调度率，不把单模型冷却等同于整个账号失效。
+// Keep the account-table availability definition; globally disabled accounts stay in the denominator so the
+// percentage cannot be inflated by excluding them. This is not the schedulability of one specific model:
+// a single-model cooldown is not treated as the whole account failing.
 func summarizeAccountHealth(accs []accountSnapshot, stale bool) accountHealth {
 	if stale {
 		return accountHealth{State: "unknown"}
@@ -36,7 +37,7 @@ func summarizeAccountHealth(accs []accountSnapshot, stale bool) accountHealth {
 			healthy++
 		}
 	}
-	// 向下保留一位，避免999/1000四舍五入成100%。
+	// Round down to one decimal, avoiding 999/1000 rounding up to 100%.
 	percent := math.Floor(float64(healthy)*1000/float64(len(accs))) / 10
 	state := "degraded"
 	if healthy == len(accs) {
@@ -54,11 +55,11 @@ type accountAlertRule struct {
 }
 
 var accountAlertRules = map[string]accountAlertRule{
-	"disabled":       {"账号失效", "urgent", "登录授权已失效，账号已停止调度，请重新登录。"},
-	"expired":        {"账号过期", "important", "访问令牌已过期，请检查自动续期结果或重新登录。"},
-	"paid_exhausted": {"积分用尽", "important", "已确认账号额度耗尽，收费模型暂不可用；等待额度恢复。"},
-	"cooldown":       {"账号冷却", "warning", "账号触发频率限制，冷却期间暂不调度，请等待自动恢复。"},
-	"paused":         {"账号停用", "notice", "该账号被全局调度规则停用；这不是授权失效，可在账号池恢复。"},
+	"disabled":       {"Account disabled", "urgent", "Login authorization has expired and the account stopped scheduling. Please log in again."},
+	"expired":        {"Account expired", "important", "The access token has expired. Check the auto-renewal result or log in again."},
+	"paid_exhausted": {"Paid exhausted", "important", "Account quota confirmed exhausted; paid models are unavailable until the quota recovers."},
+	"cooldown":       {"Account cooldown", "warning", "The account hit a rate limit and is not scheduled during the cooldown. Wait for automatic recovery."},
+	"paused":         {"Account paused", "notice", "This account was paused by a global scheduling rule; this is not an authorization failure and can be restored in the account pool."},
 }
 
 func accountAlertKinds(acc accountSnapshot) []string {
@@ -84,57 +85,90 @@ type accountLogEvent struct {
 	File    string `json:"-"`
 }
 
-// 仅用于压低重复日志：不建立新的状态文件。启动及状态转换写一条普通日志，
-// 让过期/停用（包括直接编辑配置）也能有真实的可追溯日志来源。
+// Only used to reduce duplicate logs: no new state file is created. Startup and state transitions write one
+// regular log line, so expired/paused accounts (including direct config edits) also get a real traceable log source.
 
-// 兼容已有普通日志。仅匹配已知日志标签/措辞，不将任意包含“失效”的正文当告警。
+// legacyAccountLogWording rewrites the pre-migration Chinese log wording to the
+// current English wording, so alert parsing keeps working over rotated logs
+// written before the English migration. Phrases are ordered: specific phrases
+// must come before the generic "account" token.
+var legacyAccountLogWording = []struct{ old, new string }{
+	{"\u8d26\u53f7\u72b6\u6001", "Account status"},                              // account status
+	{"\u7ba1\u7406\u5f00\u5173", "Admin toggle"},                                // admin toggle
+	{"\u8d26\u53f7\u5df2\u51bb\u7ed3\u8c03\u5ea6", "account scheduling frozen"}, // account scheduling frozen
+	{"\u5206\u914d\u989d\u5ea6\u5df2\u7528\u5b8c", "allocated quota used up"},   // allocated quota used up
+	{"\u5224\u5b9a\u767b\u5f55\u6001\u5931\u6548", "login state declared dead"}, // login state declared dead
+	{"\u6388\u6743\u5931\u6548\uff0c\u5df2\u7981\u6b62\u8c03\u5ea6", "authorization failed; removed from scheduling"},
+	{"\u5df2\u505c\u6b62\u8c03\u5ea6\uff1b", "removed from scheduling;"},    // stopped scheduling;
+	{"\u89e6\u53d1\u9891\u7387\u9650\u5236", "hit the rate limit"},          // hit the rate limit
+	{"\u989d\u5ea6\u67e5\u8be2\u6210\u529f", "quota query succeeded"},       // quota query succeeded
+	{"\u4f01\u4e1a\u989d\u5ea6\u8ba1\u7b97=", "enterprise quota computed="}, // enterprise quota computed=
+	{"\u7ed3\u679c=\u6210\u529f", "result=success"},                         // result=success
+	{"\u7c7b\u578b=", "type="},                                              // type=
+	{"\u76ee\u6807=", "target="},                                            // target=
+	{"\u542f\u7528=", "enabled="},                                           // enabled=
+	{"\u8bf4\u660e=", "note="},                                              // note=
+	{"\u8d26\u53f7", "account"},                                             // account
+}
+
+func normalizeAccountLog(body string) string {
+	for _, w := range legacyAccountLogWording {
+		body = strings.ReplaceAll(body, w.old, w.new)
+	}
+	return body
+}
+
+// Compatible with existing regular logs. Only known log tags/wordings are matched;
+// arbitrary lines containing "expired" wording are not alerts.
 func parseAccountLogEvent(line, file string) (accountLogEvent, bool) {
 	event := accountLogEvent{At: logLineTime(line), File: file}
 	if event.At <= 0 || len(line) < 21 {
 		return event, false
 	}
-	body := line[20:]
-	if strings.HasPrefix(body, "[账号状态] ") {
-		if json.Unmarshal([]byte(strings.TrimPrefix(body, "[账号状态] ")), &event) != nil {
+	body := normalizeAccountLog(line[20:])
+	if strings.HasPrefix(body, "[Account status] ") {
+		if json.Unmarshal([]byte(strings.TrimPrefix(body, "[Account status] ")), &event) != nil {
 			return accountLogEvent{}, false
 		}
 		event.File = file
 		_, known := accountAlertRules[event.State]
 		return event, known && event.At > 0 && event.Account != ""
 	}
+	low := strings.ToLower(body)
 	accountBetween := func(suffix string) string {
-		_, rest, ok := strings.Cut(body, "账号 ")
-		if !ok {
+		idx := strings.Index(low, "account ")
+		if idx < 0 {
 			return ""
 		}
-		name, _, ok := strings.Cut(rest, suffix)
-		if !ok {
+		rest := body[idx+len("account "):]
+		end := strings.Index(strings.ToLower(rest), suffix)
+		if end < 0 {
 			return ""
 		}
-		return strings.TrimSpace(name)
+		return strings.TrimSpace(rest[:end])
 	}
 	switch {
 	case strings.HasPrefix(body, "[Cooldown] "):
-		event.State, event.Account = "cooldown", accountBetween(" 触发频率限制")
+		event.State, event.Account = "cooldown", accountBetween(" hit the rate limit")
 	case strings.HasPrefix(body, "[Quota] "):
-		if strings.Contains(body, "账号已冻结调度") || strings.Contains(body, "分配额度已用完") {
+		if strings.Contains(low, "account scheduling frozen") || strings.Contains(low, "allocated quota used up") {
 			event.State = "paid_exhausted"
-			event.Account = accountBetween(" 额度查询成功")
+			event.Account = accountBetween(" quota query succeeded")
 			if event.Account == "" {
-				event.Account = accountBetween(" 企业额度计算=")
+				event.Account = accountBetween(" enterprise quota computed=")
 			}
 		}
 	case strings.HasPrefix(body, "[Auth] "):
-		for _, suffix := range []string{" 判定登录态失效", " 授权失效，已禁止调度", " 已停止调度；"} {
+		for _, suffix := range []string{" login state declared dead", " authorization failed; removed from scheduling", " removed from scheduling;"} {
 			if name := accountBetween(suffix); name != "" {
 				event.Account, event.State = name, "disabled"
 				break
 			}
 		}
-	case strings.HasPrefix(body, "[管理开关] ") && strings.Contains(body, "结果=成功 类型=account ") && strings.Contains(body, " 启用=false "):
-		_, rest, ok := strings.Cut(body, "目标=")
+	case strings.HasPrefix(body, "[Admin toggle] ") && strings.Contains(low, "result=success type=account ") && strings.Contains(low, " enabled=false "):
+		_, rest, ok := strings.Cut(body, "target=")
 		if ok {
-			quoted, _, ok := strings.Cut(rest, " 启用=")
+			quoted, _, ok := strings.Cut(rest, " enabled=")
 			if ok {
 				if name, err := strconv.Unquote(quoted); err == nil {
 					event.Account, event.State = name, "paused"
@@ -154,7 +188,7 @@ type accountAlertScan struct {
 	Truncated bool
 }
 
-// 只扫描普通日志，尾部总预算4MiB；读取失败不影响健康度接口或模型请求。
+// Scan only regular logs with a 4MiB total tail budget; read failures do not affect the health endpoint or model requests.
 func readAccountAlertLogs() (accountAlertScan, error) {
 	scan := accountAlertScan{Events: map[string]accountLogEvent{}}
 	info, err := os.Lstat(logDir)
@@ -165,7 +199,7 @@ func readAccountAlertLogs() (accountAlertScan, error) {
 		return scan, err
 	}
 	if !info.IsDir() {
-		return scan, errors.New("日志路径不是目录")
+		return scan, errors.New("Log path is not a directory")
 	}
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
@@ -196,7 +230,7 @@ func readAccountAlertLogs() (accountAlertScan, error) {
 		info, err := f.Stat()
 		if err != nil || !info.Mode().IsRegular() {
 			f.Close()
-			return scan, errors.New("账号告警日志不可读")
+			return scan, errors.New("Account alert logs unreadable")
 		}
 		size := min(info.Size(), budget)
 		start := info.Size() - size
@@ -204,7 +238,7 @@ func readAccountAlertLogs() (accountAlertScan, error) {
 		n, readErr := f.ReadAt(data, start)
 		f.Close()
 		if (readErr != nil && readErr != io.EOF) || int64(n) != size {
-			return scan, errors.New("账号告警日志读取中变化，请重试")
+			return scan, errors.New("Account alert logs changed while reading, please retry")
 		}
 		scan.Scanned += size
 		if start > 0 {
@@ -215,7 +249,7 @@ func readAccountAlertLogs() (accountAlertScan, error) {
 				data = nil
 			}
 		}
-		// 忽略最后尚未写完整的一行。
+		// Ignore the last line that has not been fully written yet.
 		lines := bytes.Split(data, []byte{'\n'})
 		for _, line := range lines[:len(lines)-1] {
 			if event, ok := parseAccountLogEvent(string(line), name); ok {
@@ -254,22 +288,22 @@ func currentAccountAlerts(accs []accountSnapshot, scan accountAlertScan) ([]acco
 			event, ok := scan.Events[acc.Path+"\x00"+kind]
 			if !ok {
 				missing++
-				continue // 无日志不编造告警“记录”。
+				continue // do not fabricate alert "records" without logs.
 			}
 			rule := accountAlertRules[kind]
 			out = append(out, accountAlertView{Account: acc.Path, State: kind, Label: rule.Label,
 				Severity: rule.Severity, Message: rule.Message, At: event.At, LogFile: event.File})
 		}
 	}
-	// 最新日志在上；等级只决定颜色和标签，不改变排序。
-	// 秒级时间相同则按账号、类别稳定排序，避免每次轮询跳动。
+	// Newest logs first; severity only decides color and label, not the sort order.
+	// Ties on second-level timestamps are sorted stably by account and kind to avoid jitter between polls.
 	sortAccountAlerts(out)
 	return out, missing
 }
 
 func handleWebUIAccountAlerts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "账号告警只读，仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Account alerts are read-only; only GET is supported")
 		return
 	}
 	snap, err := readStatusSnapshot()
@@ -278,15 +312,15 @@ func handleWebUIAccountAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	annotateAccountPolicies(snap.Accounts)
-	// 新版快照自带告警标记：直接使用，不再读取日志；只有旧快照才回退扫描。
+	// Newer snapshots carry inline alert markers: use them directly instead of reading logs; only old snapshots fall back to scanning.
 	inline := snap.AlertSource == alertSourceSnapshot
 	accountAlertCache.Lock()
 	if !inline && (accountAlertCache.at.IsZero() || time.Since(accountAlertCache.at) >= 10*time.Second) {
 		scan, readErr := readAccountAlertLogs()
 		if readErr != nil {
 			accountAlertCache.Unlock()
-			log.Printf("[账号告警] traceId=%s 阶段=读取普通日志 结果=失败 说明=不展示伪造空列表，不影响健康度与模型调用", debugTraceID(r))
-			writeJSONError(w, http.StatusServiceUnavailable, "账号告警日志暂不可读，保留已有结果")
+			log.Printf("[Account alerts] traceId=%s stage=read regular logs result=failed note=no fabricated empty list is shown; health and model calls unaffected", debugTraceID(r))
+			writeJSONError(w, http.StatusServiceUnavailable, "Account alert logs temporarily unreadable; keeping existing results")
 			return
 		}
 		accountAlertCache.scan, accountAlertCache.at = scan, time.Now()
@@ -303,10 +337,10 @@ func handleWebUIAccountAlerts(w http.ResponseWriter, r *http.Request) {
 	if limited {
 		alerts = alerts[:100]
 	}
-	log.Printf("[账号告警] traceId=%s 结果=成功 条目=%d 缺少日志=%d 扫描字节=%d 扫描截断=%t 排序=最新日志优先 说明=先剔除已恢复项，再按时间倒序取前100条；等级只用于颜色和标签，不含令牌或上游错误正文", debugTraceID(r), len(alerts), missing, scan.Scanned, scan.Truncated)
+	log.Printf("[Account alerts] traceId=%s result=success items=%d missing logs=%d scanned bytes=%d scan truncated=%t sort=newest logs first note=recovered items are dropped first, then the newest 100 are kept in reverse time order; severity is used only for color and labels and contains no tokens or upstream error bodies", debugTraceID(r), len(alerts), missing, scan.Scanned, scan.Truncated)
 	writeAdminData(w, r, map[string]any{
 		"alerts": alerts, "updatedAt": snap.UpdatedAt, "stale": time.Now().Unix()-snap.UpdatedAt > 15,
-		"source": "gateway 普通日志", "missingLogCount": missing,
+		"source": "gateway regular logs", "missingLogCount": missing,
 		"scanTruncated": scan.Truncated, "listTruncated": limited,
 	})
 }

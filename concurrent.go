@@ -75,7 +75,7 @@ var modelConcurrency = newModelConcurrencyLimiter()
 
 func logConcurrentConfig(trace string) {
 	limits, active, _ := modelConcurrency.snapshot("")
-	log.Printf("[并发配置] traceId=%s 单账号上限=%d 全局上限=%d 当前占用=%d 说明=全局0表示不限；排队使用新上限，已有流不中断，缩容待已有请求自然释放",
+	log.Printf("[Concurrency config] traceId=%s perAccountLimit=%d globalLimit=%d currentUsage=%d note=global 0 means unlimited; queuing uses the new limit, existing streams are not interrupted, scale-down waits for live requests to release naturally",
 		trace, limits.MaxAcc, limits.MaxGlobal, active)
 }
 
@@ -146,7 +146,7 @@ func acquireModelConcurrency(r *http.Request, acc *Account, reqID uint64, trace 
 	limiter := modelConcurrency
 	audit := func(stage string) {
 		limits, total, account := limiter.snapshot(key)
-		log.Printf("[模型并发] traceId=%s requestId=%d 阶段=%s 账号=%s 单账号占用=%d/%d 全局占用=%d/%d 等待或占用耗时=%v 说明=全局0表示不限；不记录凭据或正文",
+		log.Printf("[Model concurrency] traceId=%s requestId=%d stage=%s account=%s perAccountUsage=%d/%d globalUsage=%d/%d waitOrHoldDuration=%v note=global 0 means unlimited; no credentials or payloads are logged",
 			trace, reqID, stage, acc.Path, account, limits.MaxAcc, total, limits.MaxGlobal, time.Since(started))
 		debugEvent(r, "debug", "model_concurrency_"+stage, map[string]any{
 			"account_active": account, "global_active": total,
@@ -154,14 +154,14 @@ func acquireModelConcurrency(r *http.Request, acc *Account, reqID uint64, trace 
 			"elapsed_ms": time.Since(started).Milliseconds(),
 		})
 	}
-	release, err := limiter.acquire(r.Context(), key, func() { audit("排队") })
+	release, err := limiter.acquire(r.Context(), key, func() { audit("queued") })
 	if err != nil {
-		audit("取消未发送")
+		audit("cancel unsent")
 		return nil, err
 	}
-	audit("准入")
+	audit("admitted")
 	var once sync.Once
-	return func() { once.Do(func() { release(); audit("释放") }) }, nil
+	return func() { once.Do(func() { release(); audit("released") }) }, nil
 }
 
 // Hold a slot for the whole stream, not just response headers. EOF/read error,

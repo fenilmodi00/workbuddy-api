@@ -47,7 +47,7 @@ func fullRequestTestLog(t *testing.T) (string, func() []map[string]any) {
 
 func TestFullRequestsCaptureCompleteAndNonMutating(t *testing.T) {
 	_, records := fullRequestTestLog(t)
-	text := strings.Repeat("长对话代码", 25000) + "END-OF-PROMPT"
+	text := strings.Repeat("long conversation code", 25000) + "END-OF-PROMPT"
 	raw, _ := json.Marshal(map[string]any{"messages": []any{map[string]any{"role": "user", "content": text}},
 		"reasoning_effort": "max", "tools": []any{map[string]any{"type": "function", "function": map[string]any{"name": "test", "parameters": map[string]any{"type": "object"}}}},
 		"metadata": map[string]any{"password": "private-password"}, "image_url": "https://example.test/image?token=private-url&size=large"})

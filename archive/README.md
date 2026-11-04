@@ -1,7 +1,7 @@
-# 本地归档
+# Local Archive
 
-`local/` 保存与网关运行、构建无关但需要保留的本地附件，已在 `.gitignore` 中忽略。
+`local/` stores local attachments unrelated to gateway operation or builds that must be kept; it is already ignored by `.gitignore`.
 
-当前的 `local/agent-loop-plugin.js` 是原根目录的 `index.js`，属于其他宿主插件的空实现，不是本项目网页入口；文件内容保持不变。
+The current `local/agent-loop-plugin.js` is the original root-level `index.js`, an empty stub belonging to another host plugin, not this project's web entry; the file content is unchanged.
 
-不要在此存放正在使用的配置或凭据。运行日志仍写入 `logs/`，构建产物仍放入 `dist/`，公开文档在 `docs/`。
+Do not store in-use configs or credentials here. Runtime logs still go to `logs/`, build artifacts to `dist/`, and public docs to `docs/`.

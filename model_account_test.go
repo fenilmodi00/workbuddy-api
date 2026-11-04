@@ -107,7 +107,7 @@ func TestModelAccountFilterConfigAndSnapshot(t *testing.T) {
 		t.Fatalf("snapshot availability should exclude blocked account: %+v", row)
 	}
 	table := renderModelTable([]modelStatSnapshot{*row})
-	if strings.Contains(table, "账号规则") {
+	if strings.Contains(table, "Account rules") {
 		t.Fatalf("monitor table must not show removed account rule column: %s", table)
 	}
 	if _, err := os.Stat(filepath.Join(logDir, "gateway-"+time.Now().Format("2006-01-02")+".log")); err == nil {
@@ -230,10 +230,10 @@ func TestModelAccountPolicyHitLogsSingleShortMarker(t *testing.T) {
 	rec := httptest.NewRecorder()
 	requestAuditMiddleware(http.HandlerFunc(handleChatCompletions)).ServeHTTP(rec, req)
 	logs := audit.String()
-	if !strings.Contains(logs, "账号名单命中") || !strings.Contains(logs, "a.json") {
+	if !strings.Contains(logs, "account allowlist hit") || !strings.Contains(logs, "a.json") {
 		t.Fatalf("hit marker missing: %s", logs)
 	}
-	if strings.Contains(logs, "b.json") || strings.Contains(logs, "候选账号=") {
+	if strings.Contains(logs, "b.json") || strings.Contains(logs, "candidate accounts=") {
 		t.Fatalf("excluded account must not be listed per-account: %s", logs)
 	}
 }
@@ -268,17 +268,17 @@ func TestModelAccountPolicyRejectsBeforeUpstream(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
 	rec := httptest.NewRecorder()
 	requestAuditMiddleware(http.HandlerFunc(handleChatCompletions)).ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "账号黑白名单禁用") {
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "disabled by the account allow/block list") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(audit.String(), "账号黑白名单没有匹配的凭据") ||
-		!strings.Contains(audit.String(), "未进入上游") {
+	if !strings.Contains(audit.String(), "no credentials matching the model account allow/block list") ||
+		!strings.Contains(audit.String(), "request never reached upstream") {
 		t.Fatalf("audit missing policy rejection: %s", audit.String())
 	}
 	if !strings.Contains(debug.String(), `"event":"model_account_policy_rejected"`) {
 		t.Fatalf("debug missing policy rejection event: %s", debug.String())
 	}
-	if strings.Contains(audit.String(), "候选账号=") {
+	if strings.Contains(audit.String(), "candidate accounts=") {
 		t.Fatalf("per-account policy log must be removed: %s", audit.String())
 	}
 }
@@ -304,7 +304,7 @@ func TestAdminProbeSkipsAccountDisallowedForModel(t *testing.T) {
 	requestAuditMiddleware(http.HandlerFunc(handleAdminProbe)).ServeHTTP(rec, req)
 	var out probeResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil || len(out.Results) != 1 ||
-		out.Results[0].Status != "skipped" || !strings.Contains(out.Results[0].Detail, "账号名单排除") {
+		out.Results[0].Status != "skipped" || !strings.Contains(out.Results[0].Detail, "account list exclusion") {
 		t.Fatalf("probe must skip forbidden account without upstream traffic: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
@@ -330,7 +330,7 @@ func TestModelAccountPolicyPriceProbeSelection(t *testing.T) {
 	}
 }
 
-// 名单外账号即使在轮询顺序里靠前，也绝不能被选中（端到端验证）。
+// An out-of-list account must never be selected even if it comes first in round-robin order (end-to-end check).
 func TestModelAccountBlockedAccountNeverSelected(t *testing.T) {
 	t.Cleanup(func() { _ = setModelAccountFilter(nil) })
 	if err := setModelAccountFilter(map[string]modelAccountFileConfig{"m": {Allowlist: []string{"c.json"}}}); err != nil {
@@ -366,6 +366,6 @@ func TestModelAccountBlockedAccountNeverSelected(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if len(called) != 1 || called[0] != "UC" {
-		t.Fatalf("名单外账号被调用: %v (期望仅 UC)", called)
+		t.Fatalf("out-of-list account was called: %v (expected only UC)", called)
 	}
 }

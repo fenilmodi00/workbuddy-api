@@ -16,16 +16,16 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// 联网搜索转发（POST /v1/search）
+// Web search forwarding (POST /v1/search)
 //
-// 上游接口由 REA 从 WorkBuddy 客户端产物中定位并活体验证：
+// The upstream API was located and live-verified by REA from WorkBuddy client artifacts:
 //
 //	C:\Program Files\WorkBuddy\resources\app.asar.unpacked\cli\dist\codebuddy-lite-wb.mjs
 //	  WEB_SEARCH_API_PATH = "/agenttool/v1/search"
 //	  WEB_SEARCH_TIMEOUT_MS = 20000
 //	  URL    = productManager.endpoint + WEB_SEARCH_API_PATH
 //	  body   = {query, type:"text2text", max_results:5[, allowed_domains][, freshness]}
-//	  响应   = {query, type, provider, results[{title,url,snippet,site?,favicon?}],
+//	  Response = {query, type, provider, results[{title,url,snippet,site?,favicon?}],
 //	            total_results, response_time_ms}
 //
 // DSH uses count and a stricter result schema than WorkBuddy's upstream endpoint.
@@ -34,10 +34,10 @@ import (
 const (
 	webSearchAPIPath = "/agenttool/v1/search"
 
-	// 官方客户端把搜索请求上限设为 20s，这里保持一致。
+	// The official client caps search requests at 20s; keep the same limit here.
 	webSearchTimeout = 20 * time.Second
 
-	// 官方客户端硬编码 max_results=5。
+	// The official client hardcodes max_results=5.
 	webSearchDefaultMaxResults = 5
 	webSearchMaxResults        = 20
 
@@ -45,16 +45,17 @@ const (
 	webSearchMaxBodyBytes   = 1 << 20
 
 	// -------------------------------------------------------------------------
-	// 网页抓取（POST /v1/fetch）-> 上游 /agenttool/v1/webfetch
+	// Web fetch (POST /v1/fetch) -> upstream /agenttool/v1/webfetch
 	// -------------------------------------------------------------------------
 	webFetchAPIPath = "/agenttool/v1/webfetch"
 
-	// 官方客户端 WEB_FETCH 相关常量：cc=2e4（API 超时 20s）、cu=1e5（max_length）。
+	// Official client WEB_FETCH constants: cc=2e4 (API timeout 20s), cu=1e5 (max_length).
 	webFetchUpstreamTimeout = 30 * time.Second
 	webFetchMaxLength       = 100000
 
-	// webFetchDefaultPrompt 是上游 webfetch 必填的 prompt（客户端由模型生成，
-	// 网关侧没有模型上下文，给一个稳定的「提取正文」指令）。
+	// webFetchDefaultPrompt is the prompt required by upstream webfetch (the client
+	// generates it via a model; the gateway has no model context, so use a stable
+	// "extract main content" instruction).
 	webFetchDefaultPrompt = "Extract the main content of this page as clean Markdown. Keep headings, lists, code blocks and key facts. Remove navigation, ads and boilerplate."
 )
 
@@ -83,13 +84,13 @@ type workbuddyWebSearchRequest struct {
 	MaxResults int    `json:"max_results"`
 }
 
-// webSearchFetchRequest 是 POST /v1/fetch 的请求体（DSH Fetch API 形状）。
+// webSearchFetchRequest is the POST /v1/fetch request body (DSH Fetch API shape).
 type webSearchFetchRequest struct {
 	URL string `json:"url"`
 }
 
 // webSearchSearchError carries an upstream request failure.
-// status==0 表示网络层失败（没有拿到 HTTP 响应）。
+// status==0 means a network-layer failure (no HTTP response was received).
 type webSearchSearchError struct {
 	status int
 	err    error
@@ -111,7 +112,7 @@ func newWebSearchError(status int, format string, args ...any) *webSearchSearchE
 // handleWebSearch maps the DSH Search API request and response shapes.
 func handleWebSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeOpenAIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST 请求")
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST requests are supported")
 		return
 	}
 	traceID := w.Header().Get("X-Trace-ID")
@@ -122,41 +123,42 @@ func handleWebSearch(w http.ResponseWriter, r *http.Request) {
 	body, readErr := io.ReadAll(io.LimitReader(r.Body, webSearchMaxBodyBytes))
 	_ = r.Body.Close()
 	if readErr != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "read_error", "读取请求体失败")
+		writeOpenAIError(w, http.StatusBadRequest, "read_error", "Failed to read request body")
 		return
 	}
 
 	var req webSearchRequest
 	if len(bytes.TrimSpace(body)) > 0 {
 		if err := json.Unmarshal(body, &req); err != nil {
-			writeOpenAIError(w, http.StatusBadRequest, "invalid_json", "无效的 JSON 请求体")
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON request body")
 			return
 		}
 	}
 	if err := normalizeWebSearchRequest(&req); err != nil {
-		log.Printf("[联网搜索] traceId=%s 阶段=参数校验 结果=拒绝 原因=%s 业务影响=未调用上游，不消耗账号额度", traceID, err)
+		log.Printf("[Web search] traceId=%s stage=parameter validation result=rejected reason=%s business impact=upstream not called, account quota not consumed", traceID, err)
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 
-	// 搜索同样需要一组会话标识：上游按 X-Conversation-* 归属调用来源。
-	// 客户端若带了 X-Conversation-ID，会在这里被登记并复用。
+	// Search also needs a set of conversation identifiers: upstream attributes call
+	// sources by X-Conversation-* headers. If the client sends X-Conversation-ID,
+	// it gets registered and reused here.
 	prepareConversationContext(r, nil)
 
 	acc := webSearchAccount()
 	if acc == nil {
-		log.Printf("[联网搜索] traceId=%s 阶段=选择账号 结果=失败 原因=没有可用凭据", traceID)
-		writeOpenAIError(w, http.StatusUnauthorized, "no_auth", "没有可用的登录凭据，请先登录账号")
+		log.Printf("[Web search] traceId=%s stage=account selection result=failed reason=no available credentials", traceID)
+		writeOpenAIError(w, http.StatusUnauthorized, "no_auth", "No login credentials available, please log in to an account first")
 		return
 	}
 	if err := ensureValidTokenFor(acc); err != nil {
-		log.Printf("[联网搜索] traceId=%s 阶段=凭据续期 结果=失败 原因=%s", traceID, safeDebugError(err))
-		writeOpenAIError(w, http.StatusBadGateway, "token_refresh_failed", "账号凭据续期失败")
+		log.Printf("[Web search] traceId=%s stage=credential renewal result=failed reason=%s", traceID, safeDebugError(err))
+		writeOpenAIError(w, http.StatusBadGateway, "token_refresh_failed", "Failed to renew account credentials")
 		return
 	}
 	auth, prof := webSearchAccountSnapshot(acc)
 	if auth == nil || prof == nil {
-		writeOpenAIError(w, http.StatusUnauthorized, "no_auth", "没有可用的登录凭据，请先登录账号")
+		writeOpenAIError(w, http.StatusUnauthorized, "no_auth", "No login credentials available, please log in to an account first")
 		return
 	}
 
@@ -164,36 +166,36 @@ func handleWebSearch(w http.ResponseWriter, r *http.Request) {
 		Query: req.Query, Type: "text2text", MaxResults: req.Count,
 	})
 	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "internal_error", "构造上游请求体失败")
+		writeOpenAIError(w, http.StatusInternalServerError, "internal_error", "Failed to build upstream request body")
 		return
 	}
 
 	started := time.Now()
 	obj, callErr := requestWebSearch(r, payload, auth, prof, prof.agentToolBase())
 	if callErr == nil {
-		log.Printf("[联网搜索] traceId=%s 阶段=完成 账号=%s 结果=成功 耗时=%v", traceID, baseNameOf(acc), time.Since(started))
+		log.Printf("[Web search] traceId=%s stage=completed account=%s result=success duration=%v", traceID, baseNameOf(acc), time.Since(started))
 		writeWebSearchSuccess(w, obj)
 		return
 	}
 	status, errType, message := classifyWebSearchFailure(callErr.status, callErr)
-	log.Printf("[联网搜索] traceId=%s 阶段=上游调用 账号=%s 状态码=%d 结果=失败 原因=%s",
+	log.Printf("[Web search] traceId=%s stage=upstream call account=%s status code=%d result=failed reason=%s",
 		traceID, baseNameOf(acc), callErr.status, safeDebugError(callErr))
 	writeUpstreamError(w, r, status, errType, message)
 }
 
-// handleWebFetch 处理 POST /v1/fetch：转发到上游 /agenttool/v1/webfetch，返回 DSH Fetch API 形状。
+// handleWebFetch handles POST /v1/fetch: forwards to upstream /agenttool/v1/webfetch and returns the DSH Fetch API shape.
 //
-// 上游请求体（REA 取证自 CLI 产物 fetchContentViaApi）：
+// Upstream request body (evidence gathered by REA from the CLI artifact fetchContentViaApi):
 //
 //	{url, format:"markdown", prompt, timeout, max_length[, model_name]}
 //
-// 上游响应：{url, title, content, content_type, content_length, truncated, status_code, context}
-// DSH 新版 Search / Fetch API（deepseek-fetch-api）的解码器只读顶层
-// {content: string}；它自己再包装成 {url, statusCode, body:{kind:"text",content}, truncated}。
+// Upstream response: {url, title, content, content_type, content_length, truncated, status_code, context}
+// The decoder of DSH's newer Search / Fetch API (deepseek-fetch-api) only reads the top-level
+// {content: string}; it then wraps it itself into {url, statusCode, body:{kind:"text",content}, truncated}.
 // DSH reads the top-level content field and wraps it into its Fetch result type.
 func handleWebFetch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeOpenAIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST 请求")
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST requests are supported")
 		return
 	}
 	traceID := w.Header().Get("X-Trace-ID")
@@ -204,42 +206,42 @@ func handleWebFetch(w http.ResponseWriter, r *http.Request) {
 	body, readErr := io.ReadAll(io.LimitReader(r.Body, webSearchMaxBodyBytes))
 	_ = r.Body.Close()
 	if readErr != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "read_error", "读取请求体失败")
+		writeOpenAIError(w, http.StatusBadRequest, "read_error", "Failed to read request body")
 		return
 	}
 	var req webSearchFetchRequest
 	if len(bytes.TrimSpace(body)) > 0 {
 		if err := json.Unmarshal(body, &req); err != nil {
-			writeOpenAIError(w, http.StatusBadRequest, "invalid_json", "无效的 JSON 请求体")
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON request body")
 			return
 		}
 	}
 	req.URL = strings.TrimSpace(req.URL)
 	if req.URL == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "url 不能为空")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "url must not be empty")
 		return
 	}
 	parsed, err := url.Parse(req.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "url 必须是 http/https 绝对地址")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "url must be an absolute http/https address")
 		return
 	}
 
 	prepareConversationContext(r, nil)
 	acc := webSearchAccount()
 	if acc == nil {
-		log.Printf("[网页抓取] traceId=%s 阶段=选择账号 结果=失败 原因=没有可用凭据", traceID)
-		writeOpenAIError(w, http.StatusUnauthorized, "no_auth", "没有可用的登录凭据，请先登录账号")
+		log.Printf("[Web fetch] traceId=%s stage=account selection result=failed reason=no available credentials", traceID)
+		writeOpenAIError(w, http.StatusUnauthorized, "no_auth", "No login credentials available, please log in to an account first")
 		return
 	}
 	if err := ensureValidTokenFor(acc); err != nil {
-		log.Printf("[网页抓取] traceId=%s 阶段=凭据续期 结果=失败 原因=%s", traceID, safeDebugError(err))
-		writeOpenAIError(w, http.StatusBadGateway, "token_refresh_failed", "账号凭据续期失败")
+		log.Printf("[Web fetch] traceId=%s stage=credential renewal result=failed reason=%s", traceID, safeDebugError(err))
+		writeOpenAIError(w, http.StatusBadGateway, "token_refresh_failed", "Failed to renew account credentials")
 		return
 	}
 	auth, prof := webSearchAccountSnapshot(acc)
 	if auth == nil || prof == nil {
-		writeOpenAIError(w, http.StatusUnauthorized, "no_auth", "没有可用的登录凭据，请先登录账号")
+		writeOpenAIError(w, http.StatusUnauthorized, "no_auth", "No login credentials available, please log in to an account first")
 		return
 	}
 
@@ -251,30 +253,30 @@ func handleWebFetch(w http.ResponseWriter, r *http.Request) {
 		"max_length": webFetchMaxLength,
 	})
 	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "internal_error", "构造上游请求体失败")
+		writeOpenAIError(w, http.StatusInternalServerError, "internal_error", "Failed to build upstream request body")
 		return
 	}
 
 	started := time.Now()
 	obj, callErr := requestWebFetch(r, payload, auth, prof, prof.agentToolBase())
 	if callErr == nil {
-		log.Printf("[网页抓取] traceId=%s 阶段=完成 账号=%s 结果=成功 耗时=%v", traceID, baseNameOf(acc), time.Since(started))
+		log.Printf("[Web fetch] traceId=%s stage=completed account=%s result=success duration=%v", traceID, baseNameOf(acc), time.Since(started))
 		writeWebFetchSuccess(w, traceID, obj)
 		return
 	}
 	status, errType, message := classifyWebSearchFailure(callErr.status, callErr)
-	log.Printf("[网页抓取] traceId=%s 阶段=上游调用 账号=%s 状态码=%d 结果=失败 原因=%s",
+	log.Printf("[Web fetch] traceId=%s stage=upstream call account=%s status code=%d result=failed reason=%s",
 		traceID, baseNameOf(acc), callErr.status, safeDebugError(callErr))
 	writeUpstreamError(w, r, status, errType, message)
 }
 
-// writeWebFetchSuccess 把上游 webfetch 结果投影成 DSH Fetch API 形状。
+// writeWebFetchSuccess projects the upstream webfetch result into the DSH Fetch API shape.
 func writeWebFetchSuccess(w http.ResponseWriter, traceID string, obj map[string]any) {
 	content := webSearchString(obj["content"])
 	if content == "" {
-		// DSH 把空 content 视为不可用内容；这里如实报错而不是返回空正文。
-		log.Printf("[网页抓取] traceId=%s 结果=失败 原因=上游未返回 content 业务影响=不伪造正文", traceID)
-		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "上游未返回可用的页面正文")
+		// DSH treats empty content as unusable; report the error honestly instead of returning an empty body.
+		log.Printf("[Web fetch] traceId=%s result=failed reason=upstream returned no content business impact=no fabricated body", traceID)
+		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "Upstream returned no usable page content")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -286,11 +288,11 @@ func requestWebFetch(r *http.Request, payload []byte, auth *StoredAuth, prof *up
 	return postAgentTool(r, payload, auth, prof, base, webFetchAPIPath, webFetchUpstreamTimeout)
 }
 
-// applyAgentToolHeaders 为国内站 /agenttool/* 补齐官方桌面身份头。
+// applyAgentToolHeaders adds the official desktop identity headers for domestic-site /agenttool/* requests.
 //
-// 模型请求的同类头由 applyObservedDesktopHeaders 统一处理；搜索/抓取不经过
-// 模型路由，因此在端点侧独立补齐。保留 backendHeaders 设置的 Origin/Referer
-// 与 X-Client-ID，不套用模型请求的整套替换。
+// The same headers for model requests are handled centrally by applyObservedDesktopHeaders; search/fetch
+// do not go through the model routing, so they are added independently at the endpoint side. Keeps the
+// Origin/Referer and X-Client-ID set by backendHeaders, without the full model-request replacement set.
 func applyAgentToolHeaders(req *http.Request, auth *StoredAuth, prof *upstreamProfile) {
 	if prof == nil || prof.Key != "cn" {
 		return
@@ -316,7 +318,7 @@ func applyAgentToolHeaders(req *http.Request, auth *StoredAuth, prof *upstreamPr
 	}
 }
 
-// agentToolTraceparent 生成符合 W3C 格式的 traceparent；失败时省略该头。
+// agentToolTraceparent generates a W3C-compliant traceparent; the header is omitted on failure.
 func agentToolTraceparent() string {
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {
@@ -332,7 +334,7 @@ func postAgentTool(r *http.Request, payload []byte, auth *StoredAuth, prof *upst
 	endpoint := strings.TrimRight(strings.TrimSpace(base), "/") + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, newWebSearchError(0, "构造上游请求失败: %w", err)
+		return nil, newWebSearchError(0, "Failed to build upstream request: %w", err)
 	}
 	backendHeaders(req, auth, prof)
 	applyAgentToolHeaders(req, auth, prof)
@@ -340,26 +342,26 @@ func postAgentTool(r *http.Request, payload []byte, auth *StoredAuth, prof *upst
 	resp, err := cfg.HttpClient.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, newWebSearchError(0, "上游接口超时（%v）", timeout)
+			return nil, newWebSearchError(0, "Upstream API timeout (%v)", timeout)
 		}
-		return nil, newWebSearchError(0, "上游请求失败: %w", err)
+		return nil, newWebSearchError(0, "Upstream request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, webSearchMaxBodyBytes))
 	if resp.StatusCode >= 400 {
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, newWebSearchError(resp.StatusCode, "上游拒绝凭据（401），响应非 JSON")
+			return nil, newWebSearchError(resp.StatusCode, "Upstream rejected credentials (401), response is not JSON")
 		}
-		return nil, newWebSearchError(resp.StatusCode, "上游状态码 %d: %s", resp.StatusCode, truncate(strings.TrimSpace(string(raw)), 200))
+		return nil, newWebSearchError(resp.StatusCode, "Upstream status code %d: %s", resp.StatusCode, truncate(strings.TrimSpace(string(raw)), 200))
 	}
 
 	var obj map[string]any
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, newWebSearchError(http.StatusBadGateway, "解析上游响应失败: %w", err)
+		return nil, newWebSearchError(http.StatusBadGateway, "Failed to parse upstream response: %w", err)
 	}
-	// 上游成功响应没有 code 字段（实测：{"query":...,"type":...,"provider":...,"results":[...]}）；
-	// 只有业务错误才会带非 0 code（例如 15003 query is required）。因此不能要求 code 必须存在。
+	// Successful upstream responses have no code field (observed: {"query":...,"type":...,"provider":...,"results":[...]});
+	// Only business errors carry a non-zero code (e.g. 15003 query is required). So code must not be required to exist.
 	if code, present := webSearchUpstreamCode(obj); present && code != 0 {
 		return nil, &webSearchSearchError{status: http.StatusBadRequest, err: &webSearchUpstreamError{code: code, msg: webSearchUpstreamMessage(obj)}}
 	}
@@ -372,12 +374,12 @@ func requestWebSearch(r *http.Request, payload []byte, auth *StoredAuth, prof *u
 		return nil, callErr
 	}
 	if _, ok := obj["results"]; !ok {
-		return nil, newWebSearchError(http.StatusBadGateway, "上游搜索响应缺少 results 字段")
+		return nil, newWebSearchError(http.StatusBadGateway, "Upstream search response missing results field")
 	}
 	return obj, nil
 }
 
-// webSearchUpstreamError 表示上游 200 包络里的业务错误（code 非 0）。
+// webSearchUpstreamError represents a business error inside an upstream 200 envelope (non-zero code).
 type webSearchUpstreamError struct {
 	code int
 	msg  string
@@ -385,9 +387,9 @@ type webSearchUpstreamError struct {
 
 func (e *webSearchUpstreamError) Error() string {
 	if e.msg == "" {
-		return fmt.Sprintf("上游搜索接口返回 code=%d", e.code)
+		return fmt.Sprintf("Upstream search API returned code=%d", e.code)
 	}
-	return fmt.Sprintf("上游搜索接口返回 code=%d: %s", e.code, e.msg)
+	return fmt.Sprintf("Upstream search API returned code=%d: %s", e.code, e.msg)
 }
 
 func writeWebSearchSuccess(w http.ResponseWriter, obj map[string]any) {
@@ -398,13 +400,13 @@ func writeWebSearchSuccess(w http.ResponseWriter, obj map[string]any) {
 func normalizeWebSearchRequest(req *webSearchRequest) error {
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
-		return fmt.Errorf("query 不能为空")
+		return fmt.Errorf("query must not be empty")
 	}
 	if utf8Len(req.Query) < 2 {
-		return fmt.Errorf("query 至少需要 2 个字符")
+		return fmt.Errorf("query requires at least 2 characters")
 	}
 	if utf8Len(req.Query) > webSearchMaxQueryLength {
-		return fmt.Errorf("query 过长（最多 %d 个字符）", webSearchMaxQueryLength)
+		return fmt.Errorf("query too long (max %d characters)", webSearchMaxQueryLength)
 	}
 	if req.Count <= 0 {
 		req.Count = webSearchDefaultMaxResults
@@ -428,7 +430,7 @@ func webSearchAccount() *Account {
 	return nil
 }
 
-// webSearchAccountSnapshot 在锁内取一份凭据与站点参数的拷贝，避免并发调度期间读到半截状态。
+// webSearchAccountSnapshot takes a copy of credentials and site parameters under lock, avoiding half-updated state reads during concurrent scheduling.
 func webSearchAccountSnapshot(acc *Account) (*StoredAuth, *upstreamProfile) {
 	accountMu.Lock()
 	defer accountMu.Unlock()
@@ -442,22 +444,22 @@ func webSearchAccountSnapshot(acc *Account) (*StoredAuth, *upstreamProfile) {
 func classifyWebSearchFailure(lastStatus int, lastErr error) (int, string, string) {
 	switch {
 	case lastStatus == http.StatusUnauthorized:
-		return http.StatusUnauthorized, "upstream_auth_failed", "上游拒绝当前凭据（401），请重新登录账号"
+		return http.StatusUnauthorized, "upstream_auth_failed", "Upstream rejected current credentials (401), please log in again"
 	case lastStatus == http.StatusTooManyRequests:
-		return http.StatusTooManyRequests, "upstream_rate_limited", "上游限流（429），请稍后重试"
+		return http.StatusTooManyRequests, "upstream_rate_limited", "Upstream rate limited (429), please retry later"
 	case lastStatus == http.StatusForbidden:
-		return http.StatusForbidden, "upstream_forbidden", "上游拒绝本次搜索请求（403）"
+		return http.StatusForbidden, "upstream_forbidden", "Upstream rejected this search request (403)"
 	case lastStatus >= 400 && lastStatus < 500:
 		return http.StatusBadRequest, "upstream_error",
-			fmt.Sprintf("上游拒绝搜索请求（%d）：%s", lastStatus, safeDebugError(lastErr))
+			fmt.Sprintf("Upstream rejected search request (%d): %s", lastStatus, safeDebugError(lastErr))
 	default:
 		return http.StatusBadGateway, "upstream_error",
-			fmt.Sprintf("上游搜索接口调用失败：%s", safeDebugError(lastErr))
+			fmt.Sprintf("Upstream search API call failed: %s", safeDebugError(lastErr))
 	}
 }
 
-// webSearchUpstreamCode 读取上游业务码。
-// 返回的 bool 表示「响应里确实出现了 code 字段」；成功响应没有该字段。
+// webSearchUpstreamCode reads the upstream business code.
+// The returned bool indicates "the code field actually appeared in the response"; successful responses lack it.
 func webSearchUpstreamCode(obj map[string]any) (int, bool) {
 	value, ok := obj["code"]
 	if !ok {
@@ -470,7 +472,7 @@ func webSearchUpstreamCode(obj map[string]any) (int, bool) {
 		if strings.TrimSpace(v) == "" {
 			return 0, false
 		}
-		// 非数字 code 视为业务错误包络，message 由 msg/message 提供。
+		// A non-numeric code is treated as a business-error envelope; the message comes from msg/message.
 		return -1, true
 	case nil:
 		return 0, false
@@ -486,11 +488,11 @@ func webSearchUpstreamMessage(obj map[string]any) string {
 	return webSearchString(obj["message"])
 }
 
-// webSearchResults 归一化结果数组。
+// webSearchResults normalizes the results array.
 //
-// 上游可能给出「只有 site 没有 url」的站点型结果（实测行情/数据库类结果 url 为空串）。
-// 但 DSH 的 mapSearchResponse 要求 url 必须是非空字符串，否则整个响应被判非法，
-// 所以这里把无 url 的条目降级成 site 首页链接；实在无法构造时才丢弃。
+// Upstream may return site-type results with only a site and no url (observed: market/database results have an empty url).
+// But DSH's mapSearchResponse requires url to be a non-empty string, otherwise the whole response is judged invalid,
+// so entries without a url are downgraded to the site homepage link; only dropped when nothing can be constructed.
 //
 // DSH requires string title, url, and snippet fields, plus a nullable date.
 func webSearchResults(obj map[string]any) []map[string]any {
@@ -507,7 +509,7 @@ func webSearchResults(obj map[string]any) []map[string]any {
 			url = webSearchSiteFallbackURL(site)
 		}
 		if url == "" {
-			// 既无 url 也无法从 site 推断，DSH 侧必然判非法，直接丢弃更诚实。
+			// Neither a url nor a site to infer from; DSH would reject it anyway, so dropping it outright is more honest.
 			continue
 		}
 		out = append(out, map[string]any{
@@ -520,14 +522,14 @@ func webSearchResults(obj map[string]any) []map[string]any {
 	return out
 }
 
-// webSearchSiteFallbackURL 把上游只给 site 名称的结果补成可点击链接。
-// site 可能是域名（go.dev）也可能是中文名（股票数据库），后者无法构造 URL 时返回空。
+// webSearchSiteFallbackURL turns results that only carry a site name into clickable links.
+// site may be a domain (go.dev) or a Chinese name (stock database); returns empty when no URL can be constructed.
 func webSearchSiteFallbackURL(site string) string {
 	site = strings.TrimSpace(site)
 	if site == "" || strings.ContainsAny(site, " \t") {
 		return ""
 	}
-	// 含点的才当成域名；纯中文名不当域名处理。
+	// Only treat dot-containing values as domains; pure Chinese names are not treated as domains.
 	if !strings.Contains(site, ".") {
 		return ""
 	}
@@ -549,7 +551,7 @@ func baseNameOf(acc *Account) string {
 	return acc.Path
 }
 
-// utf8Len 按字符数计数，避免中文查询被按字节长度误判为过长。
+// utf8Len counts by characters, avoiding Chinese queries being misjudged as too long by byte length.
 func utf8Len(s string) int {
 	return len([]rune(s))
 }

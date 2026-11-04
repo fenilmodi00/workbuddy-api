@@ -15,9 +15,9 @@ import (
 	"time"
 )
 
-// 瞬时网络错误必须被识别（可重试），非瞬时错误不得误判。
+// Transient network errors must be recognized (retryable); non-transient errors must not be misclassified.
 func TestIsTransientNetworkError(t *testing.T) {
-	// 地址仅用于合成错误文本，使用文档示例网段，不包含真实客户端或上游 IP。
+	// Addresses are only used in synthetic error text: documentation example ranges, no real client or upstream IPs.
 	transient := []error{
 		io.EOF,
 		errors.New(`Post "https://x": write tcp 192.0.2.1:1->198.51.100.2:443: write: connection reset by peer`),
@@ -26,14 +26,14 @@ func TestIsTransientNetworkError(t *testing.T) {
 		errors.New("dial tcp 192.0.2.1:443: connect: connection refused"),
 		errors.New(`http2: server sent GOAWAY and closed the connection`),
 		errors.New("unexpected EOF"),
-		// Windows Winsock 的 RST 文案，不含 POSIX 的 "connection reset by peer"。
+		// Windows Winsock RST messages; do not include the POSIX "connection reset by peer".
 		errors.New(`Post "https://x": write tcp 192.0.2.1:1->198.51.100.2:443: wsasend: An existing connection was forcibly closed by the remote host.`),
 		errors.New(`read tcp 192.0.2.1:1->198.51.100.2:443: wsarecv: An existing connection was forcibly closed by the remote host.`),
 		errors.New(`write tcp 192.0.2.1:1->198.51.100.2:443: wsasend: An established connection was aborted by the software in your host machine.`),
 	}
 	for _, err := range transient {
 		if !isTransientNetworkError(err) {
-			t.Errorf("应判定为瞬时错误: %v", err)
+			t.Errorf("Should be classified as transient: %v", err)
 		}
 	}
 
@@ -46,7 +46,7 @@ func TestIsTransientNetworkError(t *testing.T) {
 	}
 	for _, err := range permanent {
 		if isTransientNetworkError(err) {
-			t.Errorf("不应判定为瞬时错误: %v", err)
+			t.Errorf("Should not be classified as transient: %v", err)
 		}
 	}
 }
@@ -55,7 +55,7 @@ type retryTransportFunc func(*http.Request) (*http.Response, error)
 
 func (f retryTransportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// 连接建立阶段失败，请求头未写出，才可用新连接重试。
+// A failure during connection establishment, with request headers unwritten, is the only case retryable on a new connection.
 func TestUpstreamRetriesTransientFailureAndSucceeds(t *testing.T) {
 	var attempts int32
 	oldClient := cfg.HttpClient
@@ -71,7 +71,7 @@ func TestUpstreamRetriesTransientFailureAndSucceeds(t *testing.T) {
 	cfg.HttpClient = &http.Client{Transport: retryTransportFunc(func(req *http.Request) (*http.Response, error) {
 		n := atomic.AddInt32(&attempts, 1)
 		if n == 1 {
-			return nil, io.EOF // 建连失败，请求头与请求体都未发送
+			return nil, io.EOF // connection establishment failed; neither request headers nor body were sent
 		}
 		body, err := io.ReadAll(req.Body)
 		if err != nil || string(body) != `{"model":"m"}` {
@@ -95,7 +95,7 @@ func TestUpstreamRetriesTransientFailureAndSucceeds(t *testing.T) {
 	}
 }
 
-// 上游已读到请求头后断开，可能已经处理了 POST，不能重放。
+// The upstream disconnected after reading the request headers; it may have processed the POST, so it must not be replayed.
 func TestUpstreamDoesNotRetryEOFOnceHeadersSent(t *testing.T) {
 	var attempts int32
 	oldClient := cfg.HttpClient
@@ -118,7 +118,7 @@ func TestUpstreamDoesNotRetryEOFOnceHeadersSent(t *testing.T) {
 	}
 }
 
-// 即使只返回裸 EOF，若请求体已写完而服务端尚未发响应，也不能重复生成。
+// Even a bare EOF must not trigger regeneration if the request body was fully written and the server has not responded.
 func TestUpstreamDoesNotRetryEOFOnceBodySent(t *testing.T) {
 	var attempts int32
 	oldClient := cfg.HttpClient
@@ -140,19 +140,19 @@ func TestUpstreamDoesNotRetryEOFOnceBodySent(t *testing.T) {
 	}
 }
 
-// 真 TCP RST 发生在服务端收到请求之后时，同样不得自动重放。
+// A real TCP RST after the server received the request must likewise not be replayed automatically.
 func TestUpstreamDoesNotRetryAfterServerReceivesRequest(t *testing.T) {
 	var attempts int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&attempts, 1)
 		if n == 1 {
-			// 模拟对端 RST：劫持底层连接后直接关闭
+			// Simulate a peer RST: hijack the underlying connection and close it directly
 			if hj, ok := w.(http.Hijacker); ok {
 				conn, _, err := hj.Hijack()
 				if err == nil {
 					if tcp, ok := conn.(*net.TCPConn); ok {
-						_ = tcp.SetLinger(0) // 立即 RST
+						_ = tcp.SetLinger(0) // immediate RST
 					}
 					_ = conn.Close()
 					return
@@ -204,7 +204,7 @@ func TestUpstreamDoesNotRetryAfterServerReceivesRequest(t *testing.T) {
 	}
 }
 
-// 真 HTTP 服务器收到完整 POST 后直接关连接时，客户端看到 EOF 仍不能重放。
+// When a real HTTP server closes the connection right after receiving the full POST, the client still sees EOF but must not replay.
 func TestUpstreamDoesNotRetryRealEOF(t *testing.T) {
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -235,7 +235,7 @@ func TestUpstreamDoesNotRetryRealEOF(t *testing.T) {
 	}
 }
 
-// 重试次数用尽仍失败时，应如实返回 502，且不得伪造成功。
+// When retries are exhausted and the request still fails, honestly return 502 and never fabricate success.
 func TestUpstreamRetriesExhaustedReturns502(t *testing.T) {
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -288,17 +288,17 @@ func TestUpstreamRetriesExhaustedReturns502(t *testing.T) {
 	requestAuditMiddleware(http.HandlerFunc(handleChatCompletions)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("重试用尽应返回 502, got %d", rec.Code)
+		t.Fatalf("Retries exhausted should return 502, got %d", rec.Code)
 	}
 	if got := atomic.LoadInt32(&attempts); got != 1 {
 		t.Fatalf("RST after request headers must not retry, attempts=%d", got)
 	}
 	if strings.Contains(rec.Body.String(), "[DONE]") {
-		t.Fatal("失败时不得伪造 [DONE]")
+		t.Fatal("Must not fabricate [DONE] on failure")
 	}
 }
 
-// 非瞬时错误（如上游返回 400）不得触发重试，避免放大问题。
+// Non-transient errors (e.g. upstream 400) must not trigger retries, to avoid amplifying the problem.
 func TestUpstreamDoesNotRetryPermanentError(t *testing.T) {
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,14 +339,14 @@ func TestUpstreamDoesNotRetryPermanentError(t *testing.T) {
 	requestAuditMiddleware(http.HandlerFunc(handleChatCompletions)).ServeHTTP(rec, req)
 
 	if got := atomic.LoadInt32(&attempts); got != 1 {
-		t.Fatalf("HTTP 400 不应重试，实际请求次数=%d", got)
+		t.Fatalf("HTTP 400 should not be retried, actual request count=%d", got)
 	}
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("应透传上游 400, got %d", rec.Code)
+		t.Fatalf("Upstream 400 should be passed through, got %d", rec.Code)
 	}
 }
 
-// config.json 应能覆盖重试次数。
+// config.json should be able to override the retry count.
 func TestRuntimeConfigOverridesTransientRetries(t *testing.T) {
 	old := upstreamTransientRetries
 	defer func() { upstreamTransientRetries = old }()
@@ -360,10 +360,10 @@ func TestRuntimeConfigOverridesTransientRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	if upstreamTransientRetries != 5 {
-		t.Fatalf("重试次数覆盖失败: %d", upstreamTransientRetries)
+		t.Fatalf("Retry count override failed: %d", upstreamTransientRetries)
 	}
 
-	// 显式设为 0 应禁用重试（而不是回退默认值）
+	// Explicitly setting 0 should disable retries (not fall back to the default)
 	if err := writeFile(path, `{"upstream":{"transientRetries":0}}`); err != nil {
 		t.Fatal(err)
 	}
@@ -371,10 +371,10 @@ func TestRuntimeConfigOverridesTransientRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	if upstreamTransientRetries != 0 {
-		t.Fatalf("显式 0 应禁用重试, got %d", upstreamTransientRetries)
+		t.Fatalf("Explicit 0 should disable retries, got %d", upstreamTransientRetries)
 	}
 
-	// 省略该字段应回到默认值
+	// Omitting the field should return to the default value
 	if err := writeFile(path, `{"debug":{"enabled":false}}`); err != nil {
 		t.Fatal(err)
 	}
@@ -382,11 +382,11 @@ func TestRuntimeConfigOverridesTransientRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	if upstreamTransientRetries != upstreamTransientRetriesDefault {
-		t.Fatalf("省略配置应回默认值: %d", upstreamTransientRetries)
+		t.Fatalf("Omitted config should fall back to the default: %d", upstreamTransientRetries)
 	}
 }
 
-// 辅助：写文件
+// Helper: write file
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0600)
 }

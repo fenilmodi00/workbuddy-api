@@ -20,23 +20,27 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// 模型目录与倍率
+// Model catalog and multipliers
 //
-// 列表来源（两路合并去重）：
-//  1. 实时接口 GET {Base}/v2/enterprises/personal/models（权威，含促销）
-//  2. npm 包内静态目录 product.internal.json / product.cloudhosted.json
+// List sources (two-way merge with dedup):
+//  1. Live API GET {Base}/v2/enterprises/personal/models (authoritative, includes promos)
+//  2. Static catalog inside the npm package: product.internal.json / product.cloudhosted.json
 //
-// 任一路失败用本地缓存；无缓存则用另一路成功的数据先顶上，等下次刷新覆盖；
-// 两路都失败且无缓存则不展示模型列表（不影响模型调用，调用始终透传）。
+// If either source fails, fall back to the local cache; with no cache, use the
+// other source's successful data and wait for the next refresh to overwrite it;
+// if both fail and there is no cache, show no model list (model calls are
+// unaffected; calls are always passed through).
 //
-// 倍率：
-//  1. 优先实时接口生效倍率（credits × 促销 factor）
-//  2. 若接口给出 0.00x 但促销已到期，或该模型不在接口目录中，
-//     用「余额未耗尽」的同站点账号探测一次（每 12 小时一轮）
-//     - 探测为免费 → 展示 0.00x，并继续每 12 小时复测确认
-//     - 探测为收费 → 展示 [未知倍率]，直到接口重新给出 0.00x
-//     （无促销时间，或仍在促销时间窗口内）才恢复免费
-//     - 14018 / 未知 → 不覆盖接口值
+// Multipliers:
+//  1. Prefer the live API's effective multiplier (credits × promo factor)
+//  2. If the API reports 0.00x but the promo has expired, or the model is not
+//     in the API catalog, probe once with a same-site account whose balance
+//     is not exhausted (one round every 12 hours)
+//     - Probe says free → display 0.00x and keep re-checking every 12 hours
+//     - Probe says paid → display [Unknown multiplier] until the API reports
+//     0.00x again (no promo schedule, or still inside the promo window),
+//     which restores Free
+//     - 14018 / Unknown → do not override the API value
 // -----------------------------------------------------------------------------
 
 const (
@@ -49,9 +53,10 @@ const (
 	npmCatalogMaxBytes = 4 << 20
 	npmTarballMaxBytes = 80 << 20
 
-	// modelAPIPriceProbeInterval 同一站点+模型的价格探测间隔。
+	// modelAPIPriceProbeInterval is the price-probe interval for a given site+model.
 	modelAPIPriceProbeInterval = 12 * time.Hour
-	// 价格探测调度：启动后很快首轮；仍有待探测时用短间隔追赶；收敛后长间隔。
+	// Price-probe scheduling: first round shortly after startup; catch up with a
+	// short interval while models remain pending; long interval once converged.
 	modelPriceProbeStartDelay   = 20 * time.Second
 	modelPriceProbeTick         = 30 * time.Minute
 	modelPriceProbeCatchUp      = 2 * time.Minute
@@ -59,12 +64,13 @@ const (
 	modelPriceProbeInitialBatch = 30
 )
 
-var catalogSites = []string{"cn", "intl"}
+var catalogSites = []string{"cn", "intl", "codebuddy"}
 
-// npm 包内各站点目录文件。
+// Per-site catalog files inside the npm package.
 var npmCatalogFiles = map[string]string{
-	"cn":   "product.internal.json",
-	"intl": "product.cloudhosted.json",
+	"cn":        "product.internal.json",
+	"intl":      "product.cloudhosted.json",
+	"codebuddy": "product.json",
 }
 
 var npmBases = []string{
@@ -77,25 +83,27 @@ type catalogModel struct {
 	Name            string  `json:"name,omitempty"`
 	Credits         string  `json:"credits,omitempty"`
 	BaseMultiplier  float64 `json:"baseMultiplier,omitempty"`
-	Multiplier      float64 `json:"multiplier,omitempty"` // 生效倍率（含促销）
+	Multiplier      float64 `json:"multiplier,omitempty"` // Effective multiplier (including promos)
 	HasMultiplier   bool    `json:"hasMultiplier,omitempty"`
 	PromoLabel      string  `json:"promoLabel,omitempty"`
 	PromoUntil      string  `json:"promoUntil,omitempty"`
 	PromoFree       bool    `json:"promoFree,omitempty"`
-	PromoExpired    bool    `json:"promoExpired,omitempty"` // 有促销但已过期/未生效
-	FromLive        bool    `json:"fromLive,omitempty"`     // 是否来自实时接口
+	PromoExpired    bool    `json:"promoExpired,omitempty"` // Has a promo but it has expired / not started
+	FromLive        bool    `json:"fromLive,omitempty"`     // Whether it came from the live API
 	MaxInputTokens  int     `json:"maxInputTokens,omitempty"`
 	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
-	MaxAllowedSize  int     `json:"maxAllowedSize,omitempty"` // 上游声明的最大允许上下文
-	// ContextLengths / ContextDefaultLength 来自上游 contextWindow：
-	// 前者是客户端可选的上下文档位，后者是客户端默认预算。
-	// 它们与「模型能力上限」（MaxInputTokens）语义不同，不能合并成一个值：
-	// 上限决定上游接受多少输入，默认预算只决定客户端自己从多少 token 开始压缩。
+	MaxAllowedSize  int     `json:"maxAllowedSize,omitempty"` // Maximum allowed context declared upstream
+	// ContextLengths / ContextDefaultLength come from the upstream contextWindow:
+	// the former is the client-selectable context tiers, the latter the client's
+	// default budget. Their semantics differ from the "model capability ceiling"
+	// (MaxInputTokens) and must not be merged into one value: the ceiling decides
+	// how much input the upstream accepts, while the default budget only decides
+	// from how many tokens the client itself starts compressing.
 	ContextLengths       []int `json:"contextLengths,omitempty"`
 	ContextDefaultLength int   `json:"contextDefaultLength,omitempty"`
 }
 
-// modelPriceProbe 是某站点某模型的价格探测状态。
+// modelPriceProbe is the price-probe state for a model on a given site.
 type modelPriceProbe struct {
 	LastProbeAt int64   `json:"lastProbeAt,omitempty"`
 	Verdict     string  `json:"verdict,omitempty"` // free | paid
@@ -121,15 +129,17 @@ var (
 	modelProbeTrigger = make(chan struct{}, 1)
 )
 
-// rateLogState 记录本进程已经写过的「官方倍率」日志签名。
-// 首次刷新全量记录，之后只记录发生变化的模型，避免每小时把整份目录重复写进普通日志。
+// rateLogState tracks the "official multiplier" log signatures already written by this process.
+// The first refresh records everything; afterwards only changed models are logged,
+// so the whole catalog is not rewritten into the ordinary log every hour.
 var rateLogState = struct {
 	sync.Mutex
 	seen map[string]string
 }{seen: map[string]string{}}
 
-// logOfficialRates 把官方目录取回的倍率写入普通日志，供网页控制台展示数据来源与更新时间。
-// 只记录摘要字段，不涉及任何凭据。
+// logOfficialRates writes the multipliers fetched from the official catalog into
+// the ordinary log, letting the web console show data source and update time.
+// Only summary fields are recorded; no credentials are involved.
 func logOfficialRates(site string, models []catalogModel, refreshedAt time.Time) {
 	rateLogState.Lock()
 	defer rateLogState.Unlock()
@@ -142,15 +152,15 @@ func logOfficialRates(site string, models []catalogModel, refreshedAt time.Time)
 		}
 		rateLogState.seen[key] = signature
 		changed++
-		source := "npm/缓存"
+		source := "npm/cache"
 		if m.FromLive {
-			source = "实时接口"
+			source = "live API"
 		}
-		log.Printf("[Models] 官方倍率 站点=%s 模型=%s 原始credits=%q 生效倍率=%s 有倍率=%t 促销=%q 促销截止=%q 促销已过期=%t 来源=%s 刷新时间=%s",
+		log.Printf("[Models] official multiplier site=%s model=%s rawCredits=%q effectiveMultiplier=%s hasMultiplier=%t promo=%q promoEnds=%q promoExpired=%t source=%s refreshedAt=%s",
 			site, m.ID, m.Credits, fmt.Sprintf("%.2f", m.Multiplier), m.HasMultiplier, m.PromoLabel, m.PromoUntil, m.PromoExpired, source, refreshedAt.Format("2006-01-02T15:04:05"))
 	}
 	if changed > 0 {
-		log.Printf("[Models] 官方倍率已记录：站点=%s 本轮新增或变化=%d 说明=未变化的模型不重复写日志", site, changed)
+		log.Printf("[Models] Official multipliers recorded: site=%s added or changed this round=%d note=unchanged models are not logged again", site, changed)
 	}
 }
 
@@ -158,7 +168,7 @@ func probeKey(site, model string) string {
 	return site + "|" + normalizeModelName(model)
 }
 
-// parseCredits 解析 credits 字段为数值倍率，例如 "x0.29 credits" -> 0.29。
+// parseCredits parses the credits field into a numeric multiplier, e.g. "x0.29 credits" -> 0.29.
 func parseCredits(v any) (float64, bool) {
 	switch x := v.(type) {
 	case string:
@@ -178,7 +188,7 @@ func parseCredits(v any) (float64, bool) {
 }
 
 // -----------------------------------------------------------------------------
-// 实时接口
+// Live API
 // -----------------------------------------------------------------------------
 
 type livePromotion struct {
@@ -230,7 +240,7 @@ func pickCatalogAccount(edition string) *Account {
 func fetchLiveCatalog(edition string) ([]catalogModel, int, error) {
 	acc := pickCatalogAccount(edition)
 	if acc == nil {
-		return nil, 0, fmt.Errorf("没有可用的%s账号", profileForEdition(edition).Label)
+		return nil, 0, fmt.Errorf("no available %s account", profileForEdition(edition).Label)
 	}
 	accountMu.Lock()
 	auth := *acc.Auth
@@ -283,10 +293,10 @@ func promoActive(p livePromotion, now time.Time) bool {
 func parseLiveCatalog(data []byte) ([]catalogModel, int, error) {
 	var doc liveCatalogData
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, 0, fmt.Errorf("解析实时目录失败: %w", err)
+		return nil, 0, fmt.Errorf("failed to parse live catalog: %w", err)
 	}
 	if len(doc.Models) == 0 {
-		return nil, 0, errors.New("实时目录 models 为空")
+		return nil, 0, errors.New("live catalog models is empty")
 	}
 	now := time.Now()
 
@@ -314,7 +324,7 @@ func parseLiveCatalog(data []byte) ([]catalogModel, int, error) {
 				}
 				hits[id] = hit{factor: p.Discount.Factor, label: label, until: p.Schedule.ValidUntil}
 			} else {
-				// 记录"存在促销但当前不生效"，用于触发价格探测。
+				// Record "promo exists but not currently active", used to trigger price probing.
 				if old, ok := hits[id]; ok && old.expired {
 					continue
 				}
@@ -367,18 +377,18 @@ func parseLiveCatalog(data []byte) ([]catalogModel, int, error) {
 		out = append(out, entry)
 	}
 	if len(out) < modelsMinCount || len(out) > modelsMaxCount {
-		return nil, 0, fmt.Errorf("模型数量异常: %d", len(out))
+		return nil, 0, fmt.Errorf("abnormal model count: %d", len(out))
 	}
 	return out, active, nil
 }
 
 // -----------------------------------------------------------------------------
-// npm 静态目录（兜底来源之一）
+// npm static catalog (one of the fallback sources)
 // -----------------------------------------------------------------------------
 
 func fetchNPMCatalogVersion() (string, error) {
 	traceID := newTraceID()
-	log.Printf("[模型目录] traceId=%s 来源=npm 阶段=版本查询开始 镜像数=%d", traceID, len(npmBases))
+	log.Printf("[Model catalog] traceId=%s source=npm stage=version query start mirror count=%d", traceID, len(npmBases))
 	var lastErr error
 	for _, base := range npmBases {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultRequestTimeout)
@@ -386,14 +396,14 @@ func fetchNPMCatalogVersion() (string, error) {
 		if reqErr != nil {
 			cancel()
 			lastErr = reqErr
-			log.Printf("[模型目录] traceId=%s 来源=npm 镜像=%s 阶段=创建请求 结果=失败 原因=%v", traceID, base, reqErr)
+			log.Printf("[Model catalog] traceId=%s source=npm mirror=%s stage=create request result=failed reason=%v", traceID, base, reqErr)
 			continue
 		}
 		resp, err := cfg.HttpClient.Do(req)
 		if err != nil {
 			cancel()
 			lastErr = err
-			log.Printf("[模型目录] traceId=%s 来源=npm 镜像=%s 阶段=外部请求 结果=失败 原因=%v", traceID, base, err)
+			log.Printf("[Model catalog] traceId=%s source=npm mirror=%s stage=external request result=failed reason=%v", traceID, base, err)
 			continue
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -401,26 +411,26 @@ func fetchNPMCatalogVersion() (string, error) {
 		cancel()
 		if readErr != nil {
 			lastErr = readErr
-			log.Printf("[模型目录] traceId=%s 来源=npm 镜像=%s 状态码=%d 阶段=读取响应 结果=失败 原因=%v", traceID, base, resp.StatusCode, readErr)
+			log.Printf("[Model catalog] traceId=%s source=npm mirror=%s status code=%d stage=read response result=failed reason=%v", traceID, base, resp.StatusCode, readErr)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
 			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
-			log.Printf("[模型目录] traceId=%s 来源=npm 镜像=%s 结果=失败 原因=%v", traceID, base, lastErr)
+			log.Printf("[Model catalog] traceId=%s source=npm mirror=%s result=failed reason=%v", traceID, base, lastErr)
 			continue
 		}
 		var m struct {
 			Version string `json:"version"`
 		}
 		if err := json.Unmarshal(body, &m); err != nil || strings.TrimSpace(m.Version) == "" {
-			lastErr = fmt.Errorf("manifest 缺少 version")
-			log.Printf("[模型目录] traceId=%s 来源=npm 镜像=%s 阶段=解析版本 结果=失败 原因=%v", traceID, base, lastErr)
+			lastErr = fmt.Errorf("manifest missing version")
+			log.Printf("[Model catalog] traceId=%s source=npm mirror=%s stage=parse version result=failed reason=%v", traceID, base, lastErr)
 			continue
 		}
-		log.Printf("[模型目录] traceId=%s 来源=npm 结果=成功 版本=%s 说明=响应体已读取并关闭，再释放请求上下文", traceID, strings.TrimSpace(m.Version))
+		log.Printf("[Model catalog] traceId=%s source=npm result=success version=%s note=response body read and closed, request context then released", traceID, strings.TrimSpace(m.Version))
 		return strings.TrimSpace(m.Version), nil
 	}
-	log.Printf("[模型目录] traceId=%s 来源=npm 结果=查询失败 原因=%v 业务影响=继续由现有目录兜底逻辑处理", traceID, lastErr)
+	log.Printf("[Model catalog] traceId=%s source=npm result=query failed reason=%v business impact=existing catalog fallback logic continues to handle it", traceID, lastErr)
 	return "", lastErr
 }
 
@@ -440,10 +450,10 @@ func parseNPMCatalog(data []byte) ([]catalogModel, error) {
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("解析 npm 目录失败: %w", err)
+		return nil, fmt.Errorf("failed to parse npm catalog: %w", err)
 	}
 	if doc.Models == nil {
-		return nil, errors.New("npm 目录缺少 models 数组")
+		return nil, errors.New("npm catalog is missing the models array")
 	}
 	seen := map[string]bool{}
 	out := make([]catalogModel, 0, len(*doc.Models))
@@ -457,8 +467,9 @@ func parseNPMCatalog(data []byte) ([]catalogModel, error) {
 			ID: id, Name: strings.TrimSpace(m.Name),
 			MaxInputTokens: m.MaxInputTokens, MaxOutputTokens: m.MaxOutputTokens,
 		}
-		// npm 目录同样带 maxInputTokens/maxOutputTokens/contextWindow；
-		// 此前只读 id/name/credits，能力信息被整段丢弃，这里补齐。
+		// The npm catalog also carries maxInputTokens/maxOutputTokens/contextWindow;
+		// previously only id/name/credits were read and capability info was dropped
+		// entirely — fill it in here.
 		var lengths []int
 		var defaultLength int
 		if m.ContextWindow != nil {
@@ -476,12 +487,12 @@ func parseNPMCatalog(data []byte) ([]catalogModel, error) {
 		out = append(out, entry)
 	}
 	if len(out) < modelsMinCount || len(out) > modelsMaxCount {
-		return nil, fmt.Errorf("npm 目录模型数量异常: %d", len(out))
+		return nil, fmt.Errorf("abnormal npm catalog model count: %d", len(out))
 	}
 	return out, nil
 }
 
-// fetchNPMCatalog 拉取指定站点目录：unpkg 单文件优先，失败回退 npm tgz 流式提取。
+// fetchNPMCatalog fetches a site's catalog: prefers the unpkg single file, falls back to streaming extraction from the npm tgz.
 func fetchNPMCatalog(version, file string) ([]catalogModel, string, error) {
 	url := "https://unpkg.com/@tencent-ai/codebuddy-code@" + version + "/" + file
 	models, err := fetchNPMCatalogJSON(url)
@@ -516,7 +527,7 @@ func fetchNPMCatalogJSON(url string) ([]catalogModel, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	if resp.ContentLength > npmCatalogMaxBytes {
-		return nil, fmt.Errorf("目录响应过大: %d bytes", resp.ContentLength)
+		return nil, fmt.Errorf("catalog response too large: %d bytes", resp.ContentLength)
 	}
 	data, err := readLimited(resp.Body, npmCatalogMaxBytes)
 	if err != nil {
@@ -532,7 +543,7 @@ type hardLimitReader struct {
 
 func (r *hardLimitReader) Read(p []byte) (int, error) {
 	if r.remaining <= 0 {
-		return 0, fmt.Errorf("响应超过 %d bytes 上限", npmTarballMaxBytes)
+		return 0, fmt.Errorf("response exceeds the %d bytes limit", npmTarballMaxBytes)
 	}
 	if int64(len(p)) > r.remaining {
 		p = p[:r.remaining]
@@ -548,7 +559,7 @@ func readLimited(r io.Reader, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("响应超过 %d bytes 上限", limit)
+		return nil, fmt.Errorf("response exceeds the %d bytes limit", limit)
 	}
 	return data, nil
 }
@@ -569,7 +580,7 @@ func fetchNPMCatalogTarball(url, file string) ([]catalogModel, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	if resp.ContentLength > npmTarballMaxBytes {
-		return nil, fmt.Errorf("tgz 响应超过上限: %d bytes", resp.ContentLength)
+		return nil, fmt.Errorf("tgz response exceeds the limit: %d bytes", resp.ContentLength)
 	}
 	gz, err := gzip.NewReader(&hardLimitReader{r: resp.Body, remaining: npmTarballMaxBytes})
 	if err != nil {
@@ -581,7 +592,7 @@ func fetchNPMCatalogTarball(url, file string) ([]catalogModel, error) {
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return nil, fmt.Errorf("包内未找到 %s", want)
+			return nil, fmt.Errorf("%s not found in package", want)
 		}
 		if err != nil {
 			return nil, err
@@ -597,8 +608,9 @@ func fetchNPMCatalogTarball(url, file string) ([]catalogModel, error) {
 	}
 }
 
-// normalizeContextLengths 过滤非法档位并按升序去重。
-// 超过模型能力上限的档位不可信（客户端也据此过滤），直接丢弃。
+// normalizeContextLengths filters invalid tiers and dedups in ascending order.
+// Tiers exceeding the model capability ceiling are untrusted (clients filter on
+// this too) and are dropped outright.
 func normalizeContextLengths(values []int, ceiling int) []int {
 	seen := map[int]bool{}
 	out := make([]int, 0, len(values))
@@ -616,9 +628,10 @@ func normalizeContextLengths(values []int, ceiling int) []int {
 	return out
 }
 
-// applyCatalogCapability 把目录里的能力字段写进条目。
-// 能力上限优先取 maxInputTokens，缺失时回落到上游声明的 maxAllowedSize；
-// 档位与默认预算只在可信时保留，绝不编造默认值。
+// applyCatalogCapability writes the catalog's capability fields into the entry.
+// The capability ceiling prefers maxInputTokens, falling back to the upstream
+// declared maxAllowedSize when missing; tiers and the default budget are kept
+// only when trusted — a default is never fabricated.
 func applyCatalogCapability(entry *catalogModel, maxAllowed int, lengths []int, defaultLength int) {
 	if entry == nil {
 		return
@@ -641,7 +654,7 @@ func applyCatalogCapability(entry *catalogModel, maxAllowed int, lengths []int, 
 	}
 }
 
-// backfillCapability 只用次要来源补齐缺失的能力字段；已有值永远不被覆盖。
+// backfillCapability fills missing capability fields only from secondary sources; existing values are never overwritten.
 func backfillCapability(dst *catalogModel, src catalogModel) {
 	if dst == nil {
 		return
@@ -663,8 +676,9 @@ func backfillCapability(dst *catalogModel, src catalogModel) {
 	}
 }
 
-// mergeCatalogs 合并两份目录：实时接口优先，npm 仅补齐接口没有的模型。
-// 同一模型两边都有时，用 npm 补齐实时目录缺失的能力字段（不覆盖实时值）。
+// mergeCatalogs merges two catalogs: the live API wins, npm only fills in models the API lacks.
+// When a model exists on both sides, npm backfills capability fields missing from
+// the live catalog (without overwriting live values).
 func mergeCatalogs(live, npm []catalogModel) []catalogModel {
 	out := make([]catalogModel, 0, len(live)+len(npm))
 	index := map[string]int{}
@@ -687,7 +701,7 @@ func mergeCatalogs(live, npm []catalogModel) []catalogModel {
 }
 
 // -----------------------------------------------------------------------------
-// 缓存
+// Cache
 // -----------------------------------------------------------------------------
 
 func loadModelsCache() {
@@ -697,7 +711,7 @@ func loadModelsCache() {
 	}
 	var cache modelsCache
 	if err := json.Unmarshal(data, &cache); err != nil || cache.Schema != modelsCacheSchema {
-		log.Printf("[Models] 模型缓存无效或格式版本过旧，忽略")
+		log.Printf("[Models] model cache invalid or schema version too old, ignoring")
 		return
 	}
 	validated := map[string][]catalogModel{}
@@ -717,10 +731,11 @@ func loadModelsCache() {
 	dynamicSource = cache.Source
 	modelsMu.Unlock()
 	for key, models := range validated {
-		log.Printf("[Models] 已加载站点目录缓存：站点=%s，模型数=%d", key, len(models))
+		log.Printf("[Models] loaded site catalog cache: site=%s, model count=%d", key, len(models))
 	}
-	// 缓存里的探测结论同样写入普通日志：网页控制台据此说明「收费(倍率未知)」的来源与时间。
-	// 明确标注为缓存载入，避免被误读成本轮新探测。
+	// Probe verdicts from the cache are also written to the ordinary log: the web
+	// console uses them to explain the origin and time of "Paid (unknown multiplier)".
+	// Explicitly marked as cache-loaded to avoid being mistaken for a fresh probe this round.
 	for key, probe := range cache.Probes {
 		if probe.Verdict == "" {
 			continue
@@ -729,11 +744,11 @@ func loadModelsCache() {
 		if !found || site == "" || model == "" {
 			continue
 		}
-		probeTime := "未知"
+		probeTime := "unknown"
 		if probe.LastProbeAt > 0 {
 			probeTime = time.Unix(probe.LastProbeAt, 0).Format("2006-01-02T15:04:05")
 		}
-		log.Printf("[ModelPrice] 载入缓存结论 站点=%s 模型=%s 判定=%s credit=%s tokens=%d 探测时间=%s 说明=%s 来源=缓存文件（非本轮新探测）",
+		log.Printf("[ModelPrice] cached verdict site=%s model=%s verdict=%s credit=%s tokens=%d probeTime=%s note=%s source=cache file (not a fresh probe this round)",
 			site, model, probe.Verdict, formatQuota(probe.Credit), probe.Tokens, probeTime, probe.Detail)
 	}
 }
@@ -756,7 +771,7 @@ func saveModelsCache(source string, catalogs map[string][]catalogModel, probes m
 func persistModelsLocked(source string) error {
 	err := saveModelsCache(source, catalogModels, modelProbes)
 	if err != nil {
-		log.Printf("[Models] 缓存写入失败: %v", err)
+		log.Printf("[Models] failed to write cache: %v", err)
 	}
 	return err
 }
@@ -784,7 +799,7 @@ func collectModelIDs(includeDisabled bool) ([]string, string) {
 			if seen[m.ID] {
 				continue
 			}
-			// 被配置禁用的模型不出现在任何模型列表（/v1/models、monitor 统计表、health 计数）。
+			// Models disabled by config do not appear in any model list (/v1/models, monitor stats table, health counts).
 			if disabled, _ := modelDisabled(m.ID); disabled && !includeDisabled {
 				continue
 			}
@@ -807,17 +822,18 @@ func modelEntry(site, modelID string) (catalogModel, bool) {
 	return catalogModel{}, false
 }
 
-// modelCapabilitySite 是单个站点对某模型声明的能力。
+// modelCapabilitySite is the capability a single site declares for a model.
 type modelCapabilitySite struct {
-	Ceiling   int   `json:"context_length,omitempty"`         // 能力上限（maxInputTokens，缺失回落 maxAllowedSize）
-	MaxOutput int   `json:"max_output_tokens,omitempty"`      // 输出上限
-	Default   int   `json:"default_context_length,omitempty"` // 客户端默认预算（不是能力上限）
-	Options   []int `json:"context_length_options,omitempty"` // 客户端可选档位
+	Ceiling   int   `json:"context_length,omitempty"`         // Capability ceiling (maxInputTokens, falls back to maxAllowedSize when missing)
+	MaxOutput int   `json:"max_output_tokens,omitempty"`      // Output ceiling
+	Default   int   `json:"default_context_length,omitempty"` // Client default budget (not a capability ceiling)
+	Options   []int `json:"context_length_options,omitempty"` // Client-selectable tiers
 }
 
-// modelCapability 是 /v1/models 对外暴露的能力汇总。
-// 只有各站点一致（或仅一个站点有可信数据）时才填顶层标量；
-// 站点之间有差异时顶层留空并填 BySite，避免下游按较大值预留上下文。
+// modelCapability is the capability summary exposed by /v1/models.
+// Top-level scalars are only filled when sites agree (or only one site has
+// trusted data); when sites differ, the top level is left empty and BySite is
+// filled, preventing downstream from reserving context for the larger value.
 type modelCapability struct {
 	Ceiling   int
 	MaxOutput int
@@ -838,8 +854,9 @@ func sameIntSlice(a, b []int) bool {
 	return true
 }
 
-// capabilityScalar 判断某标量能力在各站点是否一致。
-// 任一站点缺该值即视为「不可保证」，返回 false（未知不能冒充一致）。
+// capabilityScalar decides whether a scalar capability agrees across sites.
+// Any site missing the value is treated as "not guaranteed" and returns false
+// (unknown must not masquerade as agreement).
 func capabilityScalar(bySite map[string]modelCapabilitySite, pick func(modelCapabilitySite) int) (int, bool) {
 	value, found := 0, false
 	for _, site := range catalogSites {
@@ -880,11 +897,13 @@ func capabilityOptions(bySite map[string]modelCapabilitySite) ([]int, bool) {
 	return first, len(first) >= 2
 }
 
-// modelCapabilityFor 汇总各站点目录中该模型的能力信息。
+// modelCapabilityFor aggregates capability info for the model across site catalogs.
 //
-// 同名模型可能由国内／国际账号分别服务，能力不一定相同。这里不取最大值：
-// 顶层标量只在各站点一致时给出，否则置空并把分站点明细放进 BySite，
-// 由调用方决定如何展示。完全没有可信数据的模型返回 false，由调用方省略字段。
+// The same model may be served by domestic and international accounts
+// separately, and capabilities need not match. The maximum is not taken here:
+// top-level scalars are only given when sites agree; otherwise they are left
+// empty with per-site details in BySite, and the caller decides how to present
+// them. A model with no trusted data returns false and the caller omits the field.
 func modelCapabilityFor(modelID string) (modelCapability, bool) {
 	modelsMu.RLock()
 	defer modelsMu.RUnlock()
@@ -904,7 +923,7 @@ func modelCapabilityFor(modelID string) (modelCapability, bool) {
 				Default: m.ContextDefaultLength, Options: append([]int(nil), m.ContextLengths...),
 			}
 			if site0.Ceiling <= 0 && site0.MaxOutput <= 0 && site0.Default <= 0 && len(site0.Options) == 0 {
-				break // 该站点没有可信能力数据，不参与汇总
+				break // this site has no trusted capability data; it does not participate in the summary
 			}
 			bySite[site] = site0
 			break
@@ -921,7 +940,7 @@ func modelCapabilityFor(modelID string) (modelCapability, bool) {
 		cap.Options = opts
 	}
 	if len(bySite) > 1 {
-		// 顶层有任一字段没能统一时，给出分站点明细，避免信息丢失。
+		// When any top-level field failed to unify, give per-site details to avoid losing information.
 		for _, site := range catalogSites {
 			v, ok := bySite[site]
 			if !ok {
@@ -951,32 +970,35 @@ func modelProbeVerdict(site, modelID string) string {
 	return modelProbes[probeKey(site, modelID)].Verdict
 }
 
-// modelDisplayMultiplier 生成 monitor 附表的倍率文案。
-// 促销过期只表示折扣结束，倍率回落到 credits 原价，并不等于"价格未知"；
-// 只有实测确认收费、且接口给不出有效倍率时，才显示「收费(倍率未知)」。
+// modelDisplayMultiplier generates the multiplier text for the monitor side table.
+// An expired promo only means the discount ended and the multiplier falls back
+// to the credits base price; it is not the same as "price unknown".
+// Only when a probe confirms paid and the API gives no valid multiplier is
+// "Paid (unknown multiplier)" shown.
 func modelDisplayMultiplier(site, modelID, freeLabel string) string {
-	if freeLabel == "是" {
+	if freeLabel == "Yes" {
 		return "0.00x"
 	}
 	switch modelProbeVerdict(site, modelID) {
 	case "free":
 		return "0.00x"
 	case "paid":
-		return "收费(倍率未知)"
+		return "Paid (unknown multiplier)"
 	}
 	entry, ok := modelEntry(site, modelID)
 	if !ok || !entry.HasMultiplier {
 		return "-"
 	}
-	// 促销已过期时接口的 credits 不可信（上游常把促销价固化在 credits 里），
-	// 探测出结果前按完全未知处理，不展示可能过期的价格。
+	// When the promo has expired, the API's credits are untrusted (upstream often
+	// bakes the promo price into credits); before a probe result exists, treat as
+	// fully unknown and do not show a possibly stale price.
 	if entry.PromoExpired {
 		return "-"
 	}
 	return fmt.Sprintf("%.2fx", entry.Multiplier)
 }
 
-// siteKnownFree 判断某站点该模型是否已确认免费（实测或接口明确 0.00x）。
+// siteKnownFree decides whether the model on a site is confirmed free (probe or explicit API 0.00x).
 func siteKnownFree(site, modelID string) bool {
 	if modelProbeVerdict(site, modelID) == "free" {
 		return true
@@ -987,13 +1009,13 @@ func siteKnownFree(site, modelID string) bool {
 		defer func() {
 			accountMu.Unlock()
 			if skipped > 0 {
-				log.Printf("[站点免费判断] 站点=%s 模型=%s 跳过不可调度账号=%d 有效账号免费记录=%t 说明=空账号、失效标记及缺少凭据的账号不参与判断",
+				log.Printf("[Site free check] site=%s model=%s skipped unschedulable accounts=%d valid account free record=%t note=empty accounts, disabled marks, and accounts missing credentials are excluded",
 					site, modelID, skipped, knownFree)
 			}
 		}()
 		for _, acc := range accounts {
-			// 启动时会载入 .disabled 标记形成无 Auth 的占位账号；
-			// 它们不能参与调度，也不能因历史免费状态影响站点选择。
+			// At startup, .disabled markers are loaded as placeholder accounts without Auth;
+			// they cannot participate in scheduling, nor influence site selection via historical free state.
 			if acc == nil || acc.Disabled || acc.Auth == nil || acc.Auth.Auth.AccessToken == "" {
 				skipped++
 				continue
@@ -1014,7 +1036,7 @@ func siteKnownFree(site, modelID string) bool {
 	return ok && entry.HasMultiplier && entry.Multiplier == 0 && !entry.PromoExpired
 }
 
-// siteKnownPaid 判断某站点该模型是否已确认收费。
+// siteKnownPaid decides whether the model on a site is confirmed paid.
 func siteKnownPaid(site, modelID string) bool {
 	if modelProbeVerdict(site, modelID) == "paid" {
 		return true
@@ -1023,8 +1045,9 @@ func siteKnownPaid(site, modelID string) bool {
 	return ok && entry.HasMultiplier && entry.Multiplier > 0
 }
 
-// preferredFreeSites 返回"应优先使用的免费站点"集合：
-// 仅当出现「一个站点免费、另一个站点收费」时启用优先；都免费或都收费则不搞优先。
+// preferredFreeSites returns the set of "free sites that should be preferred":
+// priority only applies when "one site is free and another is paid"; when both
+// are free or both are paid there is no priority.
 func preferredFreeSites(modelID string) map[string]bool {
 	var free, paid []string
 	for _, site := range catalogSites {
@@ -1055,18 +1078,18 @@ func modelSourceLabel(source string) string {
 	return "live-api@" + source
 }
 
-// modelNeedsProbe 判断某站点该模型是否需要价格探测。
+// modelNeedsProbe decides whether a model on a site needs a price probe.
 func modelNeedsProbe(site, modelID string, requests int64) bool {
 	entry, ok := modelEntry(site, modelID)
 	if !ok || !entry.FromLive {
-		// 不在实时接口目录中：只探测被实际请求过的模型，避免白白消耗额度。
+		// Not in the live API catalog: probe only models actually requested, to avoid burning quota for nothing.
 		return requests > 0
 	}
 	return entry.HasMultiplier && entry.Multiplier == 0 && entry.PromoExpired
 }
 
 // -----------------------------------------------------------------------------
-// 同步
+// Sync
 // -----------------------------------------------------------------------------
 
 func refreshModelsOnce(schedule ...time.Time) {
@@ -1077,7 +1100,7 @@ func refreshModelsOnce(schedule ...time.Time) {
 	trace, started := startScheduledTask("model_catalog", next)
 	version, verErr := fetchNPMCatalogVersion()
 	if verErr != nil {
-		log.Printf("[Models] npm 版本查询失败（仅影响 npm 兜底来源）: %v", verErr)
+		log.Printf("[Models] npm version query failed (only affects the npm fallback source): %v", verErr)
 	}
 
 	prev, prevSource := catalogSnapshot()
@@ -1089,20 +1112,20 @@ func refreshModelsOnce(schedule ...time.Time) {
 		liveOK, npmOK := false, false
 
 		if models, promos, err := fetchLiveCatalog(site); err != nil {
-			failures = append(failures, fmt.Sprintf("%s/接口: %v", site, err))
-			log.Printf("[Models] 实时目录失败：站点=%s，原因=%v", site, err)
+			failures = append(failures, fmt.Sprintf("%s/API: %v", site, err))
+			log.Printf("[Models] live catalog failed: site=%s, reason=%v", site, err)
 		} else {
 			live, liveOK = models, true
-			log.Printf("[Models] 实时目录成功：站点=%s，模型数=%d，生效促销=%d", site, len(models), promos)
+			log.Printf("[Models] live catalog succeeded: site=%s, model count=%d, active promos=%d", site, len(models), promos)
 		}
 
 		if version != "" {
 			if models, transport, err := fetchNPMCatalog(version, npmCatalogFiles[site]); err != nil {
 				failures = append(failures, fmt.Sprintf("%s/npm: %v", site, err))
-				log.Printf("[Models] npm 目录失败：站点=%s，原因=%v", site, err)
+				log.Printf("[Models] npm catalog failed: site=%s, reason=%v", site, err)
 			} else {
 				npm, npmOK = models, true
-				log.Printf("[Models] npm 目录成功：站点=%s，模型数=%d，来源=%s", site, len(models), transport)
+				log.Printf("[Models] npm catalog succeeded: site=%s, model count=%d, source=%s", site, len(models), transport)
 			}
 		}
 
@@ -1116,15 +1139,16 @@ func refreshModelsOnce(schedule ...time.Time) {
 		default:
 			if cached, ok := prev[site]; ok && len(cached) > 0 {
 				fetched[site] = cached
-				log.Printf("[Models] 站点=%s 两路来源均失败，沿用缓存（模型数=%d）", site, len(cached))
+				log.Printf("[Models] site=%s both sources failed, keeping cache (model count=%d)", site, len(cached))
 			} else {
-				log.Printf("[Models] 站点=%s 两路来源均失败且无缓存，该站点本次不展示模型", site)
+				log.Printf("[Models] site=%s both sources failed and no cache; this site shows no models this round", site)
 			}
 		}
 	}
 
-	// 能力信息覆盖情况：只在目录刷新时记录一次，不随 /v1/models 逐次打印，
-	// 便于人工核对「哪些模型有可信上下文/输出能力、哪些站点还缺」。
+	// Capability coverage: logged once per catalog refresh, not on each /v1/models
+	// call, so humans can audit "which models have trusted context/output
+	// capabilities and which sites are still missing".
 	for _, site := range catalogSites {
 		models, ok := fetched[site]
 		if !ok {
@@ -1142,12 +1166,12 @@ func refreshModelsOnce(schedule ...time.Time) {
 				output++
 			}
 		}
-		log.Printf("[模型能力] traceId=%s 站点=%s 模型数=%d 有上下文上限=%d 有可选档位=%d 有输出上限=%d 说明=仅记录目录覆盖情况，不注入上游参数、不改变输出预算", trace, site, len(models), ceiling, options, output)
+		log.Printf("[Model capability] traceId=%s site=%s model count=%d with context ceiling=%d with selectable tiers=%d with output ceiling=%d note=records catalog coverage only; no upstream parameters injected and no output budget changed", trace, site, len(models), ceiling, options, output)
 	}
 
 	if len(fetched) == 0 {
-		logScheduledTask("model_catalog", "completed", "failed", trace, started, next, "两路目录都不可用，保留原状态")
-		log.Printf("[Models] 无任何可用目录数据，保留原状态；失败详情: %s", strings.Join(failures, " | "))
+		logScheduledTask("model_catalog", "completed", "failed", trace, started, next, "both catalogs unavailable, keeping prior state")
+		log.Printf("[Models] no usable catalog data at all, keeping prior state; failure details: %s", strings.Join(failures, " | "))
 		return
 	}
 
@@ -1166,14 +1190,15 @@ func refreshModelsOnce(schedule ...time.Time) {
 	modelsMu.Lock()
 	catalogModels = fetched
 	dynamicSource = source
-	// 接口重新给出 0.00x 且促销未过期（或本就无促销）时，清除"收费"判定恢复免费。
+	// When the API reports 0.00x again and the promo is not expired (or there never
+	// was one), clear the "paid" verdict and restore Free.
 	for site, models := range fetched {
 		for _, m := range models {
 			if m.HasMultiplier && m.Multiplier == 0 && !m.PromoExpired {
 				key := probeKey(site, m.ID)
 				if p, ok := modelProbes[key]; ok && p.Verdict == "paid" {
 					delete(modelProbes, key)
-					log.Printf("[Models] 站点=%s 模型=%s 接口重新给出 0.00x，清除收费判定", site, m.ID)
+					log.Printf("[Models] site=%s model=%s API reported 0.00x again, clearing paid verdict", site, m.ID)
 				}
 			}
 		}
@@ -1191,7 +1216,7 @@ func refreshModelsOnce(schedule ...time.Time) {
 	if len(failures) > 0 || verErr != nil || cacheErr != nil {
 		status = "partial"
 	}
-	logScheduledTask("model_catalog", "completed", status, trace, started, next, fmt.Sprintf("可用目录=%d，来源失败=%d，npm版本查询失败=%t，缓存写入失败=%t", len(fetched), len(failures), verErr != nil, cacheErr != nil))
+	logScheduledTask("model_catalog", "completed", status, trace, started, next, fmt.Sprintf("usable catalogs=%d, failed sources=%d, npm version query failed=%t, cache write failed=%t", len(fetched), len(failures), verErr != nil, cacheErr != nil))
 }
 
 func requestModelsScan() {
@@ -1201,7 +1226,7 @@ func requestModelsScan() {
 	}
 }
 
-// requestModelsProbe 触发一轮价格探测（目录变化、凭据变化、重置后调用）。
+// requestModelsProbe triggers a round of price probing (called on catalog changes, credential changes, after reset).
 func requestModelsProbe() {
 	select {
 	case modelProbeTrigger <- struct{}{}:
@@ -1217,39 +1242,40 @@ func modelsRefreshLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	next := time.Now().Add(interval)
-	logScheduledTask("model_catalog", "scheduled", "", newTraceID(), time.Time{}, next, "目录刷新完成后开始定时间隔")
+	logScheduledTask("model_catalog", "scheduled", "", newTraceID(), time.Time{}, next, "fixed interval starts after the catalog refresh completes")
 	for {
 		select {
 		case tick := <-ticker.C:
 			next = tick.Add(interval)
 			refreshModelsOnce(next)
 		case <-modelsScanTrigger:
-			log.Printf("[Models] 账号池发生变化，立即刷新模型目录")
+			log.Printf("[Models] account pool changed, refreshing model catalog immediately")
 			refreshModelsOnce(next)
 		}
 	}
 }
 
-// modelPriceProbeLoop 周期性为「需要确认价格」的模型做真实探测。
-// modelPriceProbeLoop 周期性执行价格探测。
-// 首轮在启动后很快执行；只要仍有待探测模型就用较短间隔追赶，收敛后回到长间隔。
+// modelPriceProbeLoop periodically runs real probes for models that "need price confirmation".
+// modelPriceProbeLoop periodically runs price probes.
+// The first round runs shortly after startup; while models remain pending it
+// catches up with a shorter interval, returning to the long interval once converged.
 func modelPriceProbeLoop() {
 	trace := newTraceID()
 	if !cfg.automaticPriceProbesAllowed() {
-		reason := "默认关闭，未显式指定-allow-price-probes=true"
+		reason := "disabled by default; -allow-price-probes=true not explicitly set"
 		if cfg.DisablePriceProbes {
-			reason = "兼容旧参数-disable-price-probes=true，禁用优先"
+			reason = "legacy disable takes precedence: -disable-price-probes=true"
 		}
-		logScheduledTask("price_probe", "disabled", "disabled", trace, time.Time{}, time.Time{}, reason+"；不会自动请求模型，不消耗后台价格探测积分")
-		log.Printf("[ModelPrice] traceId=%s 阶段=自动探测调度 allowPriceProbes=%t legacyDisablePriceProbes=%t 结果=已关闭 原因=%s 业务影响=不会自动请求模型，客户端请求、目录刷新和显式probe不受影响",
+		logScheduledTask("price_probe", "disabled", "disabled", trace, time.Time{}, time.Time{}, reason+"; no model requests are made automatically and no credits are spent on background price probes")
+		log.Printf("[ModelPrice] traceId=%s stage=auto probe scheduling allowPriceProbes=%t legacyDisablePriceProbes=%t result=disabled reason=%s business impact=no model requests are made automatically; client requests, catalog refresh, and explicit probes are unaffected",
 			trace, cfg.AllowPriceProbes, cfg.DisablePriceProbes, reason)
 		return
 	}
-	log.Printf("[ModelPrice] traceId=%s 阶段=自动探测调度 allowPriceProbes=%t legacyDisablePriceProbes=%t 结果=已开启 原因=显式指定-allow-price-probes 费用警告=将发起真实模型生成请求，可能消耗积分；没有累计积分预算限制",
+	log.Printf("[ModelPrice] traceId=%s stage=auto probe scheduling allowPriceProbes=%t legacyDisablePriceProbes=%t result=enabled reason=-allow-price-probes explicitly set cost warning=will issue real model generation requests that may consume credits; no cumulative credit budget limit",
 		trace, cfg.AllowPriceProbes, cfg.DisablePriceProbes)
 	timer := time.NewTimer(modelPriceProbeStartDelay)
 	defer timer.Stop()
-	logScheduledTask("price_probe", "scheduled", "", trace, time.Time{}, time.Now().Add(modelPriceProbeStartDelay), "显式开启，真实请求可能消耗积分；启动后20秒首轮；无候选模型时不生成请求")
+	logScheduledTask("price_probe", "scheduled", "", trace, time.Time{}, time.Now().Add(modelPriceProbeStartDelay), "explicitly enabled; real requests may consume credits; first round 20 seconds after startup; no requests generated when there are no candidate models")
 	for {
 		select {
 		case <-timer.C:
@@ -1261,11 +1287,11 @@ func modelPriceProbeLoop() {
 			next = modelPriceProbeCatchUp
 		}
 		timer.Reset(next)
-		logScheduledTask("price_probe", "scheduled", "", newTraceID(), time.Time{}, time.Now().Add(next), "按待探测情况2分钟或30分钟；同站点模型受12小时限制")
+		logScheduledTask("price_probe", "scheduled", "", newTraceID(), time.Time{}, time.Now().Add(next), "2 or 30 minutes depending on pending probes; same-site models limited to 12 hours")
 	}
 }
 
-// modelPendingProbeCount 统计当前仍需要探测（且已过探测间隔）的 站点+模型 数量。
+// modelPendingProbeCount counts the site+model pairs still needing a probe (past the probe interval).
 func modelPendingProbeCount() int {
 	ids, _ := mergedModelIDs()
 	now := time.Now()
@@ -1290,8 +1316,9 @@ func modelPendingProbeCount() int {
 	return pending
 }
 
-// modelProbeBatchSize 返回本轮探测数量：首次（尚无任何探测记录）时放大，
-// 让新安装 / 重置后能尽快得到结论；之后回到常规批量。
+// modelProbeBatchSize returns the batch size for this round: enlarged on the
+// first round (no probe records yet) so new installs / resets converge quickly;
+// afterwards back to the regular batch.
 func modelProbeBatchSize() int {
 	modelsMu.RLock()
 	n := len(modelProbes)
@@ -1306,7 +1333,7 @@ func modelPriceProbeOnce() {
 	trace, started := startScheduledTask("price_probe", time.Time{})
 	ids, _ := mergedModelIDs()
 	if len(ids) == 0 {
-		logScheduledTask("price_probe", "completed", "skipped", trace, started, time.Time{}, "目录为空，没有探测请求")
+		logScheduledTask("price_probe", "completed", "skipped", trace, started, time.Time{}, "catalog is empty; no probe requests")
 		return
 	}
 	now := time.Now()
@@ -1348,7 +1375,7 @@ func modelPriceProbeOnce() {
 			if verdict == "" || cacheErr != nil {
 				failed++
 			}
-			log.Printf("[ModelPrice] 站点=%s 账号=%s 模型=%s -> verdict=%s credit=%s tokens=%d (%s)",
+			log.Printf("[ModelPrice] site=%s account=%s model=%s -> verdict=%s credit=%s tokens=%d (%s)",
 				site, acc.Path, id, p.Verdict, formatQuota(credit), tokens, detail)
 			done++
 		}
@@ -1364,13 +1391,14 @@ func modelPriceProbeOnce() {
 	} else if failed > 0 {
 		status = "partial"
 	}
-	logScheduledTask("price_probe", "completed", status, trace, started, time.Time{}, fmt.Sprintf("探测=%d，结论或缓存异常=%d", done, failed))
+	logScheduledTask("price_probe", "completed", status, trace, started, time.Time{}, fmt.Sprintf("probes=%d, verdict or cache errors=%d", done, failed))
 }
 
-// pickProbeAccount 选择同站点账号用于价格探测。
-// 优先「已知有余额」的账号；没有时退而使用「额度未知」的账号（例如额度接口
-// 返回 20017 无权限的账号）——探测若命中 14018 只会被忽略，不会污染判定。
-// 仅跳过「已知耗尽」与失效账号。
+// pickProbeAccount selects a same-site account for price probing.
+// Prefers accounts "known to have balance"; otherwise falls back to accounts
+// with "unknown quota" (e.g. accounts whose quota API returns 20017 no
+// permission) — a probe hitting 14018 is ignored and never pollutes the verdict.
+// Only "known exhausted" and disabled accounts are skipped.
 func pickProbeAccount(site string) *Account {
 	return pickProbeAccountForModel(site, "")
 }
@@ -1387,14 +1415,14 @@ func pickProbeAccountForModel(site, model string) *Account {
 			continue
 		}
 		if allowed, reason := modelAccountAllowed(model, acc, accounts); !allowed {
-			log.Printf("[ModelPrice] 站点=%s 模型=%s 凭据=%s 结果=跳过 原因=账号名单%s", site, model, filepath.Base(acc.Path), reason)
+			log.Printf("[ModelPrice] site=%s model=%s credential=%s result=skipped reason=account allowlist%s", site, model, filepath.Base(acc.Path), reason)
 			continue
 		}
 		if acc.QuotaKnown {
 			if acc.QuotaUnlimited || acc.QuotaRemaining > 0 {
 				return acc
 			}
-			continue // 已知耗尽，跳过
+			continue // known exhausted, skip
 		}
 		if unknownQuota == nil {
 			unknownQuota = acc
@@ -1403,23 +1431,23 @@ func pickProbeAccountForModel(site, model string) *Account {
 	return unknownQuota
 }
 
-// probeModelPrice 发一次最小请求判定免费/收费；不修改账号调度状态。
-// 返回 verdict（free|paid|""）、credit、tokens、说明。
+// probeModelPrice sends one minimal request to decide free/paid; it does not modify account scheduling state.
+// Returns verdict (free|paid|""), credit, tokens, and note.
 func probeModelPrice(acc *Account, model string) (string, float64, int64, string) {
 	if !lockAccountWithContext(context.Background(), &acc.lock) {
-		return "", 0, 0, "等待账号锁失败"
+		return "", 0, 0, "failed to acquire account lock"
 	}
 	defer acc.lock.Unlock()
 
 	accountMu.Lock()
 	if allowed, reason := modelAccountAllowed(model, acc, accounts); !allowed {
 		accountMu.Unlock()
-		log.Printf("[ModelPrice] traceId=%s 模型=%s 凭据=%s 结果=跳过 原因=%s 说明=等待账号锁后重新检查热配置，未调用上游", newTraceID(), model, filepath.Base(acc.Path), reason)
-		return "", 0, 0, "账号名单排除：" + reason
+		log.Printf("[ModelPrice] traceId=%s model=%s credential=%s result=skipped reason=%s note=hot config re-checked after acquiring the account lock; upstream not called", newTraceID(), model, filepath.Base(acc.Path), reason)
+		return "", 0, 0, "excluded by account allowlist: " + reason
 	}
 	if acc.Disabled || acc.Auth == nil {
 		accountMu.Unlock()
-		return "", 0, 0, "账号不可用"
+		return "", 0, 0, "account unavailable"
 	}
 	auth := *acc.Auth
 	prof := acc.Profile()
@@ -1444,7 +1472,7 @@ func probeModelPrice(acc *Account, model string) (string, float64, int64, string
 	backendHeaders(req, &auth, prof)
 	resp, err := cfg.HttpClient.Do(req)
 	if err != nil {
-		return "", 0, 0, "请求失败: " + err.Error()
+		return "", 0, 0, "request failed: " + err.Error()
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -1452,29 +1480,29 @@ func probeModelPrice(acc *Account, model string) (string, float64, int64, string
 		s := string(body)
 		switch {
 		case isQuotaExhausted(resp.StatusCode, s):
-			return "", 0, 0, "14018 额度耗尽，不覆盖"
+			return "", 0, 0, "14018 quota exhausted, not overriding"
 		case isModelRateLimited(s):
-			return "", 0, 0, "6004 模型限流，不覆盖"
+			return "", 0, 0, "6004 model rate limited, not overriding"
 		default:
-			return "", 0, 0, fmt.Sprintf("HTTP %d，不覆盖", resp.StatusCode)
+			return "", 0, 0, fmt.Sprintf("HTTP %d, not overriding", resp.StatusCode)
 		}
 	}
 	usage := readUsageFromSSE(resp.Body)
 	credit, ok := usageCredit(usage)
 	if !ok {
-		return "", 0, 0, "无 usage.credit，不覆盖"
+		return "", 0, 0, "no usage.credit, not overriding"
 	}
 	tokens, _ := usageTotalTokens(usage)
 	if credit > 0 {
-		return "paid", credit, tokens, "usage.credit>0 收费"
+		return "paid", credit, tokens, "usage.credit>0 paid"
 	}
 	if tokens < modelFreeMinTokens {
-		return "", credit, tokens, "credit=0 但样本过小，不判定"
+		return "", credit, tokens, "credit=0 but sample too small, no verdict"
 	}
-	return "free", credit, tokens, "usage.credit=0 免费"
+	return "free", credit, tokens, "usage.credit=0 free"
 }
 
-// sortModelsForDisplay 保持稳定顺序：先实时接口顺序，再按 ID。
+// sortModelsForDisplay keeps a stable order: live API order first, then by ID.
 func sortModelsForDisplay(models []catalogModel) []catalogModel {
 	out := append([]catalogModel(nil), models...)
 	sort.SliceStable(out, func(i, j int) bool {

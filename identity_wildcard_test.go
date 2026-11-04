@@ -20,7 +20,7 @@ func TestIdentityWildcardAnchoredAndBounded(t *testing.T) {
 		{"provided_example", "You are Grok released by xAI. Keep the task.", "You are WorkBuddy. Keep the task."},
 		{"custom_model", "You are Gemini 2.5 Pro released by xAI.\nKeep all tools.", "You are WorkBuddy.\nKeep all tools."},
 		{"empty_dynamic", "You arereleased by xAI. Keep.", "You are WorkBuddy. Keep."},
-		{"unicode", "You are 助手🚀 released by xAI. 保留指令。", "You are WorkBuddy. 保留指令。"},
+		{"unicode", "You are assistant🚀 released by xAI. Keep instructions.", "You are WorkBuddy. Keep instructions."},
 		{"first_suffix_only", "You are A released by xAI. Text released by xAI. Keep.", "You are WorkBuddy. Text released by xAI. Keep."},
 		{"middle", "Example: You are Grok released by xAI.", "Example: You are Grok released by xAI."},
 		{"leading_space", " You are Grok released by xAI.", " You are Grok released by xAI."},
@@ -202,7 +202,7 @@ func TestIdentityWildcardConfigHotReloadAndInvalidRuleAudit(t *testing.T) {
 			t.Fatalf("hot reload output=%q want=%q", got, tc.want)
 		}
 		if i == 0 || i == 3 {
-			if !strings.Contains(output.String(), "[替换规则告警]") {
+			if !strings.Contains(output.String(), "[Replacement rule warning]") {
 				t.Fatal("invalid rule must have a metadata-only warning")
 			}
 		}

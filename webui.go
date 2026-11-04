@@ -20,8 +20,8 @@ import (
 	"time"
 )
 
-// WebUI 是独立端口的管理台：鉴权设置、账号/模型开关允许受控写入配置。
-// 开关通过配置名单影响调度，不删除凭据、不改变历史统计；凭据令牌一律脱敏。
+// WebUI is the admin console on a dedicated port: auth settings and account/model toggles allow controlled config writes.
+// Toggles affect scheduling through the config allowlist/blocklist; they never delete credentials or change historical stats; credential tokens are always masked.
 //
 //go:embed web/index.html web/app.js web/style.css
 var webFS embed.FS
@@ -31,19 +31,19 @@ const (
 	webUIPrefixSlash = "/ui/"
 )
 
-// webuiEnabled 返回当前进程是否启用管理台。
+// webuiEnabled reports whether the current process has the admin console enabled.
 func webuiEnabled() bool { return cfg.WebUI }
 
-// 管理 Key 可在首次本机访问时初始化，不能再强制开启模型 API 鉴权。
+// The admin Key can be initialized on first local access; it can never force-enable model API auth.
 func webUIPreflightError() error {
 	if cfg.WebUI && cfg.Port == cfg.WebPort {
-		return errors.New("API 与 Web 端口不能相同")
+		return errors.New("API and Web ports must not be the same")
 	}
 	return nil
 }
 
-// webUIIsExemptPath 判断该路径是否属于「无数据的静态外壳」，可免 API 密钥访问。
-// 只有 /ui 与 /ui/ 下的静态资源免鉴权；/admin/api/* 一律需要密钥。
+// webUIIsExemptPath reports whether the path belongs to the "data-free static shell" and may be accessed without an API key.
+// Only static assets under /ui and /ui/ are exempt from auth; /admin/api/* always requires a key.
 func webUIIsExemptPath(p string) bool {
 	if !webuiEnabled() {
 		return false
@@ -51,7 +51,7 @@ func webUIIsExemptPath(p string) bool {
 	return p == webUIPrefix || p == webUIPrefixSlash || strings.HasPrefix(p, webUIPrefixSlash)
 }
 
-// registerWebUIRoutes 注册静态资源、只读数据与受鉴权保护的配置写入路由。
+// registerWebUIRoutes registers static assets, read-only data, and auth-protected config write routes.
 func registerWebUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webUIPrefix, handleWebUIIndex)
 	mux.HandleFunc(webUIPrefixSlash, handleWebUIIndex)
@@ -78,7 +78,7 @@ func registerWebUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/api/account-delete", handleWebUIAccountDelete)
 }
 
-// 只读日志视图：无额外调度器、任务状态文件或内存任务登记表。
+// Read-only log view: no extra scheduler, task status file, or in-memory task registry.
 type scheduledTaskEvent struct {
 	Task      string `json:"task"`
 	Phase     string `json:"phase"`
@@ -117,17 +117,17 @@ const taskLogReadBudget int64 = 16 << 20
 func taskViewDefinitions() []scheduledTaskView {
 	keepaliveEnabled := len(cfg.KeepaliveHours) > 0
 	return []scheduledTaskView{
-		{ID: "config_reload", Name: "配置热加载", Schedule: "每1秒；高频日志每60秒汇总", Enabled: true, IntervalSeconds: 1},
-		{ID: "credential_reload", Name: "凭据文件扫描", Schedule: fmt.Sprintf("每%d秒；高频日志每60秒汇总", cfg.ReloadInterval), Enabled: cfg.ReloadInterval > 0, IntervalSeconds: int64(cfg.ReloadInterval)},
-		{ID: "status_snapshot", Name: "状态快照写入", Schedule: "每3秒；高频日志每60秒汇总", Enabled: true, IntervalSeconds: 3},
-		{ID: "token_check", Name: "令牌有效期检查", Schedule: "每5分钟；临近过期才续期", Enabled: true, IntervalSeconds: 300},
-		{ID: "keepalive", Name: "主动续期保活", Schedule: "每日 " + formatKeepaliveHours(cfg.KeepaliveHours) + "（服务器本地时间）", Enabled: keepaliveEnabled},
-		{ID: "keepalive_catchup", Name: "启动续期补跑", Schedule: "启动后90秒；只处理久未续期账号", Enabled: keepaliveEnabled, OneShot: true},
-		{ID: "quota_scan", Name: "额度及套餐查询", Schedule: "每5分钟；启动/事件可能提前触发", Enabled: true, IntervalSeconds: 300},
-		{ID: "daily_checkin", Name: "每日签到", Schedule: "每日上午随机时间签到", Enabled: true},
-		{ID: "model_catalog", Name: "模型目录刷新", Schedule: fmt.Sprintf("每%d分钟；启动/事件可能提前触发", cfg.ModelsRefresh), Enabled: cfg.ModelsRefresh > 0, IntervalSeconds: int64(cfg.ModelsRefresh) * 60},
-		{ID: "price_probe", Name: "模型价格探测", Schedule: "仅-allow-price-probes开启；启动后20秒；随后2或30分钟；单模型12小时限制", Enabled: cfg.automaticPriceProbesAllowed()},
-		{ID: "log_cleanup", Name: "过期日志清理", Schedule: fmt.Sprintf("每小时；保留%d天，规则变化会提前执行", logRetentionDays.Load()), Enabled: logRetentionDays.Load() > 0, IntervalSeconds: 3600},
+		{ID: "config_reload", Name: "Config hot reload", Schedule: "every 1s; high-frequency logs aggregated every 60s", Enabled: true, IntervalSeconds: 1},
+		{ID: "credential_reload", Name: "Credential file scan", Schedule: fmt.Sprintf("every %ds; high-frequency logs aggregated every 60s", cfg.ReloadInterval), Enabled: cfg.ReloadInterval > 0, IntervalSeconds: int64(cfg.ReloadInterval)},
+		{ID: "status_snapshot", Name: "Status snapshot write", Schedule: "every 3s; high-frequency logs aggregated every 60s", Enabled: true, IntervalSeconds: 3},
+		{ID: "token_check", Name: "Token validity check", Schedule: "every 5 minutes; renews only when close to expiry", Enabled: true, IntervalSeconds: 300},
+		{ID: "keepalive", Name: "Proactive renewal keepalive", Schedule: "daily " + formatKeepaliveHours(cfg.KeepaliveHours) + " (server local time)", Enabled: keepaliveEnabled},
+		{ID: "keepalive_catchup", Name: "Startup renewal catch-up", Schedule: "90s after startup; only handles long-unrenewed accounts", Enabled: keepaliveEnabled, OneShot: true},
+		{ID: "quota_scan", Name: "Quota and plan query", Schedule: "every 5 minutes; startup/events may trigger earlier", Enabled: true, IntervalSeconds: 300},
+		{ID: "daily_checkin", Name: "Daily checkin", Schedule: "random time each morning", Enabled: true},
+		{ID: "model_catalog", Name: "Model catalog refresh", Schedule: fmt.Sprintf("every %d minutes; startup/events may trigger earlier", cfg.ModelsRefresh), Enabled: cfg.ModelsRefresh > 0, IntervalSeconds: int64(cfg.ModelsRefresh) * 60},
+		{ID: "price_probe", Name: "Model price probe", Schedule: "enabled only with -allow-price-probes; 20s after startup; then 2 or 30 minutes; 12-hour per-model limit", Enabled: cfg.automaticPriceProbesAllowed()},
+		{ID: "log_cleanup", Name: "Expired log cleanup", Schedule: fmt.Sprintf("hourly; retains %d days, runs early when rules change", logRetentionDays.Load()), Enabled: logRetentionDays.Load() > 0, IntervalSeconds: 3600},
 	}
 }
 
@@ -157,7 +157,7 @@ func aggregateTaskViews(events []scheduledTaskEvent, now time.Time, pid int, boo
 			if newStart == 0 {
 				newStart = event.At
 			}
-			// 旧轮次稍后结束不能覆盖已经启动的新轮次。
+			// A later finish of an old round must not overwrite an already-started new round.
 			if newStart > oldStart || newStart == oldStart && event.At >= execution.At {
 				execution = event
 			}
@@ -181,7 +181,7 @@ func aggregateTaskViews(events []scheduledTaskEvent, now time.Time, pid int, boo
 			}
 		} else if !row.Enabled {
 			row.Status = "disabled"
-			row.Detail = "当前配置关闭该任务"
+			row.Detail = "Task disabled by current config"
 		}
 		if row.Enabled && schedule.NextAt > 0 && schedule.Phase != "disabled" {
 			next := schedule.NextAt
@@ -193,7 +193,7 @@ func aggregateTaskViews(events []scheduledTaskEvent, now time.Time, pid int, boo
 				row.NextEstimated = true
 			} else if next <= now.UnixMilli() {
 				next = 0
-				row.Detail += "；计划时间已过，等待新的调度日志"
+				row.Detail += "; scheduled time has passed, waiting for new schedule logs"
 			}
 			row.NextRunAt = next / 1000
 		}
@@ -237,7 +237,7 @@ func readTaskEvents() ([]scheduledTaskEvent, int64, bool, error) {
 		st, err := f.Stat()
 		if err != nil || !st.Mode().IsRegular() {
 			f.Close()
-			return nil, scanned, true, errors.New("任务日志不是可读普通文件")
+			return nil, scanned, true, errors.New("task log is not a readable regular file")
 		}
 		size := min(st.Size(), budget)
 		data := make([]byte, int(size))
@@ -248,7 +248,7 @@ func readTaskEvents() ([]scheduledTaskEvent, int64, bool, error) {
 			return nil, scanned, true, readErr
 		}
 		if int64(count) != size {
-			return nil, scanned, true, errors.New("任务日志读取期间被截断，请重试")
+			return nil, scanned, true, errors.New("task log was truncated during read, please retry")
 		}
 		scanned += size
 		if start > 0 {
@@ -260,12 +260,18 @@ func readTaskEvents() ([]scheduledTaskEvent, int64, bool, error) {
 			}
 		}
 		for _, line := range bytes.Split(data, []byte{'\n'}) {
-			marker := bytes.Index(line, []byte("[定时任务] "))
+			marker := bytes.Index(line, []byte("[Scheduled task] "))
+			markerLen := len("[Scheduled task] ")
+			if marker < 0 {
+				// Legacy Chinese tag from logs written before the migration.
+				marker = bytes.Index(line, []byte("[\u5b9a\u65f6\u4efb\u52a1] "))
+				markerLen = len("[\u5b9a\u65f6\u4efb\u52a1] ")
+			}
 			if marker < 0 {
 				continue
 			}
 			var event scheduledTaskEvent
-			if json.Unmarshal(line[marker+len("[定时任务] "):], &event) != nil || event.Task == "" || event.At <= 0 {
+			if json.Unmarshal(line[marker+markerLen:], &event) != nil || event.Task == "" || event.At <= 0 {
 				continue
 			}
 			event.File = name
@@ -279,10 +285,11 @@ func readTaskEvents() ([]scheduledTaskEvent, int64, bool, error) {
 }
 
 // -----------------------------------------------------------------------------
-// 倍率来源（只读日志视图）
+// Rate sources (read-only log view)
 //
-// 与定时任务页同源：不新增调度器、状态文件或账本，全部从现有普通日志解析。
-// 日志里没有任何记录的模型，页面直接显示「没有日志」，不猜测来源。
+// Same source as the scheduled-tasks page: no new scheduler, status file, or
+// ledger; everything is parsed from the existing normal logs.
+// Models with no log records show "No logs" on the page directly; sources are never guessed.
 // -----------------------------------------------------------------------------
 
 type rateLogRecord struct {
@@ -299,28 +306,28 @@ type rateLogRecord struct {
 	LogLine   string `json:"logLine"`
 }
 
-// 优先级与 modelDisplayMultiplier 的取值顺序一致，保证「感叹号」解释的是控制台真正显示的那个值。
+// Priority order matches modelDisplayMultiplier's evaluation order, ensuring the "exclamation mark" explains the value the console actually displays.
 const (
 	ratePriorityLearnedFree = 1
 	ratePriorityProbeFree   = 2
 	ratePriorityProbePaid   = 3
 	ratePriorityPromoStale  = 4
 	ratePriorityOfficial    = 6
-	// 正常请求实测「收费」不参与取值（页面仍展示官方倍率），仅作为佐证列出。
+	// Live-request "paid" verdicts do not participate in value selection (the page still shows the official multiplier); they are listed only as corroboration.
 	ratePriorityLearnedPaid = 7
 )
 
 var (
-	rateOfficialRe   = regexp.MustCompile(`\[Models\] 官方倍率 站点=(\S+) 模型=(\S+) 原始credits="([^"]*)" 生效倍率=(\S+) 有倍率=(\S+) 促销="([^"]*)" 促销截止="([^"]*)" 促销已过期=(\S+) 来源=(\S+) 刷新时间=(\S+)`)
-	rateProbeCacheRe = regexp.MustCompile(`\[ModelPrice\] 载入缓存结论 站点=(\S+) 模型=(\S+) 判定=(\S+) credit=(\S+) tokens=(\d+) 探测时间=(\S+) 说明=(.*?) 来源=缓存文件`)
-	rateProbeLiveRe  = regexp.MustCompile(`\[ModelPrice\] 站点=(\S+) 账号=(\S+) 模型=(\S+) -> verdict=(\S+) credit=(\S+) tokens=(\d+) \((.*)\)\s*$`)
-	rateLearnedRe    = regexp.MustCompile(`\[ModelCost\] requestId=\d+ 账号 (\S+) 站点=(\S+) 模型 (\S+) 实测 usage\.credit=(\S+?)，已学习为(免费|收费)模型`)
-	rateProbeModeRe  = regexp.MustCompile(`\[ModelPrice\] .*阶段=自动探测调度 .*结果=(已关闭|已开启)`)
+	rateOfficialRe   = regexp.MustCompile(`\[Models\] official multiplier site=(\S+) model=(\S+) rawCredits="([^"]*)" effectiveMultiplier=(\S+) hasMultiplier=(\S+) promo="([^"]*)" promoEnds="([^"]*)" promoExpired=(\S+) source=(.*?) refreshedAt=(\S+)`)
+	rateProbeCacheRe = regexp.MustCompile(`\[ModelPrice\] cached verdict site=(\S+) model=(\S+) verdict=(\S+) credit=(\S+) tokens=(\d+) probeTime=(\S+) note=(.*?) source=cache file`)
+	rateProbeLiveRe  = regexp.MustCompile(`\[ModelPrice\] site=(\S+) account=(\S+) model=(\S+) -> verdict=(\S+) credit=(\S+) tokens=(\d+) \((.*)\)\s*$`)
+	rateLearnedRe    = regexp.MustCompile(`\[ModelCost\] requestId=\d+ account (\S+) site=(\S+) model (\S+) live usage\.credit=(\S+?), learned as (free|paid) model`)
+	rateProbeModeRe  = regexp.MustCompile(`\[ModelPrice\] .*stage=auto probe scheduling .*result=(disabled|enabled)`)
 )
 
 const rateLogReadBudget int64 = 16 << 20
 
-// rateMaxOtherRecords 是「其他记录」最多列出的条数，避免同一结论重复刷屏。
+// rateMaxOtherRecords caps how many "other records" are listed, avoiding repeated spam of the same conclusion.
 const rateMaxOtherRecords = 4
 
 func logLineTime(line string) int64 {
@@ -338,16 +345,17 @@ func probeValue(verdict string) (string, bool, int) {
 	case "free":
 		return "0.00x", false, ratePriorityProbeFree
 	case "paid":
-		return "收费(倍率未知)", true, ratePriorityProbePaid
+		return "Paid (unknown multiplier)", true, ratePriorityProbePaid
 	default:
 		return "-", true, ratePriorityProbePaid
 	}
 }
 
 func parseRateLine(line, file string) (rateLogRecord, bool) {
-	// 先用三次子串判断挡掉绝大多数无关日志：脱敏正则和时间解析都很贵，
-	// 不能对每一行都做，否则大日志下接口会超过调用方超时。
-	if !strings.Contains(line, "[Models] 官方倍率") &&
+	// Use three substring checks first to reject the vast majority of irrelevant lines: the
+	// redaction regex and time parsing are expensive and cannot run on every line, or the
+	// endpoint would exceed the caller's timeout on large logs.
+	if !strings.Contains(line, "[Models] official multiplier") &&
 		!strings.Contains(line, "[ModelPrice]") &&
 		!strings.Contains(line, "[ModelCost]") {
 		return rateLogRecord{}, false
@@ -361,24 +369,24 @@ func parseRateLine(line, file string) (rateLogRecord, bool) {
 		record := base
 		record.LogLine = redactSensitiveText(line)
 		record.Site, record.Model = m[1], m[2]
-		record.Source = "官方目录（" + m[9] + "）"
+		record.Source = "Official catalog (" + m[9] + ")"
 		expired := m[8] == "true"
 		switch {
 		case m[5] != "true":
 			record.Value, record.Unknown, record.Priority = "-", true, ratePriorityOfficial
-			record.Detail = "官方目录未给出有效倍率，原始 credits=" + m[3]
-			record.Explain = "官方接口没有给出有效倍率"
+			record.Detail = "Official catalog gave no valid multiplier, raw credits=" + m[3]
+			record.Explain = "Official API gave no valid multiplier"
 		case expired:
 			record.Value, record.Unknown, record.Priority = "-", true, ratePriorityPromoStale
-			record.Detail = "官方促销已过期，原始 credits=" + m[3] + "、促销=" + m[6] + "、截止=" + m[7] + "，该数值不可信"
-			record.Explain = "官方促销已于 " + m[7] + " 结束，接口仍返回 " + m[4] + "x，该数值不可信"
+			record.Detail = "Official promo expired, raw credits=" + m[3] + ", promo=" + m[6] + ", ends=" + m[7] + "; value not trustworthy"
+			record.Explain = "Promo expired; the value is untrustworthy"
 		default:
 			record.Value, record.Priority = m[4]+"x", ratePriorityOfficial
-			record.Detail = "官方目录原始 credits=" + m[3]
-			record.Explain = "官方接口给出的目录倍率"
+			record.Detail = "Official catalog raw credits=" + m[3]
+			record.Explain = "Catalog multiplier given by the official API"
 			if m[6] != "" {
-				record.Detail += "、促销=" + m[6] + "、截止=" + m[7]
-				record.Explain = "官方促销 " + m[6] + " 折算后的倍率"
+				record.Detail += ", promo=" + m[6] + ", ends=" + m[7]
+				record.Explain = "Derived from promo " + m[6]
 			}
 		}
 		return record, true
@@ -387,12 +395,12 @@ func parseRateLine(line, file string) (rateLogRecord, bool) {
 		record := base
 		record.LogLine = redactSensitiveText(line)
 		record.Site, record.Model = m[1], m[2]
-		record.Source = "价格探测（缓存结论）"
+		record.Source = "Price probe (cached verdict)"
 		record.Value, record.Unknown, record.Priority = probeValue(m[3])
-		record.Detail = "判定=" + m[3] + " credit=" + m[4] + " tokens=" + m[5] + " 探测时间=" + m[6] + " " + m[7]
-		record.Explain = "上次真实探测结论：收费（尚未复测）"
+		record.Detail = "verdict=" + m[3] + " credit=" + m[4] + " tokens=" + m[5] + " probeTime=" + m[6] + " " + m[7]
+		record.Explain = "Previous probe verdict: paid (not retested)"
 		if m[3] == "free" {
-			record.Explain = "上次真实探测结论：免费（尚未复测）"
+			record.Explain = "Previous probe verdict: free (not retested)"
 		}
 		return record, true
 	}
@@ -400,12 +408,12 @@ func parseRateLine(line, file string) (rateLogRecord, bool) {
 		record := base
 		record.LogLine = redactSensitiveText(line)
 		record.Site, record.Model = m[1], m[3]
-		record.Source = "价格探测（本机实测）"
+		record.Source = "Price probe (local measurement)"
 		record.Value, record.Unknown, record.Priority = probeValue(m[4])
-		record.Detail = "账号=" + m[2] + " 判定=" + m[4] + " credit=" + m[5] + " tokens=" + m[6] + " " + m[7]
-		record.Explain = "网关发起真实请求实测：收费（官方未给出有效倍率）"
+		record.Detail = "account=" + m[2] + " verdict=" + m[4] + " credit=" + m[5] + " tokens=" + m[6] + " " + m[7]
+		record.Explain = "Gateway probe: paid (no official multiplier)"
 		if m[4] == "free" {
-			record.Explain = "网关发起真实请求实测：免费"
+			record.Explain = "Gateway probe: free"
 		}
 		return record, true
 	}
@@ -413,14 +421,14 @@ func parseRateLine(line, file string) (rateLogRecord, bool) {
 		record := base
 		record.LogLine = redactSensitiveText(line)
 		record.Site, record.Model = m[2], m[3]
-		record.Source = "正常请求实测"
-		record.Detail = "账号=" + m[1] + " usage.credit=" + m[4] + " 判定=" + m[5]
-		if m[5] == "免费" {
+		record.Source = "Normal request measurement"
+		record.Detail = "account=" + m[1] + " usage.credit=" + m[4] + " verdict=" + m[5]
+		if m[5] == "free" {
 			record.Value, record.Priority = "0.00x", ratePriorityLearnedFree
-			record.Explain = "正常客户端请求返回 credit=0，判定免费"
+			record.Explain = "Client request measured free (credit=0)"
 		} else {
-			record.Value, record.Priority = "实测收费", ratePriorityLearnedPaid
-			record.Explain = "正常客户端请求实测收费，仅作佐证，不改变上方官方倍率"
+			record.Value, record.Priority = "Measured paid", ratePriorityLearnedPaid
+			record.Explain = "Measured paid; does not change the official rate"
 		}
 		return record, true
 	}
@@ -435,7 +443,7 @@ type rateLogScan struct {
 	Truncated        bool
 }
 
-// readRateEvents 从现有普通日志尾部解析倍率来源记录；不读调试日志、不改动任何文件。
+// readRateEvents parses rate-source records from the tail of existing normal logs; it reads no debug logs and changes no files.
 func readRateEvents() (rateLogScan, error) {
 	var scan rateLogScan
 	entries, err := os.ReadDir(logDir)
@@ -472,7 +480,7 @@ func readRateEvents() (rateLogScan, error) {
 		if err != nil || !st.Mode().IsRegular() {
 			f.Close()
 			scan.Truncated = true
-			return scan, errors.New("倍率日志不是可读普通文件")
+			return scan, errors.New("rate log is not a readable regular file")
 		}
 		size := min(st.Size(), budget)
 		data := make([]byte, int(size))
@@ -485,7 +493,7 @@ func readRateEvents() (rateLogScan, error) {
 		}
 		if int64(count) != size {
 			scan.Truncated = true
-			return scan, errors.New("倍率日志读取期间被截断，请重试")
+			return scan, errors.New("rate log was truncated during read, please retry")
 		}
 		scan.Scanned += size
 		if start > 0 {
@@ -501,10 +509,11 @@ func readRateEvents() (rateLogScan, error) {
 				continue
 			}
 			line := string(raw)
-			// 探测调度状态：用于告诉用户「未知」时怎么刷新，同样取自普通日志。
-			if !scan.AutoProbeKnown && strings.Contains(line, "阶段=自动探测调度") {
+			// Probe scheduling state: tells the user how to refresh when the value is
+			// "Unknown"; also taken from the normal logs.
+			if !scan.AutoProbeKnown && strings.Contains(line, "stage=auto probe scheduling") {
 				if m := rateProbeModeRe.FindStringSubmatch(line); m != nil {
-					scan.AutoProbeEnabled, scan.AutoProbeKnown = m[1] == "已开启", true
+					scan.AutoProbeEnabled, scan.AutoProbeKnown = m[1] == "enabled", true
 				}
 			}
 			if record, ok := parseRateLine(line, name); ok {
@@ -538,11 +547,13 @@ func aggregateRateDetails(records []rateLogRecord) map[string]map[string]any {
 			}
 		}
 		best := list[bestIndex]
-		// 「其他记录」按来源+解释去重（多次重启会写出内容相同的记录），
-		// 并且只保留最新的若干条，避免把同一句话重复堆给用户。
+		// "Other records" are deduplicated by source+explanation (multiple restarts can write
+		// identical records), and only the latest few are kept, so the user is not flooded
+		// with the same sentence repeatedly.
 		others := make([]rateLogRecord, 0, len(list)-1)
 		seenOthers := map[string]bool{}
-		// 先把胜出记录的签名登记为已见，避免同一结论的旧记录又出现在「其他记录」里。
+		// Register the winning record's signature as seen first, so older records with the
+		// same conclusion do not reappear in "other records".
 		seenOthers[best.Source+"|"+best.Explain+"|"+best.Value] = true
 		for i, record := range list {
 			if i != bestIndex {
@@ -569,7 +580,7 @@ func aggregateRateDetails(records []rateLogRecord) map[string]map[string]any {
 	return out
 }
 
-// 短暂缓存扫描结果：点击「感叹号」时按需拉取，避免每次点击都重扫日志。
+// Briefly caches scan results: fetched on demand when clicking the "exclamation mark", avoiding a full log rescan on every click.
 var rateDetailCache struct {
 	sync.Mutex
 	at      time.Time
@@ -580,22 +591,22 @@ const rateDetailCacheTTL = 20 * time.Second
 
 func handleWebUIRateDetail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "只读数据，仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Read-only data; only GET is supported")
 		return
 	}
 	rateDetailCache.Lock()
 	if rateDetailCache.payload != nil && time.Since(rateDetailCache.at) < rateDetailCacheTTL {
 		payload := rateDetailCache.payload
 		rateDetailCache.Unlock()
-		log.Printf("[管理倍率来源] traceId=%s 结果=命中缓存 说明=仅读现有普通日志，不修改配置、不触发探测", debugTraceID(r))
+		log.Printf("[Admin rate sources] traceId=%s result=cache hit note=reads existing normal logs only; does not modify config or trigger probes", debugTraceID(r))
 		writeAdminData(w, r, payload)
 		return
 	}
 	rateDetailCache.Unlock()
 	scan, err := readRateEvents()
 	if err != nil {
-		log.Printf("[管理倍率来源] traceId=%s 结果=读取失败 原因=%s 说明=页面显示没有日志，不伪造来源", debugTraceID(r), safeDebugError(err))
-		writeJSONError(w, http.StatusServiceUnavailable, "日志暂不可读，请稍后重试")
+		log.Printf("[Admin rate sources] traceId=%s result=read failed reason=%s note=page shows no logs; sources are never fabricated", debugTraceID(r), safeDebugError(err))
+		writeJSONError(w, http.StatusServiceUnavailable, "Logs temporarily unreadable, please retry later")
 		return
 	}
 	now := time.Now()
@@ -612,40 +623,40 @@ func handleWebUIRateDetail(w http.ResponseWriter, r *http.Request) {
 		"readBytes": scan.Scanned, "readBudgetBytes": rateLogReadBudget, "truncated": scan.Truncated,
 		"autoProbeEnabled": scan.AutoProbeEnabled, "autoProbeKnown": scan.AutoProbeKnown,
 		"refreshHint": refreshHint,
-		"noLogHint":   "普通日志中没有该模型的记录。用该站点的账号请求一次这个模型，就会产生新的倍率记录。",
-		"source":      "gateway 普通日志",
-		"note":        "倍率来源与更新时间全部取自普通日志；日志中没有记录的模型显示「没有日志」。目录倍率在首次或变化时记录，探测与实测结论在产生时记录；原始日志默认折叠。",
+		"noLogHint":   "No records for this model in the normal logs. Request this model once with an account of that site and a new rate record will be produced.",
+		"source":      "gateway normal logs",
+		"note":        "Rate sources and update times all come from the normal logs; models without log records show \"no logs\". Catalog multipliers are recorded on first sight or on change; probe and live-request verdicts are recorded when produced; raw logs are collapsed by default.",
 	}
 	rateDetailCache.Lock()
 	rateDetailCache.payload, rateDetailCache.at = payload, now
 	rateDetailCache.Unlock()
-	log.Printf("[管理倍率来源] traceId=%s 结果=读取成功 记录=%d 站点模型=%d 扫描字节=%d 截断=%t 自动探测已开启=%t 说明=仅读现有普通日志，不触发探测或目录刷新", debugTraceID(r), len(scan.Records), len(rates), scan.Scanned, scan.Truncated, scan.AutoProbeEnabled)
+	log.Printf("[Admin rate sources] traceId=%s result=read success records=%d siteModels=%d scannedBytes=%d truncated=%t autoProbeEnabled=%t note=reads existing normal logs only; does not trigger probes or catalog refresh", debugTraceID(r), len(scan.Records), len(rates), scan.Scanned, scan.Truncated, scan.AutoProbeEnabled)
 	writeAdminData(w, r, payload)
 }
 
-// rateRefreshHint 说明「未知」时怎样让倍率更新；探测开关状态同样取自普通日志。
+// rateRefreshHint explains how to refresh a rate when its value is "Unknown"; the probe switch state also comes from the normal logs.
 func rateRefreshHint(autoProbeEnabled bool) string {
 	if autoProbeEnabled {
-		return "后台自动探测已开启，会在下一轮自动复测；也可以让该站点的账号请求一次这个模型，立即按 usage.credit 重新判定。"
+		return "Background auto-probing is enabled and will automatically re-probe in the next round; you can also request this model once with an account of that site to re-judge immediately from usage.credit."
 	}
-	return "后台自动探测已关闭。用该站点的账号请求一次这个模型，网关会按返回的 usage.credit 自动重新判定并写入日志。"
+	return "Background auto-probing is disabled. Request this model once with an account of that site and the gateway will automatically re-judge from the returned usage.credit and write it to the logs."
 }
 
 func handleWebUITasks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "只读页面，仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Read-only page; only GET is supported")
 		return
 	}
 	events, scanned, truncated, err := readTaskEvents()
 	if err != nil {
-		log.Printf("[管理定时任务] traceId=%s 结果=读取失败 原因=%s 说明=保留页面上次数据，不伪装成任务成功", debugTraceID(r), safeDebugError(err))
-		writeJSONError(w, http.StatusServiceUnavailable, "任务日志暂不可读，请稍后重试")
+		log.Printf("[Admin scheduled tasks] traceId=%s result=read failed reason=%s note=keeps the page's previous data; does not fake task success", debugTraceID(r), safeDebugError(err))
+		writeJSONError(w, http.StatusServiceUnavailable, "Task logs temporarily unreadable, please retry later")
 		return
 	}
 	now := time.Now()
 	rows := aggregateTaskViews(events, now, os.Getpid(), taskLogBootAt)
-	log.Printf("[管理定时任务] traceId=%s 结果=读取成功 任务数=%d 日志记录=%d 扫描字节=%d 截断=%t 说明=仅读现有日志，不触发任务或修改调度", debugTraceID(r), len(rows), len(events), scanned, truncated)
-	writeAdminData(w, r, map[string]any{"tasks": rows, "generatedAt": now.Unix(), "timezone": now.Format("MST -07:00"), "readBytes": scanned, "readBudgetBytes": taskLogReadBudget, "truncated": truncated, "source": "gateway 日志；仅当前服务进程", "note": "高频本地任务每60秒记录最近一次执行，状态变化即时记录；下次时间按日志中的定时计划推算，事件触发可能提前。无日志时不判定成功。"})
+	log.Printf("[Admin scheduled tasks] traceId=%s result=read success tasks=%d logRecords=%d scannedBytes=%d truncated=%t note=reads existing logs only; does not trigger tasks or modify scheduling", debugTraceID(r), len(rows), len(events), scanned, truncated)
+	writeAdminData(w, r, map[string]any{"tasks": rows, "generatedAt": now.Unix(), "timezone": now.Format("MST -07:00"), "readBytes": scanned, "readBudgetBytes": taskLogReadBudget, "truncated": truncated, "source": "gateway logs; current service process only", "note": "High-frequency local tasks record their most recent execution every 60 seconds; status changes are recorded immediately. The next run time is extrapolated from the schedule in the logs; event triggers may fire earlier. No logs means success is never assumed."})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -658,11 +669,11 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// handleWebUIIndex 提供管理台静态外壳与静态资源。
-// 访问 /ui 时跳到 /ui/，保证相对资源路径正确；/ui/<file> 按名读取嵌入资源。
+// handleWebUIIndex serves the admin console static shell and static assets.
+// /ui redirects to /ui/ so relative asset paths resolve correctly; /ui/<file> reads the embedded asset by name.
 func handleWebUIIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET/HEAD")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET/HEAD are supported")
 		return
 	}
 	if r.URL.Path == webUIPrefix {
@@ -676,7 +687,7 @@ func handleWebUIIndex(w http.ResponseWriter, r *http.Request) {
 	serveWebAsset(w, name)
 }
 
-// serveWebAsset 从嵌入资源读取单个静态文件，拒绝任何路径穿越。
+// serveWebAsset reads a single static file from the embedded assets and rejects any path traversal.
 func serveWebAsset(w http.ResponseWriter, name string) {
 	name = path.Clean(name)
 	if name == "." || strings.HasPrefix(name, "..") || strings.Contains(name, "/") {
@@ -701,7 +712,7 @@ func serveWebAsset(w http.ResponseWriter, name string) {
 	_, _ = w.Write(data)
 }
 
-// webGatewayMeta 是管理台展示的网关运行元信息（不含任何密钥）。
+// webGatewayMeta is the gateway runtime metadata shown by the admin console (contains no secrets).
 type webGatewayMeta struct {
 	Version       string `json:"version"`
 	Listen        string `json:"listen"`
@@ -711,7 +722,7 @@ type webGatewayMeta struct {
 	WebListen     string `json:"webListen,omitempty"`
 }
 
-// webStatusResponse 是 /admin/api/status 的响应体。
+// webStatusResponse is the response body of /admin/api/status.
 type webStatusResponse struct {
 	Gateway     webGatewayMeta            `json:"gateway"`
 	UpdatedAt   int64                     `json:"updatedAt"`
@@ -723,7 +734,7 @@ type webStatusResponse struct {
 	Health      accountHealth             `json:"health"`
 }
 
-// readStatusSnapshot 读取 serve 周期写入的状态快照（与 monitor 命令同一数据源）。
+// readStatusSnapshot reads the status snapshot written periodically by the serve cycle (same data source as the monitor command).
 func readStatusSnapshot() (statusSnapshot, error) {
 	data, err := os.ReadFile(statusSnapshotFile)
 	if err != nil {
@@ -734,7 +745,7 @@ func readStatusSnapshot() (statusSnapshot, error) {
 		return statusSnapshot{}, err
 	}
 	if snap.UpdatedAt <= 0 {
-		return statusSnapshot{}, errors.New("状态快照没有有效更新时间")
+		return statusSnapshot{}, errors.New("status snapshot has no valid update time")
 	}
 	return snap, nil
 }
@@ -765,8 +776,8 @@ func summarizeAccounts(accs []accountSnapshot) map[string]int {
 	return summary
 }
 
-// summarizeAccountsBySite 按站点（cn/intl）分别汇总账号数量，供总览页分站点展示。
-// 站点标识缺失时按国内站处理，与凭据默认站点保持一致。
+// summarizeAccountsBySite aggregates account counts per site (cn/intl) for the overview page's per-site display.
+// Accounts missing a site marker are treated as domestic-site, consistent with the credentials' default site.
 func summarizeAccountsBySite(accs []accountSnapshot) map[string]map[string]int {
 	sites := map[string][]accountSnapshot{}
 	for _, a := range accs {
@@ -784,7 +795,7 @@ func summarizeAccountsBySite(accs []accountSnapshot) map[string]map[string]int {
 
 func handleWebUIStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET is supported")
 		return
 	}
 	snap, err := readStatusSnapshot()
@@ -817,18 +828,18 @@ func handleWebUIStatus(w http.ResponseWriter, r *http.Request) {
 	resp.Summary = summarizeAccounts(resp.Accounts)
 	resp.SiteSummary = summarizeAccountsBySite(resp.Accounts)
 	resp.Health = summarizeAccountHealth(resp.Accounts, resp.Stale)
-	log.Printf("[管理状态] traceId=%s 结果=读取成功 账号数=%d 模型数=%d 快照过旧=%t 说明=只展示快照，不调用上游或改变账本", debugTraceID(r), len(resp.Accounts), len(resp.Models), resp.Stale)
+	log.Printf("[Admin status] traceId=%s result=read success accounts=%d models=%d snapshotStale=%t note=displays the snapshot only; does not call upstream or change the ledger", debugTraceID(r), len(resp.Accounts), len(resp.Models), resp.Stale)
 	writeAdminData(w, r, resp)
 }
 
 func handleWebUIModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET is supported")
 		return
 	}
 	rangeParam := strings.TrimSpace(r.URL.Query().Get("range"))
 	if rangeParam != "" && rangeParam != "5h" {
-		writeJSONError(w, http.StatusBadRequest, "range 只能是 5h")
+		writeJSONError(w, http.StatusBadRequest, "range must be 5h")
 		return
 	}
 	snap, err := readStatusSnapshot()
@@ -838,7 +849,7 @@ func handleWebUIModels(w http.ResponseWriter, r *http.Request) {
 	}
 	models := snap.ModelCatalog
 	if models == nil {
-		models = snap.Models // 兼容旧版本状态快照。
+		models = snap.Models // Backward compatibility with older status snapshots.
 	}
 	if models == nil {
 		models = []modelStatSnapshot{}
@@ -855,8 +866,9 @@ func handleWebUIModels(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		window := aggregateModelStatsWindow(now.Add(-5*time.Hour), now)
 		for i := range models {
-			// 请求 / Token / 首Token / 总耗时统一改读 stats.json 的近 5 小时窗口；
-			// 模型目录、启停、倍率、可用账号与末次状态仍来自状态快照。
+			// Requests / Tokens / first-token / total latency now uniformly read the last
+			// 5-hour window of stats.json; the model catalog, enable/disable state,
+			// multipliers, available accounts, and last status still come from the snapshot.
 			models[i].Requests, models[i].Success, models[i].Failed, models[i].Tokens = 0, 0, 0, 0
 			models[i].AvgTTFTMs, models[i].HasTTFT, models[i].TTFTMetric = 0, false, ""
 			models[i].AvgLatencyMs, models[i].HasLatency = 0, false
@@ -876,7 +888,7 @@ func handleWebUIModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	log.Printf("[管理模型] traceId=%s 结果=读取成功 模型数=%d", debugTraceID(r), len(models))
+	log.Printf("[Admin models] traceId=%s result=read success models=%d", debugTraceID(r), len(models))
 	writeAdminData(w, r, map[string]any{
 		"source":     modelSourceLabel(modelSourceFromSnapshots(models)),
 		"models":     models,
@@ -887,8 +899,8 @@ func handleWebUIModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func webSnapshotUnavailable(w http.ResponseWriter, r *http.Request, err error) {
-	log.Printf("[管理状态] traceId=%s 阶段=读取快照 结果=失败 原因=%v 状态码=503 业务影响=前端保留上次数据，不伪装成零账号", debugTraceID(r), err)
-	writeJSONError(w, http.StatusServiceUnavailable, "状态快照暂不可用，请稍后重试；已有页面数据不是新的零账号结果")
+	log.Printf("[Admin status] traceId=%s stage=read snapshot result=failed reason=%v statusCode=503 businessImpact=frontend keeps previous data; does not fake a zero-account state", debugTraceID(r), err)
+	writeJSONError(w, http.StatusServiceUnavailable, "Status snapshot temporarily unavailable, please retry later; the existing page data is not a fresh zero-account result")
 }
 
 var logFilePattern = managedLogPattern
@@ -899,7 +911,7 @@ type logFileInfo struct {
 	ModTime int64  `json:"modTime"`
 }
 
-// listLogFiles 仅列出 logs/ 下受限命名格式的日志文件，最新在前。
+// listLogFiles lists only log files with restricted naming under logs/, newest first.
 func listLogFiles() []logFileInfo {
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
@@ -922,14 +934,14 @@ func listLogFiles() []logFileInfo {
 
 func handleWebUILogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET is supported")
 		return
 	}
 	files := listLogFiles()
 	name := r.URL.Query().Get("file")
 	if name != "" && (baseNameSafe(name) != name || !logFilePattern.MatchString(name)) {
-		log.Printf("[管理日志] traceId=%s 结果=拒绝 原因=日志文件名不合法 状态码=400", debugTraceID(r))
-		writeJSONError(w, http.StatusBadRequest, "非法的日志文件名")
+		log.Printf("[Admin logs] traceId=%s result=rejected reason=invalid log file name statusCode=400", debugTraceID(r))
+		writeJSONError(w, http.StatusBadRequest, "Invalid log file name")
 		return
 	}
 	if name == "" && len(files) > 0 {
@@ -948,11 +960,11 @@ func handleWebUILogs(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{"files": files, "file": name, "lines": []string{}, "truncated": false, "readBudgetBytes": webUILogReadBudget}
 	if name != "" {
-		log.Printf("[管理日志] traceId=%s 阶段=读取 文件=%s 请求行数=%d 扫描字节预算=%d", debugTraceID(r), name, linesN, webUILogReadBudget)
+		log.Printf("[Admin logs] traceId=%s stage=read file=%s requestedLines=%d scannedByteBudget=%d", debugTraceID(r), name, linesN, webUILogReadBudget)
 		var lines []string
 		var truncated bool
 		var err error
-		// 带 offset 时按告警定位到的字节偏移返回窗口，否则保持读取文件尾部。
+		// With an offset, return the window located by the alert's byte offset; otherwise keep reading the file tail.
 		if focus := parseLogOffset(r.URL.Query().Get("offset")); focus >= 0 {
 			var focusIndex int
 			var resolved bool
@@ -964,17 +976,17 @@ func handleWebUILogs(w http.ResponseWriter, r *http.Request) {
 			lines, truncated, err = readWebLog(name, linesN)
 		}
 		if err != nil {
-			log.Printf("[管理日志] traceId=%s 结果=失败 文件=%s 原因=%v 状态码=503", debugTraceID(r), name, err)
-			writeJSONError(w, http.StatusServiceUnavailable, "日志暂不可读，请刷新文件列表后重试")
+			log.Printf("[Admin logs] traceId=%s result=failed file=%s reason=%v statusCode=503", debugTraceID(r), name, err)
+			writeJSONError(w, http.StatusServiceUnavailable, "Logs temporarily unreadable, please refresh the file list and retry")
 			return
 		}
-		// 脱敏完整行副本，覆盖旧版本写出的日志；不改动文件或业务错误。
+		// Redact a full copy of the lines, covering logs written by older versions; files and business errors are untouched.
 		if len(lines) > 0 {
-			// 一批日志只建立一次秘密值替换器，避免逐行重复构建。
+			// Build the secret-value replacer once per log batch, avoiding repeated construction line by line.
 			lines = strings.Split(redactSensitiveText(strings.Join(lines, "\n")), "\n")
 		}
 		resp["lines"], resp["truncated"] = lines, truncated
-		log.Printf("[管理日志] traceId=%s 结果=成功 返回行数=%d 预算截断=%t 秘密值已隐藏=true", debugTraceID(r), len(lines), truncated)
+		log.Printf("[Admin logs] traceId=%s result=success returnedLines=%d budgetTruncated=%t secretsHidden=true", debugTraceID(r), len(lines), truncated)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -993,7 +1005,7 @@ func readWebLog(name string, lines int) ([]string, bool, error) {
 	return readTailLines(f, lines, webUILogReadBudget)
 }
 
-// baseNameSafe 只取基名，避免任何目录穿越意图进入后续校验。
+// baseNameSafe takes only the base name, keeping any directory-traversal intent out of the following validation.
 func baseNameSafe(name string) string {
 	name = strings.TrimSpace(name)
 	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
@@ -1005,7 +1017,7 @@ func baseNameSafe(name string) string {
 
 func handleWebUIConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET is supported")
 		return
 	}
 	runtimeConfigMu.Lock()
@@ -1015,8 +1027,8 @@ func handleWebUIConfig(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, os.ErrNotExist) {
 			writeJSON(w, http.StatusOK, map[string]any{"exists": false, "path": runtimeConfigFile, "content": ""})
 		} else {
-			log.Printf("[管理配置读取] traceId=%s 结果=失败 原因=%v", debugTraceID(r), err)
-			writeJSONError(w, http.StatusServiceUnavailable, "配置文件暂不可读")
+			log.Printf("[Admin config read] traceId=%s result=failed reason=%v", debugTraceID(r), err)
+			writeJSONError(w, http.StatusServiceUnavailable, "Config file temporarily unreadable")
 		}
 		return
 	}
@@ -1024,16 +1036,16 @@ func handleWebUIConfig(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.UseNumber()
 	if err := decoder.Decode(&parsed); err != nil || ensureJSONEOF(decoder) != nil {
-		log.Printf("[管理配置读取] traceId=%s 结果=失败 原因=配置文件不是有效JSON，拒绝返回未脱敏原文", debugTraceID(r))
-		writeJSONError(w, http.StatusServiceUnavailable, "配置文件暂不可解析")
+		log.Printf("[Admin config read] traceId=%s result=failed reason=config file is not valid JSON; refusing to return unredacted raw text", debugTraceID(r))
+		writeJSONError(w, http.StatusServiceUnavailable, "Config file temporarily unparseable")
 		return
 	}
 	safe, err := json.MarshalIndent(redactDebugValue(parsed), "", "  ")
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "配置展示编码失败")
+		writeJSONError(w, http.StatusInternalServerError, "Failed to encode config for display")
 		return
 	}
-	log.Printf("[管理配置读取] traceId=%s 结果=成功 管理Key与APIKey已隐藏=true 说明=磁盘配置仍按用户要求明文保存", debugTraceID(r))
+	log.Printf("[Admin config read] traceId=%s result=success adminKeyAndAPIKeyHidden=true note=disk config still stored in plaintext per the user's request", debugTraceID(r))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"exists":  true,
 		"path":    runtimeConfigFile,
@@ -1041,7 +1053,7 @@ func handleWebUIConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// credentialView 是脱敏后的凭据视图：只保留非敏感字段，令牌仅显示前缀。
+// credentialView is the masked credential view: only non-sensitive fields are kept; tokens show a prefix only.
 type credentialView struct {
 	Path               string `json:"path"`
 	Exists             bool   `json:"exists"`
@@ -1058,7 +1070,7 @@ type credentialView struct {
 	RefreshTokenMasked string `json:"refreshTokenMasked,omitempty"`
 }
 
-// maskToken 仅保留令牌前 6 位用于识别，其余以星号替代；空值保持为空。
+// maskToken keeps only the first 6 characters for identification, replacing the rest with asterisks; empty values stay empty.
 func maskToken(token string) string {
 	if token == "" {
 		return ""
@@ -1071,7 +1083,7 @@ func maskToken(token string) string {
 
 func handleWebUICredentials(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET")
+		writeJSONError(w, http.StatusMethodNotAllowed, "Only GET is supported")
 		return
 	}
 	views := make([]credentialView, 0)
@@ -1085,7 +1097,7 @@ func handleWebUICredentials(w http.ResponseWriter, r *http.Request) {
 		var sa StoredAuth
 		if err := json.Unmarshal(data, &sa); err != nil {
 			view.Exists = true
-			view.Error = "凭据文件解析失败"
+			view.Error = "Failed to parse credential file"
 			views = append(views, view)
 			continue
 		}
@@ -1102,11 +1114,11 @@ func handleWebUICredentials(w http.ResponseWriter, r *http.Request) {
 		view.RefreshTokenMasked = maskToken(sa.Auth.RefreshToken)
 		views = append(views, view)
 	}
-	log.Printf("[管理凭据] traceId=%s 结果=读取完成 文件数=%d 说明=只返回脱敏视图，不触发刷新或写入", debugTraceID(r), len(views))
+	log.Printf("[Admin credentials] traceId=%s result=read completed files=%d note=returns masked views only; does not trigger refresh or writes", debugTraceID(r), len(views))
 	writeAdminData(w, r, map[string]any{
-		"hint":  "列表令牌已脱敏；点击编辑可由管理员读取和保存完整凭据。完整令牌不会写入日志或浏览器持久存储。",
+		"hint":  "Listed tokens are masked; clicking Edit lets an admin read and save full credentials. Full tokens are never written to logs or browser persistent storage.",
 		"files": views,
-		// 保留字段名便于前端展示生成时间
+		// Keep the field name so the frontend can display the generation time
 		"generatedAt": time.Now().Unix(),
 	})
 }

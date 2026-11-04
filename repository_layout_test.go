@@ -13,7 +13,7 @@ func TestRepositoryLayoutKeepsBuildInputsAndOrganizesSupportFiles(t *testing.T) 
 	isolatedGatewayConfig(t)
 	root := repoRoot(t)
 	trace := newTraceID()
-	log.Printf("[目录回归] traceId=%s 阶段=开始 说明=仅检查仓库布局和嵌入资源，不修改真实配置或调用上游", trace)
+	log.Printf("[Repository regression] traceId=%s stage=start note=Only checks repository layout and embedded resources; does not modify real config or call upstream", trace)
 	for _, name := range []string{
 		"main.go", "go.mod", "go.sum", "build.ps1", "config.example.json", "README.md",
 		"docs/user-guide.md", "docs/contributors.md", "docs/project-layout.md",
@@ -55,14 +55,14 @@ func TestRepositoryLayoutKeepsBuildInputsAndOrganizesSupportFiles(t *testing.T) 
 	if count < 32 {
 		t.Errorf("Go package lost test files after organization: count=%d", count)
 	}
-	log.Printf("[目录回归] traceId=%s 阶段=完成 Go同包测试文件=%d 结果=已检查 文档与独立测试已归类=true 运行资源未移出嵌入目录=true", trace, count)
+	log.Printf("[Repository regression] traceId=%s stage=completed goTestFilesInPackage=%d result=checked docsAndStandaloneTestsOrganized=true runtimeResourcesKeptInEmbeddedDir=true", trace, count)
 }
 
 func TestRepositoryDocumentationLinksRemainLocalAndResolvable(t *testing.T) {
 	isolatedGatewayConfig(t)
 	root := repoRoot(t)
 	trace := newTraceID()
-	log.Printf("[文档链接回归] traceId=%s 阶段=开始 说明=只检查项目内部Markdown链接，不访问互联网", trace)
+	log.Printf("[Documentation link regression] traceId=%s stage=start note=Only checks project-internal Markdown links; no internet access", trace)
 	link := regexp.MustCompile(`\[[^\]]+\]\(([^)]+)\)`)
 	for _, name := range []string{"README.md", "docs/user-guide.md", "docs/project-layout.md", "tests/README.md"} {
 		path := filepath.Join(root, filepath.FromSlash(name))
@@ -80,5 +80,5 @@ func TestRepositoryDocumentationLinksRemainLocalAndResolvable(t *testing.T) {
 			}
 		}
 	}
-	log.Printf("[文档链接回归] traceId=%s 阶段=完成 结果=已检查 项目内部链接无需联网=true", trace)
+	log.Printf("[Documentation link regression] traceId=%s stage=completed result=checked internalLinksNeedNoInternet=true", trace)
 }

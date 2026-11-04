@@ -74,54 +74,54 @@ func TestRepairParallelToolMessageSequence(t *testing.T) {
 		wantMerged       int
 	}{
 		{
-			name:          "正常并行序列保持有效",
+			name:          "normal parallel sequence stays valid",
 			messages:      []any{msg("system", "s"), testAssistantCalls(callA, callB), testToolOutput("call_a", "A"), testToolOutput("call_b", "B")},
 			wantRoles:     []string{"system", "assistant", "tool", "tool"},
 			wantCallIDs:   []string{"call_a", "call_b"},
 			wantOutputIDs: []string{"call_a", "call_b"},
 		},
 		{
-			name:          "逆序结果保持逆序",
+			name:          "reverse-order results stay reversed",
 			messages:      []any{msg("system", "s"), testAssistantCalls(callA, callB), testToolOutput("call_b", "B"), testToolOutput("call_a", "A")},
 			wantRoles:     []string{"system", "assistant", "tool", "tool"},
 			wantCallIDs:   []string{"call_a", "call_b"},
 			wantOutputIDs: []string{"call_b", "call_a"},
 		},
 		{
-			name:             "并行调用中间的assistant消息移到结果后",
-			messages:         []any{msg("system", "s"), testAssistantCalls(callA), msg("assistant", "插入消息"), testAssistantCalls(callB), testToolOutput("call_a", "A"), testToolOutput("call_b", "B")},
+			name:             "assistant message between parallel calls moves after results",
+			messages:         []any{msg("system", "s"), testAssistantCalls(callA), msg("assistant", "inserted message"), testAssistantCalls(callB), testToolOutput("call_a", "A"), testToolOutput("call_b", "B")},
 			wantRoles:        []string{"system", "assistant", "tool", "tool", "assistant"},
 			wantCallIDs:      []string{"call_a", "call_b"},
 			wantOutputIDs:    []string{"call_a", "call_b"},
-			wantTailContents: []string{"插入消息"},
+			wantTailContents: []string{"inserted message"},
 			wantMoved:        1,
 			wantMerged:       1,
 		},
 		{
-			name:             "并行调用中间的user消息移到结果后",
-			messages:         []any{msg("system", "s"), testAssistantCalls(callA, callB), msg("user", "插入用户消息"), testToolOutput("call_b", "B"), testToolOutput("call_a", "A")},
+			name:             "user message between parallel calls moves after results",
+			messages:         []any{msg("system", "s"), testAssistantCalls(callA, callB), msg("user", "inserted user message"), testToolOutput("call_b", "B"), testToolOutput("call_a", "A")},
 			wantRoles:        []string{"system", "assistant", "tool", "tool", "user"},
 			wantCallIDs:      []string{"call_a", "call_b"},
 			wantOutputIDs:    []string{"call_b", "call_a"},
-			wantTailContents: []string{"插入用户消息"},
+			wantTailContents: []string{"inserted user message"},
 			wantMoved:        1,
 		},
 		{
-			name:             "并行结果之间的消息移到全部结果后",
-			messages:         []any{msg("system", "s"), testAssistantCalls(callA, callB), testToolOutput("call_a", "A"), msg("assistant", "结果间消息"), testToolOutput("call_b", "B")},
+			name:             "message between parallel results moves after all results",
+			messages:         []any{msg("system", "s"), testAssistantCalls(callA, callB), testToolOutput("call_a", "A"), msg("assistant", "message between results"), testToolOutput("call_b", "B")},
 			wantRoles:        []string{"system", "assistant", "tool", "tool", "assistant"},
 			wantCallIDs:      []string{"call_a", "call_b"},
 			wantOutputIDs:    []string{"call_a", "call_b"},
-			wantTailContents: []string{"结果间消息"},
+			wantTailContents: []string{"message between results"},
 			wantMoved:        1,
 		},
 		{
-			name:             "单调用中间消息保持原位",
-			messages:         []any{msg("system", "s"), testAssistantCalls(callA), msg("assistant", "单调用插入"), testToolOutput("call_a", "A")},
+			name:             "message between single-call pair stays in place",
+			messages:         []any{msg("system", "s"), testAssistantCalls(callA), msg("assistant", "single-call insert"), testToolOutput("call_a", "A")},
 			wantRoles:        []string{"system", "assistant", "assistant", "tool"},
 			wantCallIDs:      []string{"call_a"},
 			wantOutputIDs:    []string{"call_a"},
-			wantTailContents: []string{"单调用插入"},
+			wantTailContents: []string{"single-call insert"},
 		},
 	}
 
@@ -235,7 +235,7 @@ func TestResponsesParallelToolHistoryRepair(t *testing.T) {
 		"input": []any{
 			map[string]any{"type": "function_call", "call_id": "call_a", "name": "a", "arguments": "{}"},
 			map[string]any{"type": "web_search_call", "id": "ws_1", "status": "completed"},
-			map[string]any{"type": "message", "role": "assistant", "content": "插入消息"},
+			map[string]any{"type": "message", "role": "assistant", "content": "inserted message"},
 			map[string]any{"type": "function_call", "call_id": "call_b", "name": "b", "arguments": "{}"},
 			map[string]any{"type": "function_call_output", "call_id": "call_b", "output": "B"},
 			map[string]any{"type": "function_call_output", "call_id": "call_a", "output": "A"},
@@ -257,7 +257,7 @@ func TestResponsesParallelToolHistoryRepair(t *testing.T) {
 	if got := outputIDs(messages); !reflect.DeepEqual(got, []string{"call_b", "call_a"}) {
 		t.Fatalf("outputs=%v", got)
 	}
-	if messageContent(messages[1]) != "插入消息" {
+	if messageContent(messages[1]) != "inserted message" {
 		t.Fatalf("assistant text must stay with its tool calls: %#v", messages)
 	}
 	if report.MovedMessages != 0 || report.MergedCallMessages != 0 {
@@ -345,7 +345,7 @@ func TestChatEndpointRepairsBrokenParallelToolHistory(t *testing.T) {
 				{"id":"call_a","type":"function","function":{"name":"a","arguments":"{}"}},
 				{"id":"call_b","type":"function","function":{"name":"b","arguments":"{}"}}
 			]},
-			{"role":"assistant","content":"插入消息"},
+			{"role":"assistant","content":"inserted message"},
 			{"role":"tool","tool_call_id":"call_b","content":"B"},
 			{"role":"tool","tool_call_id":"call_a","content":"A"}
 		]}`
@@ -357,7 +357,7 @@ func TestChatEndpointRepairsBrokenParallelToolHistory(t *testing.T) {
 	if got := outputIDs(messages); !reflect.DeepEqual(got, []string{"call_b", "call_a"}) {
 		t.Fatalf("upstream outputs=%v", got)
 	}
-	if messageContent(messages[4]) != "插入消息" {
+	if messageContent(messages[4]) != "inserted message" {
 		t.Fatalf("interposed message not repaired: %#v", messages)
 	}
 }
@@ -367,7 +367,7 @@ func TestResponsesEndpointRepairsBrokenParallelToolHistory(t *testing.T) {
 		"model":"m","stream":true,"input":[
 			{"type":"function_call","call_id":"call_a","name":"a","arguments":"{}"},
 			{"type":"web_search_call","id":"ws_1","status":"completed"},
-			{"type":"message","role":"user","content":"插入消息"},
+			{"type":"message","role":"user","content":"inserted message"},
 			{"type":"function_call","call_id":"call_b","name":"b","arguments":"{}"},
 			{"type":"function_call_output","call_id":"call_b","output":"B"},
 			{"type":"function_call_output","call_id":"call_a","output":"A"}
@@ -383,64 +383,64 @@ func TestResponsesEndpointRepairsBrokenParallelToolHistory(t *testing.T) {
 	if got := outputIDs(messages); !reflect.DeepEqual(got, []string{"call_b", "call_a"}) {
 		t.Fatalf("upstream outputs=%v", got)
 	}
-	if messageContent(messages[4]) != "插入消息" {
+	if messageContent(messages[4]) != "inserted message" {
 		t.Fatalf("interposed message not repaired: %#v", messages)
 	}
 }
 
-// 从 HTTP 入口一直验证到实际发往 Chat 上游的 JSON：同一次 Responses 回复的
-// 推理、正文和并行工具调用必须在同一条 assistant 消息，而不是被拆成两条。
+// Verifies from the HTTP entry all the way to the JSON actually sent to the Chat upstream: the reasoning,
+// content, and parallel tool calls of one Responses reply must stay in the same assistant message, not be split into two.
 func TestResponsesEndpointReplaysReasoningWithTextAndTools(t *testing.T) {
 	body := `{
 		"model":"m","stream":true,"reasoning":{"effort":"high"},"input":[
-			{"role":"user","content":"查日志"},
-			{"type":"reasoning","summary":[{"type":"summary_text","text":"我先分析"}]},
-			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"开始检查"}]},
+			{"role":"user","content":"check logs"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"I will analyze first"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"starting check"}]},
 			{"type":"function_call","call_id":"call_a","name":"read","arguments":"{}"},
 			{"type":"function_call","call_id":"call_b","name":"grep","arguments":"{}"},
 			{"type":"function_call_output","call_id":"call_a","output":"file"},
 			{"type":"function_call_output","call_id":"call_b","output":"match"},
-			{"type":"reasoning","summary":[{"type":"summary_text","text":"确认好了"}]},
-			{"type":"message","role":"assistant","content":"完成"}
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"confirmed"}]},
+			{"type":"message","role":"assistant","content":"done"}
 		]}`
 	messages := captureUpstreamMessages(t, "/v1/responses", body)
 	if got := rolesOf(map[string]any{"messages": messages}); !reflect.DeepEqual(got, []string{"system", "user", "assistant", "tool", "tool", "assistant"}) {
 		t.Fatalf("upstream roles=%v messages=%#v", got, messages)
 	}
 	first := messages[2].(map[string]any)
-	if first["reasoning_content"] != "我先分析" || !reflect.DeepEqual(callIDs(first), []string{"call_a", "call_b"}) {
+	if first["reasoning_content"] != "I will analyze first" || !reflect.DeepEqual(callIDs(first), []string{"call_a", "call_b"}) {
 		t.Fatalf("first assistant lost reasoning or parallel calls: %#v", first)
 	}
 	parts := first["content"].([]any)
-	if len(parts) != 1 || parts[0].(map[string]any)["text"] != "开始检查" {
+	if len(parts) != 1 || parts[0].(map[string]any)["text"] != "starting check" {
 		t.Fatalf("first assistant lost text: %#v", first)
 	}
 	last := messages[5].(map[string]any)
-	if last["reasoning_content"] != "确认好了" || last["content"] != "完成" {
+	if last["reasoning_content"] != "confirmed" || last["content"] != "done" {
 		t.Fatalf("next assistant lost reasoning or reply: %#v", last)
 	}
 }
 
-// 实际复现形态：thinking 模式下先有真实推理，下一步只有正文和并行工具调用。
-// 工具结果送回国际站时必须保留空 reasoning_content 字段，不能拆成两条 assistant。
+// Actual repro shape: in thinking mode there is real reasoning first, and the next step has only content and parallel tool calls.
+// When tool results are sent back to the international site, the empty reasoning_content field must be preserved and not split into two assistants.
 func TestResponsesThinkingNoReasoningStillEchoesEmptyField(t *testing.T) {
 	body := `{
 		"model":"deepseek-v4.1-flash","stream":true,"reasoning":{"effort":"high"},"input":[
-			{"role":"user","content":"检查文件"},
-			{"type":"reasoning","summary":[{"type":"summary_text","text":"先读取"}]},
+			{"role":"user","content":"check file"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"read first"}]},
 			{"type":"function_call","call_id":"call_a","name":"read","arguments":"{}"},
-			{"type":"function_call_output","call_id":"call_a","output":"文件存在"},
-			{"type":"message","role":"assistant","content":"继续检查"},
+			{"type":"function_call_output","call_id":"call_a","output":"file exists"},
+			{"type":"message","role":"assistant","content":"continue checking"},
 			{"type":"function_call","call_id":"call_b","name":"grep","arguments":"{}"},
 			{"type":"function_call","call_id":"call_c","name":"read","arguments":"{}"},
-			{"type":"function_call_output","call_id":"call_b","output":"已匹配"},
-			{"type":"function_call_output","call_id":"call_c","output":"已读取"}
+			{"type":"function_call_output","call_id":"call_b","output":"matched"},
+			{"type":"function_call_output","call_id":"call_c","output":"read done"}
 		]}`
 	messages := captureUpstreamMessages(t, "/v1/responses", body)
 	if got := rolesOf(map[string]any{"messages": messages}); !reflect.DeepEqual(got, []string{"system", "user", "assistant", "tool", "assistant", "tool", "tool"}) {
 		t.Fatalf("unexpected message topology: %v", got)
 	}
-	if messages[2].(map[string]any)["reasoning_content"] != "先读取" {
+	if messages[2].(map[string]any)["reasoning_content"] != "read first" {
 		t.Fatal("original reasoning was not preserved")
 	}
 	second := messages[4].(map[string]any)
@@ -450,7 +450,7 @@ func TestResponsesThinkingNoReasoningStillEchoesEmptyField(t *testing.T) {
 	if second["reasoning"] != " " {
 		t.Fatalf("thinking assistant without reasoning must carry a whitespace marker: %#v", second)
 	}
-	if second["content"] != "继续检查" || !reflect.DeepEqual(callIDs(second), []string{"call_b", "call_c"}) {
+	if second["content"] != "continue checking" || !reflect.DeepEqual(callIDs(second), []string{"call_b", "call_c"}) {
 		t.Fatalf("text and calls were not grouped into the same reply: %#v", second)
 	}
 }

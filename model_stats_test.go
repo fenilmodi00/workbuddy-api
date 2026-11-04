@@ -61,7 +61,7 @@ func TestModelStatsRecordingAndSnapshot(t *testing.T) {
 	if target.Requests != 2 || target.Success != 1 || target.Failed != 1 {
 		t.Fatalf("unexpected counters: %+v", target)
 	}
-	if target.CNFree != "否" || target.IntlFree != "是" || target.LastStatus != "失败:14018" {
+	if target.CNFree != "No" || target.IntlFree != "Yes" || target.LastStatus != "Failed:14018" {
 		t.Fatalf("unexpected cost/status: cn=%s intl=%s status=%s", target.CNFree, target.IntlFree, target.LastStatus)
 	}
 	if !target.HasTTFT || target.AvgTTFTMs != 500 {
@@ -114,7 +114,8 @@ func TestFormatTokensM(t *testing.T) {
 	}
 }
 
-// 同一模型名在两个站点结论不同时必须分列显示，不能合并成“混合”。
+// When the same model name has different verdicts on two sites, they must display
+// in separate columns and never merge into "Mixed".
 func TestModelFreeSplitBySite(t *testing.T) {
 	resetModelStats()
 	recordModelCostClass("hy3", "cn", true)
@@ -133,10 +134,10 @@ func TestModelFreeSplitBySite(t *testing.T) {
 	if target == nil {
 		t.Fatal("hy3 not found")
 	}
-	if target.CNFree != "是" || target.IntlFree != "否" {
-		t.Fatalf("expected cn=是 intl=否, got cn=%s intl=%s", target.CNFree, target.IntlFree)
+	if target.CNFree != "Yes" || target.IntlFree != "No" {
+		t.Fatalf("expected cn=Yes intl=No, got cn=%s intl=%s", target.CNFree, target.IntlFree)
 	}
-	// 账号账本维度：国内站 free 只影响国内站账号
+	// Account ledger dimension: a domestic free verdict only affects domestic-site accounts
 	if !modelServableLocked(cnAcc, "hy3", time.Now()) {
 		t.Fatal("cn account should serve cn-free model")
 	}
@@ -152,10 +153,10 @@ func TestMultiplierCellUsesFreeThenOfficial(t *testing.T) {
 	modelsMu.Unlock()
 	defer resetModelsStateT(t)
 
-	if got := modelDisplayMultiplier("cn", "hy3", "是"); got != "0.00x" {
+	if got := modelDisplayMultiplier("cn", "hy3", "Yes"); got != "0.00x" {
 		t.Fatalf("free model should show 0.00x, got %s", got)
 	}
-	if got := modelDisplayMultiplier("cn", "hy3", "否"); got != "0.20x" {
+	if got := modelDisplayMultiplier("cn", "hy3", "No"); got != "0.20x" {
 		t.Fatalf("paid cn should show official multiplier, got %s", got)
 	}
 	if got := modelDisplayMultiplier("intl", "hy3", "-"); got != "0.51x" {
@@ -179,7 +180,7 @@ func TestModelTableHasEqualDisplayWidth(t *testing.T) {
 			t.Fatalf("line %d width=%d want=%d:\n%s", i, got, want, table)
 		}
 	}
-	for _, h := range []string{"模型", "国内倍率", "国际倍率", "可用账号", "请求", "首Token", "平均", "总Token"} {
+	for _, h := range []string{"Model", "CN multiplier", "Intl multiplier", "Avail. accounts", "Requests", "first token", "Avg", "Total tokens"} {
 		if !strings.Contains(table, h) {
 			t.Fatalf("table missing header %q", h)
 		}
@@ -230,18 +231,18 @@ func TestTTFTReader(t *testing.T) {
 	}
 }
 
-// 平均首字/平均总耗时必须是最近 5 小时的滚动窗口，旧样本要被淘汰。
+// Average first token / total latency must be a rolling 5-hour window; stale samples must be evicted.
 func TestWindowAveragesRollingFiveHours(t *testing.T) {
 	resetModelStats()
 	now := time.Now()
 
 	modelStatsMu.Lock()
 	stat := modelStatLocked("m")
-	// 窗口内：1 小时前，TTFT 200ms，耗时 1s
+	// Inside window: 1 hour ago, TTFT 200ms, latency 1s
 	cur := stat.bucketLocked(now)
 	cur.TTFTSum, cur.TTFTSamples = 200*time.Millisecond, 1
 	cur.LatencySum, cur.LatencySamples = 1*time.Second, 1
-	// 窗口外：10 小时前，TTFT 10s，耗时 20s（应被淘汰）
+	// Outside window: 10 hours ago, TTFT 10s, latency 20s (must be evicted)
 	stat.Buckets = append(stat.Buckets, hourlyBucket{
 		Hour:    hourStart(now.Add(-10 * time.Hour)),
 		TTFTSum: 10 * time.Second, TTFTSamples: 1,
@@ -262,7 +263,7 @@ func TestModelTableHeadersMentionWindow(t *testing.T) {
 	resetModelStats()
 	rows := buildModelStatSnapshots(time.Now(), []*Account{{Path: "a.json", Auth: &StoredAuth{}}})
 	table := renderModelTable(rows)
-	for _, h := range []string{"平均首Token(5h)", "平均总耗时(5h)", "总Token(M)"} {
+	for _, h := range []string{"Avg first token (5h)", "Avg total (5h)", "Total tokens (M)"} {
 		if !strings.Contains(table, h) {
 			t.Fatalf("table missing header %q", h)
 		}

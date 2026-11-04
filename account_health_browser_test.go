@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// 合成数据、隔离工作目录；不读取生产凭据，不访问上游。
+// Synthetic data, isolated working directory; reads no production credentials, accesses no upstream.
 func TestHealthBrowserFixture(t *testing.T) {
 	if os.Getenv("WORKBUDDY_HEALTH_BROWSER_FIXTURE") != "1" {
-		t.Skip("仅用于显式健康度浏览器验收")
+		t.Skip("only for explicit health browser acceptance")
 	}
 	isolatePolicies(t)
 	resetStatsState(t)
@@ -52,7 +52,7 @@ func TestHealthBrowserFixture(t *testing.T) {
 			duration = parsed
 		}
 	}
-	t.Log("合成页面 http://127.0.0.1:18326/ui/；Key health-visual-admin；五种异常，不访问生产")
+	t.Log("Synthetic page http://127.0.0.1:18326/ui/; Key health-visual-admin; five anomaly kinds, no production access")
 	deadline := time.Now().Add(duration)
 	for time.Now().Before(deadline) {
 		time.Sleep(time.Second)

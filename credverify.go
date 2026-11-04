@@ -13,14 +13,15 @@ import (
 	"time"
 )
 
-// 凭据校验：在「覆盖」和「删除」这两个不可逆动作之前，先证明新凭据可用、
-// 且要删除的凭据确实已经不能用。目的是避免把还能用的凭据销毁掉。
+// Credential verification: before the two irreversible actions — "overwrite" and
+// "delete" — prove the new credential is usable and that the credential being
+// deleted really is no longer usable. The goal is to avoid destroying credentials that still work.
 const (
-	// credentialVerifyTimeout 只读校验的超时；校验失败不会阻塞太久。
+	// credentialVerifyTimeout is the timeout for the read-only check; a failed check must not block for long.
 	credentialVerifyTimeout = 8 * time.Second
 )
 
-// jwtClaims 解码 JWT 载荷（不做签名校验），仅用于本地一致性比对与到期展示。
+// jwtClaims decodes the JWT payload (no signature verification), only for local consistency comparison and expiry display.
 func jwtClaims(token string) map[string]any {
 	parts := strings.Split(strings.TrimSpace(token), ".")
 	if len(parts) != 3 {
@@ -37,7 +38,7 @@ func jwtClaims(token string) map[string]any {
 	return claims
 }
 
-// shortID 生成不可逆短标识，用于日志里指代账号而不暴露原始标识。
+// shortID generates an irreversible short identifier, used in logs to refer to an account without exposing the original identifier.
 func shortID(value string) string {
 	if value == "" {
 		return ""
@@ -46,7 +47,7 @@ func shortID(value string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-// credentialIdentity 取出访问令牌声明的账号标识与站点 realm，用于比对新旧凭据是否同一账号。
+// credentialIdentity extracts the account identifier and site realm declared by the access token, used to compare whether old and new credentials belong to the same account.
 func credentialIdentity(tokens StoredTokens) (accountID, realm string) {
 	claims := jwtClaims(tokens.AccessToken)
 	if claims == nil {
@@ -65,11 +66,11 @@ func credentialIdentity(tokens StoredTokens) (accountID, realm string) {
 	return accountID, iss
 }
 
-// verifyAccountUsable 用只读接口确认凭据是否还能取到账号数据。
+// verifyAccountUsable uses a read-only API to confirm whether the credential can still fetch account data.
 //
-// 返回 (true, nil)  凭据可用；
-// 返回 (false, nil) 上游明确拒绝（401 或正文明确登录失效），凭据已不可用；
-// 返回 (false, err) 无法判定（普通 403、网络、超时、上游 5xx），调用方不得据此销毁凭据。
+// Returns (true, nil)  credential usable;
+// Returns (false, nil) upstream explicitly rejected (401 or body explicitly says login expired), credential no longer usable;
+// Returns (false, err) undeterminable (plain 403, network, timeout, upstream 5xx); the caller must not destroy the credential based on this alone.
 func verifyAccountUsable(ctx context.Context, auth StoredAuth) (bool, error) {
 	registerCredentialSecrets(&auth)
 	traceID := newTraceID()
@@ -78,14 +79,14 @@ func verifyAccountUsable(ctx context.Context, auth StoredAuth) (bool, error) {
 		traceID = state.traceID
 		state.mu.RUnlock()
 	}
-	log.Printf("[凭据校验] traceId=%s 阶段=只读校验开始 站点=%s 说明=确认账号接口是否可用，不写入凭据", traceID, auth.Edition)
+	log.Printf("[Credential verify] traceId=%s stage=readonly check start site=%s note=confirm account API is usable, credentials not written", traceID, auth.Edition)
 	if strings.TrimSpace(auth.Auth.AccessToken) == "" {
-		log.Printf("[凭据校验] traceId=%s 结果=无法判定 原因=缺少访问令牌 说明=未调用上游", traceID)
-		return false, fmt.Errorf("缺少访问令牌，无法校验")
+		log.Printf("[Credential verify] traceId=%s result=undeterminable reason=missing access token note=upstream not called", traceID)
+		return false, fmt.Errorf("missing access token, cannot verify")
 	}
 	if cfg.HttpClient == nil {
-		log.Printf("[凭据校验] traceId=%s 结果=无法判定 原因=HTTP客户端未就绪 说明=未调用上游", traceID)
-		return false, fmt.Errorf("HTTP 客户端未就绪，无法校验")
+		log.Printf("[Credential verify] traceId=%s result=undeterminable reason=HTTP client not ready note=upstream not called", traceID)
+		return false, fmt.Errorf("HTTP client not ready, cannot verify")
 	}
 	prof := profileForEdition(auth.Edition)
 	headers := func(r *http.Request) {
@@ -98,73 +99,73 @@ func verifyAccountUsable(ctx context.Context, auth StoredAuth) (bool, error) {
 	}
 	_, status, err := doJSONContext(ctx, cfg.HttpClient, http.MethodPost, prof.quotaSummaryURL(), headers, strings.NewReader("{}"))
 	if err != nil {
-		// 普通 403 可能只是权限不足或风控拒绝，不能据此确认 Token 失效。
-		// 仅修正只读凭据校验，不改变其他调用方的 403 停用规则。
+		// A plain 403 may just be insufficient permission or a risk-control rejection; it cannot confirm the token is invalid.
+		// This only fixes the read-only credential check and does not change other callers' 403 deactivation rules.
 		if status == http.StatusUnauthorized || isAuthFailure(0, err.Error()) {
-			log.Printf("[凭据校验] traceId=%s HTTP=%d 结果=不可用 原因=%v 说明=上游明确返回授权失效", traceID, status, err)
-			return false, nil // 上游明确拒绝：凭据确实不可用
+			log.Printf("[Credential verify] traceId=%s HTTP=%d result=unusable reason=%v note=upstream explicitly returned authorization failure", traceID, status, err)
+			return false, nil // upstream explicitly rejected: credential really unusable
 		}
-		log.Printf("[凭据校验] traceId=%s HTTP=%d 结果=无法判定 原因=%v 业务影响=不得仅凭此次结果销毁凭据", traceID, status, err)
-		return false, fmt.Errorf("只读校验未完成 HTTP=%d", status)
+		log.Printf("[Credential verify] traceId=%s HTTP=%d result=undeterminable reason=%v business impact=credential must not be destroyed based on this result alone", traceID, status, err)
+		return false, fmt.Errorf("read-only verification incomplete HTTP=%d", status)
 	}
-	log.Printf("[凭据校验] traceId=%s HTTP=%d 结果=可用 说明=已成功取到账号数据", traceID, status)
+	log.Printf("[Credential verify] traceId=%s HTTP=%d result=usable note=account data fetched successfully", traceID, status)
 	return true, nil
 }
 
-// validateRefreshedCredential 在把新凭据写回磁盘之前做两道校验：
-//  1. 新旧凭据必须属于同一账号、同一站点，防止上游串号或响应错配导致覆盖错人；
-//  2. 新访问令牌必须能取到账号数据，防止用「接口 200 但实际不可用」的凭据覆盖掉还能用的旧凭据。
+// validateRefreshedCredential performs two checks before writing the new credential back to disk:
+//  1. Old and new credentials must belong to the same account and the same site, preventing an upstream account mix-up or response mismatch from overwriting the wrong credential;
+//  2. The new access token must be able to fetch account data, preventing an "API 200 but actually unusable" credential from overwriting an old credential that still works.
 //
-// 校验接口本身不可用时按通过处理，避免因为校验抖动而拒绝掉有效的新凭据。
+// If the verification API itself is unavailable, treat as passed, avoiding rejection of a valid new credential due to verification jitter.
 func validateRefreshedCredential(path string, refreshed *StoredAuth, oldTokens StoredTokens) error {
 	oldID, oldRealm := credentialIdentity(oldTokens)
 	newID, newRealm := credentialIdentity(refreshed.Auth)
-	identityNote := "凭据未携带可解析的账号声明，跳过一致性比对"
+	identityNote := "credential carries no parseable account claims, skipping consistency comparison"
 	if newID != "" {
-		identityNote = fmt.Sprintf("账号标识=%s 站点=%s 与旧凭据一致", shortID(newID), newRealm)
+		identityNote = fmt.Sprintf("account=%s site=%s matches old credential", shortID(newID), newRealm)
 	}
 	if oldID != "" && newID != "" && oldID != newID {
-		return fmt.Errorf("新凭据账号标识与旧凭据不一致（%s -> %s），拒绝覆盖",
+		return fmt.Errorf("new credential account identifier differs from old credential (%s -> %s), refusing overwrite",
 			shortID(oldID), shortID(newID))
 	}
 	if oldRealm != "" && newRealm != "" && oldRealm != newRealm {
-		return fmt.Errorf("新凭据站点与旧凭据不一致（%s -> %s），拒绝覆盖", oldRealm, newRealm)
+		return fmt.Errorf("new credential site differs from old credential (%s -> %s), refusing overwrite", oldRealm, newRealm)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), credentialVerifyTimeout)
 	defer cancel()
 	usable, err := verifyAccountUsable(ctx, *refreshed)
 	if err != nil {
-		log.Printf("[凭据校验] 账号=%s 阶段=覆盖前校验 结果=无法判定，按通过处理 一致性=%s 原因=%v 说明=刷新接口已成功，不因校验抖动丢弃新凭据",
+		log.Printf("[Credential verify] account=%s stage=pre-overwrite check result=undeterminable, treating as passed consistency=%s reason=%v note=refresh API succeeded, not discarding new credential due to verification jitter",
 			path, identityNote, err)
 		return nil
 	}
 	if !usable {
-		log.Printf("[凭据校验] 账号=%s 阶段=覆盖前校验 结果=不通过 一致性=%s 原因=新访问令牌取不到账号数据 业务影响=放弃本次覆盖，保留旧凭据继续使用",
+		log.Printf("[Credential verify] account=%s stage=pre-overwrite check result=failed consistency=%s reason=new access token cannot fetch account data business impact=abandoning this overwrite, keeping old credential in use",
 			path, identityNote)
-		return fmt.Errorf("新凭据取不到账号数据，拒绝覆盖旧凭据")
+		return fmt.Errorf("new credential cannot fetch account data, refusing to overwrite old credential")
 	}
-	log.Printf("[凭据校验] 账号=%s 阶段=覆盖前校验 结果=通过 一致性=%s 只读校验=新访问令牌可取到账号数据 说明=允许覆盖旧凭据",
+	log.Printf("[Credential verify] account=%s stage=pre-overwrite check result=passed consistency=%s readonly check=new access token can fetch account data note=allowing overwrite of old credential",
 		path, identityNote)
 	return nil
 }
 
-// credentialStillUsableForDelete 判断一个即将被删除的凭据是否其实还能用。
-// 返回值 keep=true 表示应保留凭据文件。
+// credentialStillUsableForDelete determines whether a credential about to be deleted can actually still be used.
+// A return value of keep=true means the credential file should be kept.
 func credentialStillUsableForDelete(auth *StoredAuth) (keep bool, note string) {
 	if auth == nil || strings.TrimSpace(auth.Auth.AccessToken) == "" {
-		return false, "无访问令牌可校验，按已失效处理"
+		return false, "no access token to verify, treating as expired"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), credentialVerifyTimeout)
 	defer cancel()
 	usable, err := verifyAccountUsable(ctx, *auth)
 	switch {
 	case err != nil:
-		// 无法判定时保守保留：删除不可逆，宁可留一个失效文件。
-		return true, fmt.Sprintf("只读校验无法完成（%v），保守保留凭据", err)
+		// When undeterminable, conservatively keep: deletion is irreversible, better to leave an expired file.
+		return true, fmt.Sprintf("read-only verification could not complete (%v), conservatively keeping credential", err)
 	case usable:
-		return true, "只读校验显示凭据仍可取到账号数据，保留凭据不删除"
+		return true, "read-only verification shows credential can still fetch account data, keeping credential without deleting"
 	default:
-		return false, "只读校验确认凭据已不可用"
+		return false, "read-only verification confirms credential is no longer usable"
 	}
 }

@@ -189,13 +189,13 @@ func TestGatewaySetupRejectsRemoteOriginAndMalformedInput(t *testing.T) {
 			if w.Code != 400 && w.Code != 403 {
 				t.Fatalf("unsafe bootstrap request accepted: status=%d", w.Code)
 			}
-			// 只有「首次生成管理 Key」这条拒绝提示需要给出全部可操作路径；
-			// 同源/Content-Type 等中间件拒绝各有自己的原因，不在此断言范围内。
+			// Only the "first-time admin Key generation" rejection message needs to give all actionable paths;
+			// middleware rejections like same-origin/Content-Type have their own reasons and are out of assertion scope here.
 			respBody := w.Body.String()
-			if strings.Contains(respBody, "首次自动生成管理 Key") {
+			if strings.Contains(respBody, "automatically generate an admin Key for the first time") {
 				for _, hint := range []string{"SSH", "config.json", "gateway.adminKey"} {
 					if !strings.Contains(respBody, hint) {
-						t.Fatalf("拒绝提示缺少可操作路径 %q: %s", hint, respBody)
+						t.Fatalf("rejection message missing actionable path %q: %s", hint, respBody)
 					}
 				}
 			}
@@ -447,10 +447,10 @@ func BenchmarkTailLongLineLinear(b *testing.B) {
 	}
 }
 
-// 旧启动参数必须被接受（不报错），但必须完全不产生作用。
+// Legacy startup flags must be accepted (no error) but must be completely inert.
 func TestGatewayLegacyAPIKeyFlagIsAcceptedButInert(t *testing.T) {
 	isolatedGatewayConfig(t)
-	// 场景一：config.json 未配置 Key，旧参数不得开启鉴权、不得写盘。
+	// Scenario 1: config.json has no Key configured; the legacy flag must not enable auth or write to disk.
 	ignoreLegacyAPIKeyFlag("synthetic-legacy-key")
 	if currentAPIKey() != "" {
 		t.Fatal("legacy -api-key must not enable API authentication")
@@ -464,7 +464,7 @@ func TestGatewayLegacyAPIKeyFlagIsAcceptedButInert(t *testing.T) {
 	if code := adminRequest(newAPIHandler(), http.MethodPost, "/v1/messages/count_tokens", "any-client-key", `{"messages":[]}`).Code; code != 200 {
 		t.Fatalf("arbitrary key should still work while API auth is disabled, status=%d", code)
 	}
-	// 场景二：config.json 已配置 Key，旧参数不得覆盖配置。
+	// Scenario 2: config.json already has a Key configured; the legacy flag must not override it.
 	content := `{"gateway":{"apiPort":8317,"webPort":8316,"adminKey":"manual-admin","apiKeyEnabled":true,"apiKey":"synthetic-config-key"}}`
 	if err := os.WriteFile(runtimeConfigFile, []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -481,7 +481,7 @@ func TestGatewayLegacyAPIKeyFlagIsAcceptedButInert(t *testing.T) {
 	}
 }
 
-// 显式启用的本地浏览器夹具。只启动两个测试 handler，不启动上游、续期或生产服务。
+// Locally enabled browser fixture. Only starts two test handlers; no upstream, renewal, or production services.
 func TestWebUIBrowserHarness(t *testing.T) {
 	dir := os.Getenv("WB_UI_HARNESS_DIR")
 	if dir == "" {
@@ -536,5 +536,5 @@ func mustWorkingDir(t *testing.T) string {
 	return path
 }
 
-// 编译期确认管理 HTTP 请求仍走标准响应接口，不引入特殊流式写入器要求。
+// Compile-time confirmation that admin HTTP requests still go through the standard response interface, without introducing special streaming-writer requirements.
 var _ io.Writer = (*httptest.ResponseRecorder)(nil)

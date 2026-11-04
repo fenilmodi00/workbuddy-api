@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// reasoningRepairReport 只统计字段形状与数量，不保存或记录思维链正文。
+// reasoningRepairReport counts field shapes and quantities only; it never saves or logs chain-of-thought content.
 type reasoningRepairReport struct {
 	Applied                bool
 	ThinkingEnabled        bool
@@ -20,11 +20,12 @@ type reasoningRepairReport struct {
 	ReasoningPlaceholders  int
 }
 
-// repairReasoningHistory 在发往上游的 Chat 消息形态上做一次共享修复。
-// 两条入口都必须在 tool_call 序列修复后、json.Marshal 前调用：
-// Chat 原生输入与 Responses 转换后的输入因此遵守同一套 DeepSeek thinking 规则。
-// 已有推理字符串不覆盖；未收到推理的助手回合只补空 reasoning_content，并在上游
-// 需要非空 reasoning 字段的形态下给 reasoning 一个空白占位，而不是捏造思维链。
+// repairReasoningHistory applies one shared repair to Chat message shapes before they are sent upstream.
+// Both entry points must be called after tool_call sequence repair and before json.Marshal:
+// native Chat input and Responses-converted input therefore follow the same set of DeepSeek thinking rules.
+// Existing reasoning strings are never overwritten; assistant turns that received no reasoning only get an empty
+// reasoning_content added, and in shapes where upstream requires a non-empty reasoning field, reasoning gets a
+// blank placeholder instead of fabricating a chain of thought.
 func repairReasoningHistory(obj map[string]any) reasoningRepairReport {
 	var report reasoningRepairReport
 	model, _ := obj["model"].(string)
@@ -51,8 +52,9 @@ func repairReasoningHistory(obj map[string]any) reasoningRepairReport {
 			break
 		}
 	}
-	// 显式关闭且无既有推理痕迹时不碰历史。关闭后续思考不意味着要抹掉此前
-	// 已经产生的推理：有痕迹仍须回放，避免多轮上下文不一致。
+	// Leave history untouched when thinking is explicitly disabled and there is no existing reasoning trace.
+	// Disabling subsequent thinking does not mean erasing reasoning already produced: traces must still be
+	// replayed to avoid inconsistency across multi-turn context.
 	if !report.ThinkingEnabled && !report.HasTrace {
 		return report
 	}
@@ -86,7 +88,7 @@ func repairReasoningHistory(obj map[string]any) reasoningRepairReport {
 			msg["reasoning"] = rc
 			report.ReasoningMirrored++
 		} else {
-			// 对齐上游部分租户对 len(reasoning)>0 的校验；单个空格不是推理内容。
+			// Aligns with the len(reasoning)>0 validation some upstream tenants enforce; a single space is not reasoning content.
 			msg["reasoning"] = " "
 			report.ReasoningPlaceholders++
 		}
@@ -94,8 +96,8 @@ func repairReasoningHistory(obj map[string]any) reasoningRepairReport {
 	return report
 }
 
-// thinkingExplicitlyEnabled 仅识别客户端已明确开启的思考信号；不替用户开启思考、
-// 不更改原有 effort 或 thinking.type。显式 disabled 的优先级高于其他字段。
+// thinkingExplicitlyEnabled only recognizes thinking signals the client has explicitly turned on; it never enables
+// thinking for the user and never changes existing effort or thinking.type. Explicit disabled takes priority over other fields.
 func thinkingExplicitlyEnabled(obj map[string]any) bool {
 	if thinking, ok := obj["thinking"].(map[string]any); ok {
 		switch strings.ToLower(strings.TrimSpace(stringField(thinking, "type"))) {
@@ -130,16 +132,16 @@ func enabledEffort(value string) bool {
 	}
 }
 
-// logReasoningHistoryRepair 复用网关已有文件日志/TraceID；敏感正文绝不入日志。
+// logReasoningHistoryRepair reuses the gateway's existing file log/TraceID; sensitive content is never logged.
 func logReasoningHistoryRepair(r *http.Request, reqID uint64, model string, report reasoningRepairReport) {
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek") {
 		return
 	}
-	result := "跳过（思考未开启且无历史痕迹）"
+	result := "skipped (thinking disabled and no history trace)"
 	if report.Applied {
-		result = "已核对并补全助手历史"
+		result = "checked and completed assistant history"
 	}
-	log.Printf("[推理历史回填] traceId=%s requestId=%d 模型=%s 结果=%s thinking开启=%t 历史有痕迹=%t 助手消息=%d 原推理保留=%d 从reasoning复制=%d 补空reasoning_content=%d 非字符串归一=%d reasoning镜像=%d reasoning空白占位=%d 业务影响=避免DeepSeek长会话11155且不记录推理正文",
+	log.Printf("[ReasoningHistoryRepair] traceId=%s requestId=%d model=%s result=%s thinkingEnabled=%t historyHasTrace=%t assistantMessages=%d preservedReasoning=%d copiedFromReasoning=%d emptyReasoningContentAdded=%d nonStringNormalized=%d reasoningMirrored=%d reasoningBlankPlaceholders=%d businessImpact=avoids DeepSeek long-session 11155 without logging reasoning content",
 		debugTraceID(r), reqID, model, result, report.ThinkingEnabled, report.HasTrace,
 		report.AssistantMessages, report.PreservedContent, report.CopiedFromReasoning,
 		report.EmptyContentAdded, report.InvalidContentReplaced,
@@ -151,6 +153,6 @@ func logReasoningHistoryRepair(r *http.Request, reqID uint64, model string, repo
 		"invalid_content_replaced": report.InvalidContentReplaced,
 		"reasoning_mirrored":       report.ReasoningMirrored,
 		"reasoning_placeholders":   report.ReasoningPlaceholders,
-		"business_impact":          "已校验推理历史字段形状；不保存提示词或推理正文",
+		"business_impact":          "reasoning history field shapes validated; prompts and reasoning content are not saved",
 	})
 }

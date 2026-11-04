@@ -50,20 +50,22 @@ func TestAccountHealthPercentage(t *testing.T) {
 func TestAccountAlertParsesKnownLogsOnly(t *testing.T) {
 	prefix := "2026/10/14 22:59:30 "
 	tests := []struct{ body, state, account string }{
-		{`[账号状态] {"at":1791989970,"account":"workbuddy a.json","state":"expired"}`, "expired", "workbuddy a.json"},
+		{`[Account status] {"at":1791989970,"account":"workbuddy a.json","state":"expired"}`, "expired", "workbuddy a.json"},
+		{"[Cooldown] Account a.json hit the rate limit, blocked automatically until 2099-01-01 (hint: x)", "cooldown", "a.json"},
+		// Legacy Chinese wording from logs written before the English migration still parses (see legacyAccountLogWording).
 		{"[Cooldown] 账号 a.json 触发频率限制，自动屏蔽至 2099-01-01 (提示: x)", "cooldown", "a.json"},
-		{"[Quota] traceId=x 账号 a.json 额度查询成功，总额度=0；账号已冻结调度，等待额度恢复", "paid_exhausted", "a.json"},
-		{"[Quota] traceId=x 账号 a.json 企业额度计算=limitNum 100 - credit 100；分配额度已用完，收费模型暂停调度", "paid_exhausted", "a.json"},
-		{"[Auth] 账号 a.json 判定登录态失效，已停止调度并写入失效标记", "disabled", "a.json"},
-		{`[管理开关] traceId=x 结果=成功 类型=account 目标="a b.json" 启用=false 说明=配置已保存`, "paused", "a b.json"},
-		{"[Quota] traceId=x 账号 a.json 查询额度失败，保留上一次数据", "", ""},
-		{"[Auth] 账号 a.json Token 需要续期，开始调用上游刷新接口", "", ""},
-		{"[Auth] 账号 a.json 续期被上游判定登录态失效（连续1/3次）；暂时保留凭据", "", ""},
-		{"[ModelCooldown] 账号 a.json 模型 m 触发模型级频率限制", "", ""},
-		{`[管理开关] traceId=x 结果=成功 类型=model 目标="a.json" 启用=false 说明=模型停用`, "", ""},
-		{`[账号状态] {"at":1,"account":"a","state":"active"}`, "", ""},
-		{`[账号状态] {"at":0,"account":"a","state":"expired"}`, "", ""},
-		{"[外部接口] 服务返回文字 账号失效", "", ""},
+		{"[Quota] traceId=x account a.json quota query succeeded, total=0, used=0, remaining=0, paidUser=false, plan=Free; account scheduling frozen pending quota recovery", "paid_exhausted", "a.json"},
+		{"[Quota] traceId=x account a.json enterprise quota computed=limitNum 100 - credit 100, remaining=0, unlimited=false, plan=Free; allocated quota used up, paid model scheduling paused", "paid_exhausted", "a.json"},
+		{"[Auth] Account a.json login state declared dead; removed from scheduling and disabled marker written; consecutive failures=3 basis=refresh", "disabled", "a.json"},
+		{`[Admin toggle] traceId=x result=success type=account target="a b.json" enabled=false note=config saved and applied immediately`, "paused", "a b.json"},
+		{"[Quota] traceId=x account a.json quota query failed, HTTP=500; previous quota data kept, plan mark pending refresh", "", ""},
+		{"[Auth] Account a.json token needs renewal; current expiry=2099-01-01 00:00:00, renewal threshold=15 minutes before expiry, calling upstream refresh API", "", ""},
+		{"[Auth] Account a.json renewal declared login-state-dead by the upstream (1/3 consecutive): x; credentials kept for now, scheduling stops only at the threshold; re-login recommended soon", "", ""},
+		{"[ModelCooldown] Account a.json model m hit a model-level rate limit", "", ""},
+		{`[Admin toggle] traceId=x result=success type=model target="a.json" enabled=false note=model disabled`, "", ""},
+		{`[Account status] {"at":1,"account":"a","state":"active"}`, "", ""},
+		{`[Account status] {"at":0,"account":"a","state":"expired"}`, "", ""},
+		{"[External API] upstream returned text: account invalid", "", ""},
 	}
 	for _, tc := range tests {
 		event, ok := parseAccountLogEvent(prefix+tc.body, "gateway-2026-10-14.log")
@@ -92,38 +94,38 @@ func TestAccountAlertMarksTrackTransitionsWithoutFlooding(t *testing.T) {
 	rows := []accountSnapshot{{Path: "a.json", State: "expired", SchedulingEnabled: &off, DisabledReason: "Bearer never-emit-raw"}}
 	marks := recordAccountAlertMarks(rows, now)
 	recordAccountAlertMarks(rows, now+1)
-	if got := strings.Count(audit.String(), "[账号状态]"); got != 2 {
-		t.Fatalf("状态没变化时不应重复写日志，实际写了 %d 条", got)
+	if got := strings.Count(audit.String(), "[Account status]"); got != 2 {
+		t.Fatalf("must not log again when state is unchanged, wrote %d lines", got)
 	}
 	if strings.Contains(audit.String(), "never-emit-raw") {
-		t.Fatal("不能把失效原因原文写进日志")
+		t.Fatal("must not write the raw disabled reason into the log")
 	}
 	seen := map[string]bool{}
 	for _, mark := range marks["a.json"] {
 		seen[mark.State] = true
 		if mark.At != now {
-			t.Fatalf("标记时间应为首次观察时间: %+v", mark)
+			t.Fatalf("mark time should be the first-seen time: %+v", mark)
 		}
 	}
-	// 重复快照必须沿用同一份标记：时间不刷新，定位符也不能丢。
+	// Repeated snapshots must reuse the same marker: the time is not refreshed and the locator must not be lost.
 	if again := recordAccountAlertMarks(rows, now+9); len(again["a.json"]) == 0 {
-		t.Fatal("重复快照不应丢掉告警标记")
+		t.Fatal("repeated snapshot must not drop alert marks")
 	} else {
 		for _, mark := range again["a.json"] {
 			if mark.At != now {
-				t.Fatalf("重复快照不得刷新首次观察时间: %+v", mark)
+				t.Fatalf("repeated snapshot must not refresh the first-seen time: %+v", mark)
 			}
 		}
 	}
 	if !seen["expired"] || !seen["paused"] {
-		t.Fatalf("快照标记应包含当前全部异常类别: %+v", marks)
+		t.Fatalf("snapshot marks should include every current anomaly kind: %+v", marks)
 	}
 	rows[0].State, rows[0].SchedulingEnabled = "active", nil
 	if after := recordAccountAlertMarks(rows, now+2); len(after["a.json"]) != 0 {
-		t.Fatalf("恢复后不应再保留告警标记: %+v", after)
+		t.Fatalf("alert marks must not survive recovery: %+v", after)
 	}
 	if !strings.Contains(audit.String(), `"state":"active"`) {
-		t.Fatal("恢复转换也应留一条审计日志")
+		t.Fatal("recovery transitions should also leave an audit log")
 	}
 }
 
@@ -131,11 +133,11 @@ func TestAccountAlertReadDeduplicateAndResolve(t *testing.T) {
 	chdirTemp(t)
 	os.Mkdir(logDir, 0700)
 	day := "gateway-2026-10-14.log"
-	lines := "2026/10/14 01:00:00 [账号状态] {\"at\":100,\"account\":\"a.json\",\"state\":\"disabled\"}\n" +
-		"2026/10/14 02:00:00 [账号状态] {\"at\":200,\"account\":\"a.json\",\"state\":\"disabled\"}\n" +
-		"2026/10/14 03:00:00 [账号状态] {\"at\":300,\"account\":\"b.json\",\"state\":\"expired\"}\n" +
-		"2026/10/14 04:00:00 [账号状态] {\"at\":400,\"account\":\"c.json\",\"state\":\"paused\"}\n" +
-		"2026/10/14 04:00:00 [账号状态] {\"at\":999,\"account\":\"c.json\",\"state\":\"paused\"}" // incomplete trailing line
+	lines := "2026/10/14 01:00:00 [Account status] {\"at\":100,\"account\":\"a.json\",\"state\":\"disabled\"}\n" +
+		"2026/10/14 02:00:00 [Account status] {\"at\":200,\"account\":\"a.json\",\"state\":\"disabled\"}\n" +
+		"2026/10/14 03:00:00 [Account status] {\"at\":300,\"account\":\"b.json\",\"state\":\"expired\"}\n" +
+		"2026/10/14 04:00:00 [Account status] {\"at\":400,\"account\":\"c.json\",\"state\":\"paused\"}\n" +
+		"2026/10/14 04:00:00 [Account status] {\"at\":999,\"account\":\"c.json\",\"state\":\"paused\"}" // incomplete trailing line
 	os.WriteFile(filepath.Join(logDir, day), []byte(lines), 0600)
 	os.WriteFile(filepath.Join(logDir, "debug-2026-10-14.jsonl"), []byte(lines), 0600)
 	scan, err := readAccountAlertLogs()
@@ -256,7 +258,7 @@ func TestAccountAlertEndpointAuthenticatedReadOnlyAndHealth(t *testing.T) {
 	raw, _ := json.Marshal(doc)
 	os.WriteFile(statusSnapshotFile, raw, 0600)
 	event, _ := json.Marshal(accountLogEvent{At: time.Now().Unix(), Account: "a.json", State: "disabled"})
-	log.Printf("[账号状态] %s", event)
+	log.Printf("[Account status] %s", event)
 	handler := newWebUIHandler()
 	for _, path := range []string{"/admin/api/account-alerts", "/admin/api/status"} {
 		if got := adminRequest(handler, "GET", path, "", ""); got.Code != 401 {
@@ -285,13 +287,13 @@ func TestAccountAlertMissingAndBoundedLogs(t *testing.T) {
 	}
 	os.Mkdir(logDir, 0700)
 	path := filepath.Join(logDir, "gateway-2026-10-14.log")
-	content := strings.Repeat("x", int(accountAlertReadBudget)+100) + "\n2026/10/14 01:00:00 [账号状态] {\"at\":123,\"account\":\"a.json\",\"state\":\"expired\"}\n"
+	content := strings.Repeat("x", int(accountAlertReadBudget)+100) + "\n2026/10/14 01:00:00 [Account status] {\"at\":123,\"account\":\"a.json\",\"state\":\"expired\"}\n"
 	os.WriteFile(path, []byte(content), 0600)
 	scan, err = readAccountAlertLogs()
 	if err != nil || !scan.Truncated || scan.Scanned != accountAlertReadBudget || len(scan.Events) != 1 {
 		t.Fatalf("%+v %v", scan, err)
 	}
-	// 直接处理器对写操作也拒绝，不能以无鉴权执行的测试误判为只读。
+	// The handler itself must also reject writes; an unauthenticated test run must not be mistaken for read-only.
 	rec := httptest.NewRecorder()
 	handleWebUIAccountAlerts(rec, httptest.NewRequest("DELETE", "/admin/api/account-alerts", nil))
 	if rec.Code != 405 {
@@ -347,11 +349,11 @@ func TestReadWebLogAroundFocusesOffset(t *testing.T) {
 		t.Fatalf("err=%v resolved=%t", err, resolved)
 	}
 	if focus < 0 || focus >= len(lines) || lines[focus] != "line-30" {
-		t.Fatalf("定位到错误行 focus=%d lines=%v", focus, lines)
+		t.Fatalf("focused the wrong line focus=%d lines=%v", focus, lines)
 	}
-	// 偏移超出文件（日志已轮转或清理）时不能假装定位成功。
+	// An offset past the end of the file (logs rotated or cleaned) must not pretend to resolve.
 	if _, _, resolved, err := readWebLogAround(name, 1<<20, 64); err != nil || resolved {
-		t.Fatalf("越界偏移应 resolved=false: resolved=%t err=%v", resolved, err)
+		t.Fatalf("out-of-range offset should give resolved=false: resolved=%t err=%v", resolved, err)
 	}
 }
 
@@ -360,11 +362,11 @@ func TestSnapshotAlertsPreferInlineAndHideRecovered(t *testing.T) {
 	rows := []accountSnapshot{{Path: "a.json", State: "cooldown", Alerts: []accountAlertMark{mark}}}
 	alerts := currentAlertsFromSnapshot(rows)
 	if len(alerts) != 1 || alerts[0].LogOffset != 12345 || alerts[0].Severity != "warning" {
-		t.Fatalf("快照内联告警渲染错误: %+v", alerts)
+		t.Fatalf("snapshot inline alerts rendered wrong: %+v", alerts)
 	}
-	// 账号已恢复但快照标记还残留时，不允许继续展示。
+	// A recovered account must not keep showing a stale snapshot mark.
 	rows[0].State = "active"
 	if got := currentAlertsFromSnapshot(rows); len(got) != 0 {
-		t.Fatalf("恢复后必须不再展示: %+v", got)
+		t.Fatalf("must not be shown after recovery: %+v", got)
 	}
 }

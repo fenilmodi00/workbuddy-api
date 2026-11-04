@@ -211,7 +211,7 @@ func TestRetiredCompatibilityWarningAndIdentityHotReload(t *testing.T) {
 		if text, _ := normalizeAssistantIdentityText("workspace root"); text != tc.want {
 			t.Fatalf("reloaded text=%q want %q", text, tc.want)
 		}
-		hasWarning := strings.Contains(output.String(), "[废弃配置] traceId=identity-reload-test")
+		hasWarning := strings.Contains(output.String(), "[Deprecated config] traceId=identity-reload-test")
 		if hasWarning != tc.warn {
 			t.Fatalf("retired-field warning=%t want %t", hasWarning, tc.warn)
 		}
@@ -229,7 +229,7 @@ func TestRetiredCompatibilityWarningAndIdentityHotReload(t *testing.T) {
 	if text, _ := normalizeAssistantIdentityText("workspace root"); text != "workspace base" {
 		t.Fatal("rejected reload must preserve the last working identity settings")
 	}
-	if !strings.Contains(output.String(), "结果=拒绝") {
+	if !strings.Contains(output.String(), "result=rejected") {
 		t.Fatal("rejected reload must have an audit entry")
 	}
 }

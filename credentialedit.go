@@ -18,7 +18,7 @@ import (
 
 const credentialEditBudget = 256 << 10
 
-var errCredentialChanged = errors.New("凭据文件已被后台续期或其他操作更新，请重新加载后再保存，避免覆盖新令牌")
+var errCredentialChanged = errors.New("credential file was updated by background renewal or another operation; reload before saving to avoid overwriting the new token")
 
 func credentialRevision(data []byte) string {
 	sum := sha256.Sum256(data)
@@ -34,21 +34,21 @@ func openEditableCredential(target string, flag int) (*os.Root, *os.File, error)
 		}
 	}
 	if !allowed {
-		return nil, nil, gatewayValidationError("只能编辑当前配置加载的凭据文件，不能指定任意路径")
+		return nil, nil, gatewayValidationError("only credential files loaded by the current config may be edited; arbitrary paths are not allowed")
 	}
 	root, err := os.OpenRoot(filepath.Dir(target))
 	if err != nil {
-		return nil, nil, errors.New("凭据目录不可访问")
+		return nil, nil, errors.New("credential directory is not accessible")
 	}
 	info, err := root.Lstat(filepath.Base(target))
 	if err != nil || !info.Mode().IsRegular() {
 		root.Close()
-		return nil, nil, gatewayValidationError("凭据文件不存在、不是普通文件或为符号链接")
+		return nil, nil, gatewayValidationError("credential file does not exist, is not a regular file, or is a symbolic link")
 	}
 	f, err := root.OpenFile(filepath.Base(target), flag, 0600)
 	if err != nil {
 		root.Close()
-		return nil, nil, errors.New("凭据文件不可读写，请检查文件权限")
+		return nil, nil, errors.New("credential file is not readable/writable; check file permissions")
 	}
 	if opened, err := f.Stat(); err != nil || !os.SameFile(info, opened) {
 		f.Close()
@@ -64,7 +64,7 @@ func readEditableCredential(f *os.File) ([]byte, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(f, credentialEditBudget+1))
 	if err == nil && len(data) > credentialEditBudget {
-		err = gatewayValidationError("凭据文件超过 256 KiB，不能使用网页编辑")
+		err = gatewayValidationError("credential file exceeds 256 KiB and cannot be edited in the web UI")
 	}
 	return data, err
 }
@@ -72,24 +72,24 @@ func readEditableCredential(f *os.File) ([]byte, error) {
 func validateCredentialDocument(raw []byte) (StoredAuth, error) {
 	var auth StoredAuth
 	if len(raw) > credentialEditBudget || len(bytes.TrimSpace(raw)) == 0 || bytes.TrimSpace(raw)[0] != '{' {
-		return auth, gatewayValidationError("凭据必须是非空 JSON 对象，最大 256 KiB")
+		return auth, gatewayValidationError("credential must be a non-empty JSON object, max 256 KiB")
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if err := dec.Decode(&auth); err != nil || ensureJSONEOF(dec) != nil {
-		return auth, gatewayValidationError("凭据 JSON 格式或字段类型无效")
+		return auth, gatewayValidationError("credential JSON format or field types are invalid")
 	}
 	if strings.TrimSpace(auth.Auth.AccessToken) == "" || strings.Contains(auth.Auth.AccessToken, "****") || strings.Contains(auth.Auth.RefreshToken, "****") ||
 		strings.Contains(auth.Auth.AccessToken, "[REDACTED]") || strings.Contains(auth.Auth.RefreshToken, "[REDACTED]") {
-		return auth, gatewayValidationError("auth.accessToken 不能为空，不能保存脱敏后的令牌占位值")
+		return auth, gatewayValidationError("auth.accessToken must not be empty, and redacted token placeholders must not be saved")
 	}
-	if auth.Edition != "" && auth.Edition != "cn" && auth.Edition != "intl" {
-		return auth, gatewayValidationError("edition 必须为空、cn 或 intl")
+	if auth.Edition != "" && auth.Edition != "cn" && auth.Edition != "intl" && auth.Edition != "codebuddy" {
+		return auth, gatewayValidationError("edition must be empty, cn, intl, or codebuddy")
 	}
 	registerCredentialSecrets(&auth)
 	return auth, nil
 }
 
-// 获取账号锁后重查池中的对象，避免热加载移出/重新加入账号时操作过期对象。
+// lockCredentialAccount re-checks the pooled object after acquiring the account lock, avoiding operating on a stale object when hot reload removes/re-adds the account.
 func lockCredentialAccount(ctx context.Context, target string) (*Account, func(), error) {
 	for {
 		accountMu.Lock()
@@ -102,7 +102,7 @@ func lockCredentialAccount(ctx context.Context, target string) (*Account, func()
 		}
 		accountMu.Unlock()
 		if acc != nil && !lockAccountWithContext(ctx, &acc.lock) {
-			return nil, nil, errors.New("等待账号当前请求结束时被取消，凭据未修改")
+			return nil, nil, errors.New("cancelled while waiting for the account's in-flight requests to finish; credential not modified")
 		}
 		accountMu.Lock()
 		var current *Account
@@ -154,14 +154,14 @@ func saveEditedCredential(ctx context.Context, target, revision, content, trace 
 		return errCredentialChanged
 	}
 	if ctx.Err() != nil {
-		return errors.New("请求已取消，凭据未修改")
+		return errors.New("request cancelled; credential not modified")
 	}
 	if same, err := root.Stat(filepath.Base(target)); err != nil {
 		return errCredentialChanged
 	} else if opened, err := f.Stat(); err != nil || !os.SameFile(same, opened) {
 		return errCredentialChanged
 	}
-	log.Printf("[凭据编辑] traceId=%s 阶段=保存 文件=%q 旧字节=%d 新字节=%d 说明=版本检查通过，仅记录文件与长度，绝不记录JSON正文或令牌", trace, target, len(old), len(content))
+	log.Printf("[Credential edit] traceId=%s stage=save file=%q old bytes=%d new bytes=%d note=revision check passed; only file and length logged, never JSON body or tokens", trace, target, len(old), len(content))
 	write := func(data []byte) error {
 		n, err := f.WriteAt(data, 0)
 		if err == nil && n != len(data) {
@@ -177,9 +177,9 @@ func saveEditedCredential(ctx context.Context, target, revision, content, trace 
 	}
 	if err := write([]byte(content)); err != nil {
 		if restoreErr := write(old); restoreErr != nil {
-			return errors.New("凭据保存失败且恢复旧文件失败，请检查服务器磁盘状态")
+			return errors.New("credential save failed and restoring the old file failed; check server disk status")
 		}
-		return errors.New("凭据保存失败，旧文件已恢复")
+		return errors.New("credential save failed; old file restored")
 	}
 	clearDisabledMarker(target)
 	info, err := f.Stat()
@@ -204,7 +204,7 @@ func saveEditedCredential(ctx context.Context, target, revision, content, trace 
 	}
 	acc.Auth, acc.Edition, acc.fingerprint = &auth, profileForEdition(auth.Edition).Key, accountFingerprint(info)
 	acc.Disabled, acc.DisabledReason = false, ""
-	log.Printf("[凭据编辑] traceId=%s 结果=保存成功 文件=%q 加入账号池=%t 账号身份已变更=%t 说明=令牌未进入日志，未调用上游验证；同一账号保留账本，身份或站点改变则重置对应运行状态", trace, target, added, identityChanged)
+	log.Printf("[Credential edit] traceId=%s result=save succeeded file=%q added to account pool=%t account identity changed=%t note=tokens never logged, no upstream verification called; same account keeps its ledger, identity or site change resets the corresponding runtime state", trace, target, added, identityChanged)
 	return nil
 }
 
@@ -214,7 +214,7 @@ func handleWebUICredentialEdit(w http.ResponseWriter, r *http.Request) {
 		target := r.URL.Query().Get("file")
 		_, release, err := lockCredentialAccount(r.Context(), target)
 		if err != nil {
-			writeJSONError(w, http.StatusRequestTimeout, "等待账号请求结束时被取消")
+			writeJSONError(w, http.StatusRequestTimeout, "cancelled while waiting for the account's requests to finish")
 			return
 		}
 		root, f, err := openEditableCredential(target, os.O_RDONLY)
@@ -226,15 +226,15 @@ func handleWebUICredentialEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		release()
 		if err != nil {
-			writeAdminOperationError(w, r, "凭据加载", err)
+			writeAdminOperationError(w, r, "credential load", err)
 			return
 		}
 		var auth StoredAuth
 		if json.Unmarshal(data, &auth) == nil {
 			registerCredentialSecrets(&auth)
 		}
-		log.Printf("[凭据编辑] traceId=%s 阶段=加载 文件=%q 字节=%d 说明=管理员主动打开编辑器才返回明文，不记录正文，不在浏览器持久保存", debugTraceID(r), target, len(data))
-		// 唯一受管理鉴权保护的明文凭据编辑接口，不使用脱敏视图覆盖可编辑原文。
+		log.Printf("[Credential edit] traceId=%s stage=load file=%q bytes=%d note=plaintext returned only when an admin actively opens the editor; body never logged, never persisted in the browser", debugTraceID(r), target, len(data))
+		// The only plaintext credential edit endpoint protected by admin authentication; no redacted view replaces the editable original.
 		writeJSON(w, http.StatusOK, map[string]any{"path": target, "content": string(data), "revision": credentialRevision(data)})
 	case http.MethodPost:
 		var input struct {
@@ -243,16 +243,16 @@ func handleWebUICredentialEdit(w http.ResponseWriter, r *http.Request) {
 			Content  string `json:"content"`
 		}
 		if err := decodeAdminJSONLimit(w, r, &input, credentialEditBudget*2+4096); err != nil {
-			log.Printf("[凭据编辑] traceId=%s 阶段=参数校验 结果=拒绝 原因=编辑请求格式或长度无效，正文未记录", debugTraceID(r))
-			writeJSONError(w, http.StatusBadRequest, "编辑请求格式或长度无效")
+			log.Printf("[Credential edit] traceId=%s stage=parameter validation result=rejected reason=edit request format or length invalid, body not logged", debugTraceID(r))
+			writeJSONError(w, http.StatusBadRequest, "edit request format or length invalid")
 			return
 		}
 		if err := saveEditedCredential(r.Context(), input.Path, input.Revision, input.Content, debugTraceID(r)); err != nil {
-			writeAdminOperationError(w, r, "凭据保存", err)
+			writeAdminOperationError(w, r, "credential save", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"path": input.Path, "saved": true, "revision": credentialRevision([]byte(input.Content))})
 	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET/POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "only GET/POST are supported")
 	}
 }

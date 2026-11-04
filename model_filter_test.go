@@ -14,7 +14,7 @@ func resetModelFilter() {
 	setModelFilter(nil, nil)
 }
 
-// 黑名单：命中即禁用；未命中放行；大小写与空白不敏感。
+// Blocklist: a hit disables; a miss passes; case and whitespace insensitive.
 func TestModelBlocklist(t *testing.T) {
 	resetModelFilter()
 	defer resetModelFilter()
@@ -23,45 +23,45 @@ func TestModelBlocklist(t *testing.T) {
 	for _, model := range []string{"deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "gpt-5.6-sol"} {
 		disabled, reason := modelDisabled(model)
 		if !disabled {
-			t.Fatalf("模型 %s 应被黑名单禁用", model)
+			t.Fatalf("model %s should be disabled by the blocklist", model)
 		}
-		if !strings.Contains(reason, "已被网关禁用") {
-			t.Fatalf("禁用原因应为中文提示, got %q", reason)
+		if !strings.Contains(reason, "disabled by the gateway") {
+			t.Fatalf("disable reason should mention the gateway, got %q", reason)
 		}
 	}
 	if disabled, _ := modelDisabled("hy3"); disabled {
-		t.Fatal("未命中黑名单的模型不应被禁用")
+		t.Fatal("models not on the blocklist should not be disabled")
 	}
 }
 
-// 白名单：非空时只放行列表内模型。
+// Allowlist: when non-empty, only models on the list pass.
 func TestModelAllowlist(t *testing.T) {
 	resetModelFilter()
 	defer resetModelFilter()
 	setModelFilter(nil, []string{"deepseek-v4.1-flash"})
 
 	if disabled, _ := modelDisabled("deepseek-v4.1-flash"); disabled {
-		t.Fatal("白名单内模型应放行")
+		t.Fatal("models on the allowlist should pass")
 	}
 	disabled, reason := modelDisabled("gpt-5.6-sol")
-	if !disabled || !strings.Contains(reason, "不在白名单内") {
-		t.Fatalf("白名单外模型应被禁用并给出中文原因, disabled=%v reason=%q", disabled, reason)
+	if !disabled || !strings.Contains(reason, "not in allowlist") {
+		t.Fatalf("models outside the allowlist should be disabled with a reason, disabled=%v reason=%q", disabled, reason)
 	}
 }
 
-// 黑白名单都未配置时不做任何限制。
+// No restriction when neither blocklist nor allowlist is configured.
 func TestModelFilterDisabledByDefault(t *testing.T) {
 	resetModelFilter()
 	defer resetModelFilter()
 	if modelFilterConfigured() {
-		t.Fatal("默认不应启用任何名单")
+		t.Fatal("no list should be enabled by default")
 	}
 	if disabled, _ := modelDisabled("any-model"); disabled {
-		t.Fatal("未配置名单时不应禁用任何模型")
+		t.Fatal("no model should be disabled when no list is configured")
 	}
 }
 
-// config.json 的 models 段应能加载白名单；旧示例的空黑名单仍兼容。
+// The models section of config.json should load the allowlist; the legacy sample's empty blocklist stays compatible.
 func TestRuntimeConfigLoadsModelFilter(t *testing.T) {
 	resetModelFilter()
 	defer resetModelFilter()
@@ -76,20 +76,20 @@ func TestRuntimeConfigLoadsModelFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !modelFilterConfigured() {
-		t.Fatal("配置应启用模型名单")
+		t.Fatal("config should enable the model filter")
 	}
 	if disabled, _ := modelDisabled("blocked-model"); !disabled {
-		t.Fatal("黑名单模型应被禁用")
+		t.Fatal("blocklisted model should be disabled")
 	}
 	if disabled, _ := modelDisabled("other-model"); !disabled {
-		t.Fatal("白名单非空时，名单外模型应被禁用")
+		t.Fatal("with a non-empty allowlist, models outside it should be disabled")
 	}
 	if disabled, _ := modelDisabled("allowed-model"); disabled {
-		t.Fatal("白名单内模型应放行")
+		t.Fatal("models on the allowlist should pass")
 	}
 }
 
-// 被禁用模型必须从 /v1/models 列表中隐藏。
+// Disabled models must be hidden from the /v1/models list.
 func TestMergedModelIDsHidesBlockedModels(t *testing.T) {
 	resetModelsStateT(t)
 	resetModelFilter()
@@ -108,7 +108,7 @@ func TestMergedModelIDsHidesBlockedModels(t *testing.T) {
 	ids, _ := mergedModelIDs()
 	for _, id := range ids {
 		if id == "hide-me" {
-			t.Fatalf("被禁用模型不应出现在模型列表中: %v", ids)
+			t.Fatalf("disabled model must not appear in the model list: %v", ids)
 		}
 	}
 	found := false
@@ -118,11 +118,11 @@ func TestMergedModelIDsHidesBlockedModels(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("正常模型应保留: %v", ids)
+		t.Fatalf("normal models should be kept: %v", ids)
 	}
 }
 
-// 被禁用模型必须从 monitor 统计附表中隐藏，即使历史上被请求过。
+// Disabled models must be hidden from the monitor stats side table, even if requested historically.
 func TestModelStatSnapshotsHideBlockedModels(t *testing.T) {
 	resetModelStats()
 	resetModelFilter()
@@ -134,12 +134,12 @@ func TestModelStatSnapshotsHideBlockedModels(t *testing.T) {
 	rows := buildModelStatSnapshots(time.Now(), nil)
 	for _, row := range rows {
 		if row.ID == "hidden-by-config" {
-			t.Fatalf("被禁用模型不应出现在统计附表: %+v", row)
+			t.Fatalf("disabled model must not appear in the stats side table: %+v", row)
 		}
 	}
 }
 
-// 端到端：请求被禁用模型时返回 403 + 中文提示，且不调用上游。
+// End to end: requesting a disabled model returns 403 + error message, and upstream is never called.
 func TestBlockedModelRequestReturnsChineseError(t *testing.T) {
 	resetModelFilter()
 	defer resetModelFilter()
@@ -180,10 +180,10 @@ func TestBlockedModelRequestReturnsChineseError(t *testing.T) {
 	requestAuditMiddleware(http.HandlerFunc(handleChatCompletions)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("被禁用模型应返回 403, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("disabled model should return 403, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	if upstreamCalled {
-		t.Fatal("被禁用模型不应调用上游")
+		t.Fatal("upstream must not be called for a disabled model")
 	}
 	var resp map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -191,15 +191,15 @@ func TestBlockedModelRequestReturnsChineseError(t *testing.T) {
 	}
 	errObj, _ := resp["error"].(map[string]any)
 	msg, _ := errObj["message"].(string)
-	if !strings.Contains(msg, "已被网关禁用") {
-		t.Fatalf("错误信息应为中文提示, got %q", msg)
+	if !strings.Contains(msg, "disabled by the gateway") {
+		t.Fatalf("error message should mention the gateway, got %q", msg)
 	}
 	if errObj["type"] != "model_disabled" {
-		t.Fatalf("错误类型应为 model_disabled, got %v", errObj["type"])
+		t.Fatalf("error type should be model_disabled, got %v", errObj["type"])
 	}
 }
 
-// 端到端：/v1/responses 入口同样拦截。
+// End to end: the /v1/responses endpoint blocks disabled models too.
 func TestBlockedModelResponsesEndpoint(t *testing.T) {
 	resetModelFilter()
 	defer resetModelFilter()
@@ -211,9 +211,9 @@ func TestBlockedModelResponsesEndpoint(t *testing.T) {
 	requestAuditMiddleware(http.HandlerFunc(handleResponses)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("白名单外模型应返回 403, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("models outside the allowlist should return 403, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "已被网关禁用") {
-		t.Fatalf("应返回中文禁用提示: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "disabled by the gateway") {
+		t.Fatalf("should return the gateway disable message: %s", rec.Body.String())
 	}
 }

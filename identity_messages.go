@@ -90,7 +90,7 @@ func logIdentityReplacementPass(r *http.Request, requestID uint64, enabled bool,
 	if trace == "" {
 		trace = r.Header.Get("X-Trace-ID")
 	}
-	log.Printf("[配置文字替换] traceId=%s requestId=%d 启用=%t 修改文本块=%d 字面命中=%d 首位通配命中=%d 结果=%s 说明=applied为已替换，no_change为原样保留，identity_disabled为配置关闭；仅处理system/developer/assistant，未记录规则或提示词正文",
+	log.Printf("[Config text replacement] traceId=%s requestId=%d enabled=%t modified text blocks=%d literal hits=%d first/last wildcard hits=%d result=%s note=applied means replaced, no_change means kept as-is, identity_disabled means the feature is off; only processes system/developer/assistant, rule or prompt bodies never logged",
 		trace, requestID, enabled, changed, literal, wildcard, result)
 	event := "identity_replacements_applied"
 	if changed == 0 {
@@ -118,7 +118,7 @@ func normalizeDeveloperRoles(obj map[string]any, r *http.Request, requestID uint
 		if trace == "" {
 			trace = r.Header.Get("X-Trace-ID")
 		}
-		log.Printf("[消息角色兼容] traceId=%s requestId=%d 转换条数=%d 结果=developer归一为system 说明=仅修改角色字段，不修改文字内容",
+		log.Printf("[Message role compat] traceId=%s requestId=%d converted entries=%d result=developer normalized to system note=only the role field is modified, text content unchanged",
 			trace, requestID, changed)
 		debugEvent(r, "debug", "developer_roles_normalized", map[string]any{"messages": changed})
 	}

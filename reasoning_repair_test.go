@@ -38,7 +38,7 @@ func TestRepairReasoningHistoryPreservesCopiesAndMarksMissing(t *testing.T) {
 	if _, exists := msgs[len(msgs)-1].(map[string]any)["reasoning"]; exists {
 		t.Fatal("tool result unexpectedly modified")
 	}
-	// 相同输入重复经过共享出站管线，不应改变任何已补过的字段。
+	// Repeating the same input through the shared outbound pipeline must not change any already-completed field.
 	before := make([]map[string]any, 4)
 	for i := range before {
 		msg := msgs[i+1].(map[string]any)

@@ -200,7 +200,7 @@ func TestModelSourceLabel(t *testing.T) {
 func TestMergeCatalogsPrefersLiveAndFillsNPM(t *testing.T) {
 	live := []catalogModel{{ID: "hy3", Multiplier: 0.2, HasMultiplier: true, FromLive: true}}
 	npm := []catalogModel{
-		{ID: "hy3", Multiplier: 0.99, HasMultiplier: true}, // 接口已有 → 保留接口值
+		{ID: "hy3", Multiplier: 0.99, HasMultiplier: true}, // API already has it → keep API value
 		{ID: "legacy-only", Multiplier: 0.5, HasMultiplier: true},
 	}
 	merged := mergeCatalogs(live, npm)
@@ -263,8 +263,8 @@ func TestModelDisplayMultiplierWithProbeVerdict(t *testing.T) {
 	modelsMu.Lock()
 	modelProbes[probeKey("cn", "x")] = modelPriceProbe{Verdict: "paid"}
 	modelsMu.Unlock()
-	if got := modelDisplayMultiplier("cn", "x", "-"); got != "收费(倍率未知)" {
-		t.Fatalf("probed paid should show 收费(倍率未知), got %s", got)
+	if got := modelDisplayMultiplier("cn", "x", "-"); got != "Paid (unknown multiplier)" {
+		t.Fatalf("probed paid should show Paid (unknown multiplier), got %s", got)
 	}
 	modelsMu.Lock()
 	modelProbes[probeKey("cn", "x")] = modelPriceProbe{Verdict: "free"}
@@ -274,7 +274,8 @@ func TestModelDisplayMultiplierWithProbeVerdict(t *testing.T) {
 	}
 }
 
-// 促销过期只表示折扣结束，倍率回落到 credits 原价，不应显示为「价格未知」。
+// An expired promo only means the discount ended and the multiplier falls back to
+// the credits base price; it should not show as "price unknown".
 func TestExpiredPromoFallsBackToBasePrice(t *testing.T) {
 	resetModelsStateT(t)
 	resetModelStats()
@@ -286,19 +287,19 @@ func TestExpiredPromoFallsBackToBasePrice(t *testing.T) {
 	modelProbes = map[string]modelPriceProbe{}
 	modelsMu.Unlock()
 
-	// 促销过期时接口 credits 不可信（上游会把促销价固化在 credits 里），
-	// 探测出结果前按完全未知处理。
+	// With an expired promo the API's credits are untrusted (upstream bakes the promo
+	// price into credits); before a probe result exists, treat as fully unknown.
 	if got := modelDisplayMultiplier("intl", "hy4-preview", "-"); got != "-" {
 		t.Fatalf("expired promo must show unknown before probing, got %s", got)
 	}
-	// 探测确认收费后显示收费(倍率未知)
+	// After a probe confirms paid, show Paid (unknown multiplier)
 	modelsMu.Lock()
 	modelProbes[probeKey("intl", "hy4-preview")] = modelPriceProbe{Verdict: "paid"}
 	modelsMu.Unlock()
-	if got := modelDisplayMultiplier("intl", "hy4-preview", "-"); got != "收费(倍率未知)" {
-		t.Fatalf("probed paid should show 收费(倍率未知), got %s", got)
+	if got := modelDisplayMultiplier("intl", "hy4-preview", "-"); got != "Paid (unknown multiplier)" {
+		t.Fatalf("probed paid should show Paid (unknown multiplier), got %s", got)
 	}
-	// 探测确认免费后显示 0.00x
+	// After a probe confirms free, show 0.00x
 	modelsMu.Lock()
 	modelProbes[probeKey("intl", "hy4-preview")] = modelPriceProbe{Verdict: "free"}
 	modelsMu.Unlock()
@@ -310,7 +311,7 @@ func TestExpiredPromoFallsBackToBasePrice(t *testing.T) {
 	}
 }
 
-// 一个站点免费、另一个收费时，优先返回免费站点账号；都收费则不搞优先。
+// When one site is free and another paid, prefer the free-site account; if both are paid there is no priority.
 func TestPreferredFreeSites(t *testing.T) {
 	resetModelsStateT(t)
 	modelsMu.Lock()
@@ -339,7 +340,7 @@ func TestPreferredFreeSites(t *testing.T) {
 		t.Fatalf("expected intl to be preferred, got %v", pref)
 	}
 
-	// 两边都收费 → 不优先
+	// both paid → no priority
 	modelsMu.Lock()
 	catalogModels["intl"] = []catalogModel{{ID: "m2", Multiplier: 0.5, HasMultiplier: true, FromLive: true}}
 	catalogModels["cn"] = []catalogModel{{ID: "m2", Multiplier: 0.03, HasMultiplier: true, FromLive: true}}
@@ -373,7 +374,7 @@ func TestPickProbeAccountPrefersFundedThenUnknown(t *testing.T) {
 		accountMu.Unlock()
 	}()
 
-	// 只有额度未知的账号 → 仍可用于探测（14018 会被忽略，不污染判定）
+	// only unknown-quota account → still usable for probing (14018 is ignored, never pollutes the verdict)
 	accountMu.Lock()
 	accounts = []*Account{
 		{Path: "intl-unknown.json", Auth: &StoredAuth{Edition: "intl", Auth: StoredTokens{AccessToken: "t"}}},
@@ -383,7 +384,7 @@ func TestPickProbeAccountPrefersFundedThenUnknown(t *testing.T) {
 		t.Fatalf("unknown-quota account should be usable for probing, got %v", acc)
 	}
 
-	// 已知耗尽 → 跳过；已知有余额 → 优先
+	// known exhausted → skip; known funded → preferred
 	accountMu.Lock()
 	accounts = []*Account{
 		{Path: "exhausted.json", Auth: &StoredAuth{Edition: "intl", Auth: StoredTokens{AccessToken: "t"}}, QuotaKnown: true, QuotaRemaining: 0},

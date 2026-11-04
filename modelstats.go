@@ -12,19 +12,20 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// 模型级统计（/v1/models 附表）
+// Model-level statistics (/v1/models side table)
 //
-// 记录每个模型被请求的次数、成功/失败、上游 usage token 累计、首字响应时间（TTFT）、平均耗时、
-// 最近请求时间、最近状态，以及该模型当前可服务账号数。
-// 统计只服务于 monitor 展示，不参与调度决策。
+// Records per-model request counts, success/failure, upstream usage token
+// totals, time-to-first-token (TTFT), average latency, last request time,
+// last status, and the number of accounts currently able to serve the model.
+// Statistics serve only monitor display and play no part in scheduling decisions.
 // -----------------------------------------------------------------------------
 
-// statsWindow 是"平均首字 / 平均总耗时"的滚动统计窗口。
+// statsWindow is the rolling window for "average first token / average total latency".
 const statsWindow = 5 * time.Hour
 
-// hourlyBucket 保存某个整点小时内累计的 TTFT / 耗时样本。
+// hourlyBucket holds TTFT / latency samples accumulated within one clock-hour.
 type hourlyBucket struct {
-	Hour           int64 // 该小时起点（Unix 秒）
+	Hour           int64 // start of that hour (Unix seconds)
 	TTFTSum        time.Duration
 	TTFTSamples    int64
 	LatencySum     time.Duration
@@ -35,12 +36,12 @@ type modelStat struct {
 	Requests      int64
 	Success       int64
 	Failed        int64
-	Tokens        int64 // 上游 usage 累计的 total_tokens（无 usage 的请求不计入）
+	Tokens        int64 // upstream usage total_tokens total (requests without usage are not counted)
 	LastRequestAt time.Time
 	LastStatus    string
-	// 最近 statsWindow 内按小时分桶的延迟样本（自动淘汰过期桶）。
+	// Latency samples bucketed by hour within the recent statsWindow (expired buckets are evicted automatically).
 	Buckets []hourlyBucket
-	// 站点维度的免费/收费观测：同一个模型名在 cn 与 intl 可能一个免费一个收费。
+	// Per-site free/paid observations: the same model name may be free on cn and paid on intl.
 	CNFreeSeen   bool
 	CNPaidSeen   bool
 	IntlFreeSeen bool
@@ -56,10 +57,10 @@ func hourStart(t time.Time) int64 {
 	return t.Truncate(time.Hour).Unix()
 }
 
-// bucketLocked 返回当前小时的桶，并淘汰窗口外的旧桶。
+// bucketLocked returns the current hour's bucket and evicts buckets outside the window.
 func (st *modelStat) bucketLocked(now time.Time) *hourlyBucket {
 	cur := hourStart(now)
-	// 淘汰超出窗口的桶
+	// evict buckets outside the window
 	kept := st.Buckets[:0]
 	for _, b := range st.Buckets {
 		if now.Unix()-b.Hour < int64(statsWindow/time.Second) {
@@ -76,7 +77,7 @@ func (st *modelStat) bucketLocked(now time.Time) *hourlyBucket {
 	return &st.Buckets[len(st.Buckets)-1]
 }
 
-// windowAveragesLocked 汇总窗口内的平均首字与平均总耗时。
+// windowAveragesLocked aggregates average first-token and total latency within the window.
 func (st *modelStat) windowAveragesLocked(now time.Time) (ttft time.Duration, hasTTFT bool, latency time.Duration, hasLatency bool) {
 	var tSum, lSum time.Duration
 	var tN, lN int64
@@ -102,7 +103,7 @@ func (st *modelStat) windowAveragesLocked(now time.Time) (ttft time.Duration, ha
 func modelStatLocked(model string) *modelStat {
 	model = normalizeModelName(model)
 	if model == "" {
-		model = "(默认)"
+		model = "(default)"
 	}
 	stat := modelStats[model]
 	if stat == nil {
@@ -124,7 +125,7 @@ func recordModelSuccess(model string) {
 	modelStatsMu.Lock()
 	stat := modelStatLocked(model)
 	stat.Success++
-	stat.LastStatus = "成功"
+	stat.LastStatus = "Success"
 	modelStatsMu.Unlock()
 }
 
@@ -132,7 +133,7 @@ func recordModelFailure(model, reason string) {
 	modelStatsMu.Lock()
 	stat := modelStatLocked(model)
 	stat.Failed++
-	stat.LastStatus = "失败:" + reason
+	stat.LastStatus = "Failed:" + reason
 	modelStatsMu.Unlock()
 }
 
@@ -159,16 +160,16 @@ func recordModelLatency(model string, d time.Duration) {
 	modelStatsMu.Unlock()
 }
 
-// recordModelTokens 把一次成功响应的上游 usage token 数累加到该模型。
-// 优先 usage.total_tokens；没有则用 prompt_tokens + completion_tokens。
-// 上游没给 usage 时不估算，避免把猜的数字写进表里。
+// recordModelTokens accumulates the upstream usage token count of a successful response onto the model.
+// Prefers usage.total_tokens; otherwise uses prompt_tokens + completion_tokens.
+// When upstream gives no usage, nothing is estimated to keep guessed numbers out of the table.
 func recordModelTokens(model string, usage map[string]any, reqID uint64) {
 	direct, hasDirect := usageNumber(usage, "total_tokens")
 	prompt, hasPrompt := usageNumber(usage, "prompt_tokens")
 	completion, hasCompletion := usageNumber(usage, "completion_tokens")
 	n, ok := usageTotalTokens(usage)
 	if !ok || n <= 0 {
-		log.Printf("[模型Token累计] requestId=%d 模型=%s 结果=跳过 原因=上游usage无有效token 有total=%v 有prompt=%v 有completion=%v 业务影响=本次不计入总消耗",
+		log.Printf("[Model usage total] requestId=%d model=%s result=skipped reason=upstream usage has no valid tokens has total=%v has prompt=%v has completion=%v business impact=not counted toward total consumption this time",
 			reqID, normalizeModelName(model), hasDirect, hasPrompt, hasCompletion)
 		return
 	}
@@ -182,15 +183,15 @@ func recordModelTokens(model string, usage map[string]any, reqID uint64) {
 	stat.Tokens += n
 	after := stat.Tokens
 	modelStatsMu.Unlock()
-	log.Printf("[模型Token累计] requestId=%d 模型=%s 来源=%s 本次token=%d 累计前=%d 累计后=%d 展示=%s 说明=已按上游usage计入总消耗",
+	log.Printf("[Model usage total] requestId=%d model=%s source=%s tokens this time=%d before=%d after=%d display=%s note=counted toward total consumption per upstream usage",
 		reqID, normalizeModelName(model), source, n, before, after, formatTokensM(after))
 	if hasDirect && (hasPrompt || hasCompletion) && direct != prompt+completion {
-		log.Printf("[模型Token累计] requestId=%d 模型=%s 分支=total与分项不一致 判断结果=仍采用total_tokens 原因=上游同时给了total和分项但不相等 total=%d prompt=%d completion=%d 合计=%d",
+		log.Printf("[Model usage total] requestId=%d model=%s branch=total and itemized disagree verdict=still using total_tokens reason=upstream gave both total and itemized but they are unequal total=%d prompt=%d completion=%d sum=%d",
 			reqID, normalizeModelName(model), direct, prompt, completion, prompt+completion)
 	}
 }
 
-// recordModelCostClass 记录一次免费/收费观测，按站点分别累计。
+// recordModelCostClass records one free/paid observation, accumulated per site.
 func recordModelCostClass(model, edition string, free bool) {
 	modelStatsMu.Lock()
 	stat := modelStatLocked(model)
@@ -210,8 +211,8 @@ func recordModelCostClass(model, edition string, free bool) {
 	modelStatsMu.Unlock()
 }
 
-// TTFT v2：网关请求入口 → 首个有效内容/推理/工具调用增量被解析。
-// 按 dsh 的 token-delta 规则，不计角色/心跳/usage/finish等控制帧。
+// TTFT v2: gateway request entry → first valid content/reasoning/tool-call delta parsed.
+// Follows dsh's token-delta rules; role/heartbeat/usage/finish control frames are not counted.
 const ttftMetric = "first_token_v2"
 
 type ttftReader struct {
@@ -227,14 +228,14 @@ func newTTFTReader(r io.Reader, start time.Time) *ttftReader {
 }
 
 func (t *ttftReader) Read(p []byte) (int, error) {
-	return t.r.Read(p) // 原始字节不代表Token，禁止在这里计时。
+	return t.r.Read(p) // Raw bytes are not tokens; never time here.
 }
 
 func (t *ttftReader) duration() time.Duration { return t.d }
 
 func (t *ttftReader) text() string {
 	if t.d <= 0 {
-		return "未知（无有效Token）"
+		return "unknown (no valid token)"
 	}
 	return t.d.String()
 }
@@ -245,7 +246,7 @@ func hasFirstTokenDelta(chunk map[string]any) bool {
 		choice, _ := raw.(map[string]any)
 		delta, _ := choice["delta"].(map[string]any)
 		for _, field := range []string{"content", "reasoning_content", "reasoning"} {
-			// 与dsh相同：空字符串不算，但非空空白字符串是有效增量。
+			// Same as dsh: empty strings don't count, but non-empty whitespace strings are valid deltas.
 			if text, ok := delta[field].(string); ok && text != "" {
 				return true
 			}
@@ -280,9 +281,11 @@ func completeTokenStream(reader io.Reader, complete bool) {
 	}
 }
 
-// 三种协议、流式/非流式统一结算。完整性只由上游流本身决定：
-// 读取出错或没有结束原因都不计；已确认完整结束后，客户端收到 [DONE] 就断开连接属于正常行为，
-// 不得因为事后看到请求 Context 已取消而追溯抹掉首 Token 样本。
+// One settlement path for all three protocols, streaming and non-streaming. Completeness
+// is decided only by the upstream stream itself: read errors or a missing finish reason
+// are not counted; after completeness is confirmed, the client disconnecting on [DONE]
+// is normal and the first-token sample must not be retroactively erased because the
+// request Context is later observed as cancelled.
 func finishFirstToken(r *http.Request, model string, reqID uint64, body *ttftReader) {
 	complete := body.complete
 	known := complete && body.duration() > 0
@@ -296,11 +299,11 @@ func finishFirstToken(r *http.Request, model string, reqID uint64, body *ttftRea
 			p.ttft = &v
 		}
 	}
-	log.Printf("[首Token统计] traceId=%s requestId=%d 模型=%s 口径=%s 完整=%t 有样本=%t 耗时=%s 起点=网关请求入口 终点=有效文本/推理/工具增量 说明=完整性只看上游流是否正常结束；已完整结束后客户端断开不抹除样本；不计心跳或角色声明，不记录正文",
+	log.Printf("[TTFT metrics] traceId=%s requestId=%d model=%s metric=%s complete=%t has sample=%t duration=%s start=gateway request entry end=valid text/reasoning/tool delta note=completeness depends only on the upstream stream ending normally; client disconnect after full completion does not erase the sample; heartbeats and role announcements are not counted and no body text is recorded",
 		debugTraceID(r), reqID, model, ttftMetric, complete, known, body.text())
 }
 
-// modelStatusFromError 从错误响应中提取简短状态标签（业务码优先，其次 HTTP 状态码）。
+// modelStatusFromError extracts a short status label from an error response (business code first, then HTTP status code).
 func modelStatusFromError(statusCode int, body string) string {
 	if code := extractBusinessCode(body); code != "" {
 		return code
@@ -311,7 +314,7 @@ func modelStatusFromError(statusCode int, body string) string {
 	return "error"
 }
 
-// extractBusinessCode 从响应体提取 "code":NNNN 形式的业务码。
+// extractBusinessCode extracts a business code of the form "code":NNNN from the response body.
 func extractBusinessCode(body string) string {
 	const marker = `"code":`
 	idx := strings.Index(body, marker)
@@ -329,17 +332,17 @@ func extractBusinessCode(body string) string {
 	return rest[:end]
 }
 
-// modelStatSnapshot 是写入状态快照的单个模型统计。
+// modelStatSnapshot is a single model statistic written into the status snapshot.
 type modelStatSnapshot struct {
 	ID             string `json:"id"`
 	Enabled        *bool  `json:"enabled,omitempty"`
 	PolicyReason   string `json:"policyReason,omitempty"`
 	Source         string `json:"source,omitempty"`
-	CNFree         string `json:"cnFree,omitempty"`         // 国内站：是 | 否 | 混合 | -
-	IntlFree       string `json:"intlFree,omitempty"`       // 国际站：是 | 否 | 混合 | -
-	CNMultiplier   string `json:"cnMultiplier,omitempty"`   // 国内站倍率展示值，如 0.29x / 0.00x / -
-	IntlMultiplier string `json:"intlMultiplier,omitempty"` // 国际站倍率展示值
-	// AvailableAccounts 为两个站点合计的可服务账号数（已按模型账号黑白名单过滤）。
+	CNFree         string `json:"cnFree,omitempty"`         // Domestic site: Yes | No | Mixed | -
+	IntlFree       string `json:"intlFree,omitempty"`       // International site: Yes | No | Mixed | -
+	CNMultiplier   string `json:"cnMultiplier,omitempty"`   // Domestic site multiplier display value, e.g. 0.29x / 0.00x / -
+	IntlMultiplier string `json:"intlMultiplier,omitempty"` // International site multiplier display value
+	// AvailableAccounts is the total number of servable accounts across both sites (already filtered by model account allow/block lists).
 	AvailableAccounts int    `json:"availableAccounts"`
 	Requests          int64  `json:"requests,omitempty"`
 	Success           int64  `json:"success,omitempty"`
@@ -354,8 +357,8 @@ type modelStatSnapshot struct {
 	LastStatus        string `json:"lastStatus,omitempty"`
 }
 
-// modelServableLocked 只读判断账号当前能否服务该模型（不改变任何状态）。
-// 与 nextAccountForModel 的可用性规则保持一致。
+// modelServableLocked read-only check of whether an account can currently serve the model (no state is changed).
+// Availability rules match nextAccountForModel.
 func modelServableLocked(acc *Account, model string, now time.Time) bool {
 	if acc.Disabled || acc.CooldownUntil.After(now) {
 		return false
@@ -363,7 +366,7 @@ func modelServableLocked(acc *Account, model string, now time.Time) bool {
 	state := acc.ModelStates[normalizeModelName(model)]
 	if state == nil {
 		if acc.QuotaExhausted {
-			return true // 未知模型允许一次受控探测
+			return true // unknown model allows one controlled probe
 		}
 		return true
 	}
@@ -383,7 +386,7 @@ func modelServableLocked(acc *Account, model string, now time.Time) bool {
 	}
 }
 
-// modelSourceFromSnapshots 从模型统计行中取出目录来源版本（用于 monitor 标题）。
+// modelSourceFromSnapshots takes the catalog source version from the model stat rows (for the monitor title).
 func modelSourceFromSnapshots(rows []modelStatSnapshot) string {
 	for _, row := range rows {
 		if row.Source != "" {
@@ -396,18 +399,19 @@ func modelSourceFromSnapshots(rows []modelStatSnapshot) string {
 func freeLabel(freeSeen, paidSeen bool) string {
 	switch {
 	case freeSeen && paidSeen:
-		return "混合"
+		return "Mixed"
 	case freeSeen:
-		return "是"
+		return "Yes"
 	case paidSeen:
-		return "否"
+		return "No"
 	default:
 		return "-"
 	}
 }
 
-// freeModelDisplayCounts 只复用模型统计表最终显示的站点倍率。
-// 不能用这个展示数量补写账号实测账本，或判断账号能否请求某个模型。
+// freeModelDisplayCounts reuses only the site multipliers finally displayed by the model stats table.
+// These display counts must not be used to rewrite account measured ledgers, or to decide
+// whether an account may request a model.
 func freeModelDisplayCounts(rows []modelStatSnapshot) (cn, intl int) {
 	for _, row := range rows {
 		if row.CNMultiplier == "0.00x" {
@@ -420,13 +424,13 @@ func freeModelDisplayCounts(rows []modelStatSnapshot) (cn, intl int) {
 	return cn, intl
 }
 
-// 调用方持有 accountMu，仅在展示数量发生变化时记录，避免每 3 秒重复刷日志。
+// The caller holds accountMu; log only when display counts change, avoiding a repeat every 3 seconds.
 var lastFreeModelDisplay struct {
 	initialized bool
 	cn, intl    int
 }
 
-// buildModelStatSnapshots 汇总「官方/静态模型目录 ∪ 有统计的模型」的统计行。
+// buildModelStatSnapshots aggregates stat rows for "official/static model catalog ∪ models with statistics".
 func buildModelStatSnapshots(now time.Time, accs []*Account) []modelStatSnapshot {
 	return buildModelRows(now, accs, false)
 }
@@ -458,7 +462,7 @@ func buildModelRows(now time.Time, accs []*Account, includeDisabled bool) []mode
 		if id == "" || seen[id] {
 			return
 		}
-		// 被配置禁用的模型在统计附表中直接隐藏（即使历史上有过请求）。
+		// Models disabled by config are hidden directly in the stats side table (even with past requests).
 		disabled, reason := modelDisabled(id)
 		if disabled && !includeDisabled {
 			return
@@ -467,8 +471,8 @@ func buildModelRows(now time.Time, accs []*Account, includeDisabled bool) []mode
 		row := modelStatSnapshot{ID: id, Source: source}
 		enabled := !disabled
 		row.Enabled, row.PolicyReason = &enabled, reason
-		// 免费/收费按站点分别聚合：同一模型名在 cn 与 intl 结论可能不同，
-		// 若混在一起会显示成无意义的“混合”。
+		// Free/paid is aggregated per site: the same model name may have different
+		// verdicts on cn and intl; mixing them would display as a meaningless "Mixed".
 		var cnFree, cnPaid, intlFree, intlPaid bool
 		for _, acc := range accs {
 			allowed, _ := modelAccountAllowed(id, acc, accs)
@@ -506,7 +510,7 @@ func buildModelRows(now time.Time, accs []*Account, includeDisabled bool) []mode
 			intlPaid = intlPaid || stat.IntlPaidSeen
 			row.LastStatus = stat.LastStatus
 			row.LastRequestAt = unixOrZero(stat.LastRequestAt)
-			// 平均值按最近 statsWindow（5 小时）滚动窗口计算。
+			// Averages use the rolling statsWindow (5 hours).
 			if ttft, okT, latency, okL := stat.windowAveragesLocked(now); true {
 				if okT {
 					row.AvgTTFTMs = ttft.Milliseconds()
@@ -548,7 +552,7 @@ func formatMilliseconds(ms int64, has bool) string {
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
-// formatTokensM 把 token 数格式化为百万单位，供模型统计表展示。
+// formatTokensM formats a token count in millions for the model stats table.
 func formatTokensM(n int64) string {
 	if n <= 0 {
 		return "0.00M"
@@ -560,10 +564,10 @@ func formatTokensM(n int64) string {
 	return fmt.Sprintf("%.2fM", m)
 }
 
-// renderModelTable 渲染 /v1/models 统计附表。
+// renderModelTable renders the /v1/models stats side table.
 func renderModelTable(rows []modelStatSnapshot) string {
-	widths := []int{26, 16, 16, 8, 8, 19, 15, 10}
-	headers := []string{"模型", "国内倍率", "国际倍率", "可用账号", "请求", "平均首Token(5h)", "平均总耗时(5h)", "总Token(M)"}
+	widths := []int{22, 14, 16, 15, 10, 20, 15, 17}
+	headers := []string{"Model", "CN multiplier", "Intl multiplier", "Avail. accounts", "Requests", "Avg first token (5h)", "Avg total (5h)", "Total tokens (M)"}
 	border := func() string {
 		var b strings.Builder
 		b.WriteByte('+')
@@ -609,7 +613,7 @@ func renderModelTable(rows []modelStatSnapshot) string {
 	return b.String()
 }
 
-// modelRequestCount 返回某模型的客户端请求次数（用于判断是否值得做价格探测）。
+// modelRequestCount returns a model's client request count (to decide whether a price probe is worthwhile).
 func modelRequestCount(model string) int64 {
 	modelStatsMu.Lock()
 	defer modelStatsMu.Unlock()

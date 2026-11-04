@@ -149,24 +149,24 @@ func (s *dailyCheckinScheduler) loadLocked() {
 		return
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 8<<20 {
-		s.blockLocked("状态文件不可读或不是受支持的普通文件")
+		s.blockLocked("State file unreadable or not a supported regular file")
 		return
 	}
 	raw, err := os.ReadFile(s.file)
 	var doc checkinDocument
 	if err != nil || json.Unmarshal(raw, &doc) != nil || doc.Schema != 1 || doc.Plans == nil {
-		s.blockLocked("状态文件损坏；原文件已保留")
+		s.blockLocked("State file corrupted; original file preserved")
 		return
 	}
 	day, err := time.ParseInLocation("2006-01-02", doc.Date, checkinZone)
 	if err != nil {
-		s.blockLocked("状态文件日期无效；原文件已保留")
+		s.blockLocked("State file date invalid; original file preserved")
 		return
 	}
 	start, retry, end := checkinWindows(day)
 	dayEnd := start.Add(16 * time.Hour)
 	if doc.LastStartupAt != 0 && (doc.LastStartupAt < start.UnixMilli() || doc.LastStartupAt >= dayEnd.UnixMilli()) {
-		s.blockLocked("启动补签间隔记录无效；原文件已保留")
+		s.blockLocked("Startup catch-up interval record invalid; original file preserved")
 		return
 	}
 	for key, p := range doc.Plans {
@@ -178,17 +178,17 @@ func (s *dailyCheckinScheduler) loadLocked() {
 			p.RetryAt < retry.UnixMilli() || p.RetryAt >= end.UnixMilli() ||
 			(p.StartupAt != 0 && (p.StartupAt < start.UnixMilli() || p.StartupAt >= dayEnd.UnixMilli())) ||
 			(p.Status == "success" && p.Attempts == 0) {
-			s.blockLocked("状态文件记录无效；为防止重复请求暂停签到")
+			s.blockLocked("Invalid state file record; checkin paused to prevent duplicate requests")
 			return
 		}
 	}
 	s.doc = doc
-	log.Printf("[签到状态] traceId=%s 阶段=读取 结果=成功 日期=%s 记录=%d 说明=仅恢复状态，不发送签到", newTraceID(), doc.Date, len(doc.Plans))
+	log.Printf("[Checkin state] traceId=%s stage=read result=success date=%s records=%d note=state restored only; no checkin sent", newTraceID(), doc.Date, len(doc.Plans))
 }
 
 func (s *dailyCheckinScheduler) blockLocked(reason string) {
 	s.blocked = true
-	log.Printf("[签到状态] traceId=%s 阶段=持久化保护 结果=暂停签到 原因=%s 说明=本进程不再发签到请求，不覆盖原状态文件", newTraceID(), reason)
+	log.Printf("[Checkin state] traceId=%s stage=persistence guard result=checkin paused reason=%s note=this process no longer sends checkin requests; original state file not overwritten", newTraceID(), reason)
 }
 
 func (s *dailyCheckinScheduler) saveLocked(trace string) bool {
@@ -196,17 +196,17 @@ func (s *dailyCheckinScheduler) saveLocked(trace string) bool {
 		return false
 	}
 	if info, err := os.Lstat(s.file); err == nil && !info.Mode().IsRegular() || err != nil && !errors.Is(err, os.ErrNotExist) {
-		s.blockLocked("写入目标不是普通文件或无法检查")
+		s.blockLocked("Write target is not a regular file or cannot be checked")
 		return false
 	}
 	raw, err := json.MarshalIndent(s.doc, "", "  ")
 	if err != nil {
-		s.blockLocked("状态序列化失败")
+		s.blockLocked("Failed to serialize state")
 		return false
 	}
 	f, err := os.CreateTemp(filepath.Dir(s.file), ".checkin-state-*.tmp")
 	if err != nil {
-		s.blockLocked("无法创建状态临时文件")
+		s.blockLocked("Cannot create state temp file")
 		return false
 	}
 	tmp := f.Name()
@@ -226,10 +226,10 @@ func (s *dailyCheckinScheduler) saveLocked(trace string) bool {
 		err = os.Rename(tmp, s.file)
 	}
 	if err != nil {
-		s.blockLocked("状态无法可靠落盘；未发送新的签到")
+		s.blockLocked("State could not be written durably; no new checkin sent")
 		return false
 	}
-	log.Printf("[签到状态] traceId=%s 阶段=原子落盘 日期=%s 记录=%d 结果=成功 说明=先保存尝试次数，随后才允许请求上游", trace, s.doc.Date, len(s.doc.Plans))
+	log.Printf("[Checkin state] traceId=%s stage=atomic write date=%s records=%d result=success note=attempt count saved first; upstream request allowed afterward", trace, s.doc.Date, len(s.doc.Plans))
 	return true
 }
 
@@ -245,7 +245,7 @@ func (s *dailyCheckinScheduler) planAndClaim(now time.Time, targets []checkinTar
 	}
 	day := checkinDay(now)
 	if s.doc.Date > day {
-		s.blockLocked("北京时间早于已保存日期；等待校准时钟后重启")
+		s.blockLocked("Beijing time earlier than saved date; waiting for clock synchronization and restart")
 		return nil
 	}
 	dirty := false
@@ -262,13 +262,13 @@ func (s *dailyCheckinScheduler) planAndClaim(now time.Time, targets []checkinTar
 			if p.Status != "running" {
 				continue
 			}
-			p.Status, p.Message = "failed", "上次尝试未能确认结果；不补发原请求"
+			p.Status, p.Message = "failed", "Previous attempt result unconfirmed; original request not re-sent"
 			if p.StartupAt != 0 && !now.Before(start) {
 				s.doc.LastStartupAt = max(s.doc.LastStartupAt, now.UnixMilli())
 			}
 			if p.Attempts == 2 {
 				p.RetryEnd = true
-				p.Message += "；今日已用完两次尝试"
+				p.Message += "; both attempts used today"
 			}
 			dirty = true
 		}
@@ -288,30 +288,30 @@ func (s *dailyCheckinScheduler) planAndClaim(now time.Time, targets []checkinTar
 			retryOffset, e2 := s.random(end.Sub(retry))
 			if e1 != nil || e2 != nil || firstOffset < 0 || firstOffset >= retry.Sub(start) ||
 				retryOffset < 0 || retryOffset >= end.Sub(retry) {
-				s.blockLocked("无法生成有效随机计划")
+				s.blockLocked("Cannot generate a valid random schedule")
 				return nil
 			}
 			p = &checkinRecord{FirstAt: start.Add(firstOffset).UnixMilli(), RetryAt: retry.Add(retryOffset).UnixMilli(), Status: "pending"}
 			s.doc.Plans[target.key] = p
-			log.Printf("[签到计划] traceId=%s 阶段=生成 日期=%s 账号标识=%s 首次=%s 失败重试=%s 说明=北京时间；后续重启不重新随机",
+			log.Printf("[Checkin plan] traceId=%s stage=generate date=%s account=%s first=%s retry=%s note=Beijing time; later restarts do not re-randomize",
 				newTraceID(), day, target.key[:12], time.UnixMilli(p.FirstAt).In(checkinZone).Format("15:04:05"),
 				time.UnixMilli(p.RetryAt).In(checkinZone).Format("15:04:05"))
 			dirty = true
 			if p.FirstAt <= now.UnixMilli() && !(startup && !now.Before(start)) {
-				p.Status, p.Message = "missed", "今日随机签到时间已过；账号事件不触发补签"
+				p.Status, p.Message = "missed", "Today's random checkin time has passed; account events do not trigger catch-up"
 			}
 		}
 		if p.Status == "failed" && p.Attempts == 1 && !p.RetryEnd &&
 			(!now.Before(end) || startup && p.RetryAt <= now.UnixMilli() ||
 				p.StartupAt != 0 && max(p.RetryAt, s.startupDueLocked(p)) >= end.UnixMilli()) {
 			p.RetryEnd, dirty = true, true
-			p.Message = "今日失败重试时间已过；不补签，当天不再重试"
+			p.Message = "Today's retry window has passed; no catch-up and no more retries today"
 		}
 		if p.Status == "pending" && p.StartupAt == 0 && !now.Before(retry) && !startup {
-			p.Status, p.Message, dirty = "missed", "今日首次签到窗口已过；不补签", true
+			p.Status, p.Message, dirty = "missed", "Today's first checkin window has passed; no catch-up", true
 		}
 		if p.Status == "pending" && p.StartupAt != 0 && s.startupDueLocked(p) >= dayEnd.UnixMilli() {
-			p.Status, p.Message, dirty = "missed", "今日剩余时间不足以保持一分钟间隔；不跨日补签", true
+			p.Status, p.Message, dirty = "missed", "Not enough time left today to keep the one-minute spacing; no next-day catch-up", true
 		}
 	}
 	if startup && !now.Before(start) {
@@ -348,7 +348,7 @@ func (s *dailyCheckinScheduler) planAndClaim(now time.Time, targets []checkinTar
 			s.doc.LastStartupAt = now.UnixMilli()
 			startupBusy = true
 		}
-		p.Message = "正在按北京时间计划签到"
+		p.Message = "Checking in according to the Beijing-time schedule"
 		trace := newTraceID()
 		jobs = append(jobs, checkinJob{key: target.key, date: day, attempt: attempt, end: until, account: target.account, trace: trace, started: now})
 		dirty = true
@@ -358,7 +358,7 @@ func (s *dailyCheckinScheduler) planAndClaim(now time.Time, targets []checkinTar
 		return nil
 	}
 	for _, job := range jobs {
-		log.Printf("[每日签到] traceId=%s 阶段=尝试预占已落盘 日期=%s 账号标识=%s 尝试=%d 截止=%s 结果=允许执行 说明=同日最多两次；启动补签间隔至少一分钟",
+		log.Printf("[Daily checkin] traceId=%s stage=attempt reserved and persisted date=%s account=%s attempt=%d deadline=%s result=allowed note=at most two per day; startup catch-up spaced at least one minute",
 			job.trace, job.date, job.key[:12], job.attempt, job.end.In(checkinZone).Format("15:04:05"))
 	}
 	next := s.nextLocked(now)
@@ -369,7 +369,7 @@ func (s *dailyCheckinScheduler) planAndClaim(now time.Time, targets []checkinTar
 	if nextMillis != s.lastNext || startup || dirty {
 		s.lastNext = nextMillis
 		logScheduledTask("daily_checkin", "scheduled", "", trace, time.Time{}, next,
-			"北京时间08:00–09:30随机；08:00后启动待签账号每隔一分钟补签；失败09:30–10:00仅重试一次；账号事件不触发补签")
+			"random 08:00–09:30 Beijing time; after 08:00 pending accounts are caught up every minute; failed retries run 09:30–10:00 once only; account events do not trigger catch-up")
 	}
 	return jobs
 }
@@ -409,7 +409,7 @@ func (s *dailyCheckinScheduler) queueStartupLocked(now time.Time, targets []chec
 		p := s.doc.Plans[t.key]
 		at := max(slot, p.StartupAt)
 		if at >= dayEnd.UnixMilli() {
-			p.Status, p.Message = "missed", "启动补签队列已超过北京时间今天；不跨日补签"
+			p.Status, p.Message = "missed", "Startup catch-up queue already beyond today in Beijing time; no next-day catch-up"
 			dirty = true
 			continue
 		}
@@ -417,7 +417,7 @@ func (s *dailyCheckinScheduler) queueStartupLocked(now time.Time, targets []chec
 			p.StartupAt = at
 			dirty = true
 		}
-		message := "启动补签排队中；前一请求完成后至少间隔一分钟"
+		message := "Queued for startup catch-up; at least one minute after the previous request completes"
 		if p.Message != message {
 			p.Message = message
 			dirty = true
@@ -425,7 +425,7 @@ func (s *dailyCheckinScheduler) queueStartupLocked(now time.Time, targets []chec
 		slot = at + time.Minute.Milliseconds()
 	}
 	if len(pending) > 0 {
-		log.Printf("[签到计划] traceId=%s 阶段=启动补签排队 日期=%s 待签账号=%d 间隔秒=60 说明=仅尝试次数为零的待签账号；已签及失败账号不入队；计划先落盘",
+		log.Printf("[Checkin plan] traceId=%s stage=startup catch-up queueing date=%s pending accounts=%d interval seconds=60 note=only pending accounts with zero attempts; already-signed and failed accounts are not queued; plan persisted first",
 			newTraceID(), s.doc.Date, len(pending))
 	}
 	return dirty
@@ -479,7 +479,7 @@ func nextDailyCheckin(now time.Time) time.Time {
 
 func (s *dailyCheckinScheduler) runJob(ctx context.Context, job checkinJob) {
 	logScheduledTask("daily_checkin", "started", "running", job.trace, job.started, time.Time{},
-		fmt.Sprintf("北京时间日期=%s 第%d次尝试；账号标识=%s", job.date, job.attempt, job.key[:12]))
+		fmt.Sprintf("Beijing-time date=%s attempt #%d; account=%s", job.date, job.attempt, job.key[:12]))
 	// Derive the remaining budget from the same clock used for the schedule.
 	// This also keeps deterministic virtual-clock tests independent of wall time.
 	ctx, cancel := context.WithTimeout(ctx, job.end.Sub(s.now()))
@@ -503,17 +503,17 @@ func (s *dailyCheckinScheduler) runJob(ctx context.Context, job checkinJob) {
 		s.doc.LastStartupAt = max(s.doc.LastStartupAt, now.UnixMilli())
 	}
 	if err == nil && (result == "ok" || result == "already") {
-		p.Status, p.Message, status = "success", "北京时间今天已签到", "success"
+		p.Status, p.Message, status = "success", "Already checked in today (Beijing time)", "success"
 	} else {
 		p.Status, p.Message = "failed", safeCheckinFailure(err)
 		if job.attempt == 2 {
 			p.RetryEnd = true
-			p.Message += "；今日已用完两次尝试，不再重试"
+			p.Message += "; both attempts used today, no more retries"
 		} else {
 			_, _, retryEnd := checkinWindows(now)
 			if !now.Before(retryEnd) {
 				p.RetryEnd = true
-				p.Message += "；已过今日失败重试窗口，不再重试"
+				p.Message += "; past today's retry window, no more retries"
 			}
 		}
 	}
@@ -521,12 +521,12 @@ func (s *dailyCheckinScheduler) runJob(ctx context.Context, job checkinJob) {
 	next := s.nextLocked(now)
 	s.mu.Unlock()
 	logScheduledTask("daily_checkin", "completed", status, job.trace, job.started, next,
-		fmt.Sprintf("日期=%s 尝试=%d 账号标识=%s 结果=%s", job.date, job.attempt, job.key[:12], status))
+		fmt.Sprintf("date=%s attempt=%d account=%s result=%s", job.date, job.attempt, job.key[:12], status))
 	if status == "success" {
 		requestQuotaScan()
 	}
 	if err := writeStatusSnapshot(); err != nil {
-		log.Printf("[每日签到] traceId=%s 阶段=展示快照 结果=失败 说明=签到次数已保存，下次状态快照周期会重试展示，不重发签到", job.trace)
+		log.Printf("[Daily checkin] traceId=%s stage=display snapshot result=failed note=checkin attempts already saved; next status snapshot cycle retries the display without re-sending checkin", job.trace)
 	}
 }
 
@@ -550,7 +550,7 @@ func (s *dailyCheckinScheduler) run(ctx context.Context) {
 		}
 	}
 	dispatch(s.planAndClaim(s.now(), currentCheckinTargets(), true))
-	log.Printf("[每日签到] traceId=%s 阶段=启动 结果=按北京时间恢复计划 说明=08:00前仅等待随机计划；08:00后待签账号立即开始一分钟间隔补签；账号事件不触发补签", newTraceID())
+	log.Printf("[Daily checkin] traceId=%s stage=startup result=plan restored per Beijing time note=before 08:00 only waiting on the random schedule; after 08:00 pending accounts start one-minute catch-up immediately; account events do not trigger catch-up", newTraceID())
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -569,14 +569,14 @@ func (s *dailyCheckinScheduler) run(ctx context.Context) {
 func (s *dailyCheckinScheduler) view(target checkinTarget, now time.Time) checkinStatusSnapshot {
 	out := checkinStatusSnapshot{Date: checkinDay(now), Status: "pending"}
 	if !target.supported {
-		out.Status, out.Message = "unsupported", "国际站或企业账号不参与个人签到"
+		out.Status, out.Message = "unsupported", "International or enterprise accounts do not participate in personal checkin"
 		return out
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loadLocked()
 	if s.blocked {
-		out.Status, out.Message = "unknown", "签到状态文件不可用；为防止重复请求已暂停签到"
+		out.Status, out.Message = "unknown", "Checkin state file unavailable; checkin paused to prevent duplicate requests"
 		return out
 	}
 	if s.doc.Date == out.Date {
@@ -589,7 +589,7 @@ func (s *dailyCheckinScheduler) view(target checkinTarget, now time.Time) checki
 					start, _, _ := checkinWindows(now)
 					if out.NextAt >= start.Add(16*time.Hour).Unix() {
 						out.Status, out.NextAt = "missed", 0
-						out.Message = "今日剩余时间不足以保持一分钟间隔；不跨日补签"
+						out.Message = "Not enough time left today to keep the one-minute spacing; no next-day catch-up"
 					}
 				}
 			} else if p.Status == "failed" && p.Attempts == 1 && !p.RetryEnd {
@@ -607,10 +607,10 @@ func (s *dailyCheckinScheduler) view(target checkinTarget, now time.Time) checki
 	}
 	_, retry, _ := checkinWindows(now)
 	if !now.Before(retry) {
-		out.Status, out.Message = "missed", "今日窗口已过，未发起签到；不补签"
+		out.Status, out.Message = "missed", "Today's window has passed and no checkin was sent; no catch-up"
 	}
 	if !target.eligible {
-		out.Message = "账号当前不可用，不发送签到"
+		out.Message = "Account currently unavailable; no checkin sent"
 	}
 	return out
 }
@@ -622,28 +622,28 @@ func checkinDisplay(view checkinStatusSnapshot, edition string, now time.Time) s
 	if view.Date != checkinDay(now) {
 		_, retry, _ := checkinWindows(now)
 		if !now.Before(retry) {
-			return "未签"
+			return "Not signed"
 		}
-		return "待签"
+		return "Pending"
 	}
 	switch view.Status {
 	case "success":
-		return "已签"
+		return "Signed"
 	case "failed":
-		return "失败"
+		return "Failed"
 	case "missed":
-		return "未签"
+		return "Not signed"
 	case "unknown":
-		return "未知"
+		return "Unknown"
 	default:
-		return "待签"
+		return "Pending"
 	}
 }
 
 type checkinRequestError struct{ status, code int }
 
 func (e checkinRequestError) Error() string {
-	return fmt.Sprintf("签到失败（HTTP %d，业务码 %d）", e.status, e.code)
+	return fmt.Sprintf("Checkin failed (HTTP %d, business code %d)", e.status, e.code)
 }
 
 func safeCheckinFailure(err error) string {
@@ -652,16 +652,16 @@ func safeCheckinFailure(err error) string {
 		return known.Error()
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "签到请求超时或已超过执行窗口"
+		return "Checkin request timed out or exceeded its execution window"
 	}
 	if errors.Is(err, context.Canceled) {
-		return "签到请求已取消"
+		return "Checkin request was canceled"
 	}
-	return "签到请求失败；详见对应 TraceID 日志"
+	return "Checkin request failed; see the log for the corresponding TraceID"
 }
 
 func checkinAccountWithTrace(ctx context.Context, acc *Account, trace string) (string, error) {
-	log.Printf("[每日签到] traceId=%s 阶段=请求入口 说明=仅使用已保存的随机计划，不模拟活动完成", trace)
+	log.Printf("[Daily checkin] traceId=%s stage=request entry note=uses only the saved random schedule; does not simulate completing activities", trace)
 	if acc == nil {
 		return "skipped", nil
 	}
@@ -680,7 +680,7 @@ func checkinAccountWithTrace(ctx context.Context, acc *Account, trace string) (s
 	accountMu.Unlock()
 	acc.lock.RUnlock() // network IO never holds the model credential lock
 	if expected, ok := ctx.Value(checkinExpectedIdentity{}).(string); ok && expected != target.key {
-		log.Printf("[每日签到] traceId=%s 阶段=凭据快照校验 结果=跳过 原因=计划后账号身份已改变 说明=不会把旧账号尝试次数用于新账号", trace)
+		log.Printf("[Daily checkin] traceId=%s stage=credential snapshot check result=skipped reason=account identity changed after scheduling note=old account attempts are never applied to a new account", trace)
 		return "skipped", nil
 	}
 	if !target.eligible {
@@ -690,7 +690,7 @@ func checkinAccountWithTrace(ctx context.Context, acc *Account, trace string) (s
 		} else if auth.Account.EnterpriseID != "" {
 			result = "enterprise_skipped"
 		}
-		log.Printf("[每日签到] traceId=%s 阶段=资格检查 结果=跳过 类型=%s 说明=未发送上游，不改变调度状态", trace, result)
+		log.Printf("[Daily checkin] traceId=%s stage=eligibility check result=skipped type=%s note=nothing sent upstream; schedule state unchanged", trace, result)
 		return result, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, prof.dailyCheckinURL(), strings.NewReader("{}"))
@@ -708,10 +708,10 @@ func checkinAccountWithTrace(ctx context.Context, acc *Account, trace string) (s
 	}
 	client := *cfg.HttpClient
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	log.Printf("[每日签到] traceId=%s 阶段=请求上游 方法=POST 账号标识=%s 说明=单次发送，不自动网络重试，不记录凭据或响应原文", trace, target.key[:12])
+	log.Printf("[Daily checkin] traceId=%s stage=upstream request method=POST account=%s note=sent once; no automatic network retry; credentials and raw responses never logged", trace, target.key[:12])
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[每日签到] traceId=%s 阶段=请求异常 类型=%s 结果=失败 说明=保留原账号状态，是否再试仅由当天计划决定", trace, debugErrorType(err))
+		log.Printf("[Daily checkin] traceId=%s stage=request error type=%s result=failed note=original account state kept; whether to retry is decided solely by today's plan", trace, debugErrorType(err))
 		return "failed", err
 	}
 	defer resp.Body.Close()
@@ -725,7 +725,7 @@ func checkinAccountWithTrace(ctx context.Context, acc *Account, trace string) (s
 	if envelope.Code != nil {
 		code = *envelope.Code
 	}
-	log.Printf("[每日签到] traceId=%s 阶段=响应校验 HTTP=%d 业务码=%d 说明=只接受明确成功或已签到，不将错误响应算作成功", trace, resp.StatusCode, code)
+	log.Printf("[Daily checkin] traceId=%s stage=response validation HTTP=%d business code=%d note=only explicit success or already-checked-in accepted; error responses never counted as success", trace, resp.StatusCode, code)
 	if readErr == nil && len(raw) <= 1<<20 && parseErr == nil {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 && code == 0 {
 			return "ok", nil

@@ -10,80 +10,85 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// 本文件锁定一个静默失败：上游在**每一个**分片上都下发 finish_reason:""，
-// 而 Anthropic 协议翻译层（Claude Code 链路）会取流中「第一个非 null 的
-// finish_reason」作为最终 stop_reason，于是首个分片的空串把 stop_reason 锁成
-// end_turn，真实终止分片的 "tool_calls" 不再被采纳 —— Claude Code 只在
-// stop_reason=tool_use 时才执行工具，工具因此永不执行、终端毫无结果。
+// This file pins a silent failure: the upstream sends finish_reason:"" on
+// **every** chunk, while the Anthropic protocol translation layer (the Claude
+// Code path) picks "the first non-null finish_reason" in the stream as the
+// final stop_reason. The empty string in the first chunk therefore locks
+// stop_reason to end_turn, and the real terminal chunk's "tool_calls" is no
+// longer adopted — Claude Code only executes tools when stop_reason=tool_use,
+// so tools never run and the terminal shows nothing.
 //
-// 固定分片序列回放（经 cc-switch 翻译）实测：
-//   任一分片带 ""                      -> stop_reason=end_turn（工具被丢弃）
-//   全部 null + 终止片 "tool_calls"    -> stop_reason=tool_use（工具执行）
+// Replay of a fixed chunk sequence (translated via cc-switch), observed:
+//   any chunk carrying ""                -> stop_reason=end_turn (tool dropped)
+//   all null + terminal "tool_calls"     -> stop_reason=tool_use (tool runs)
 // -----------------------------------------------------------------------------
 
-// 中间分片的空 finish_reason 必须归一化为 null；终止分片的真实原因必须保留。
+// Empty finish_reason in intermediate chunks must be normalized to null; the
+// terminal chunk's real reason must be preserved.
 func TestCleanChunkJSONNormalizesEmptyFinishReason(t *testing.T) {
 	intermediate := `{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":"","logprobs":null}]}`
 	cleaned := cleanChunkJSON(intermediate)
 	if strings.Contains(cleaned, `"finish_reason":""`) {
-		t.Fatalf("空 finish_reason 必须归一化为 null，否则翻译层会把 stop_reason 锁成 end_turn: %s", cleaned)
+		t.Fatalf("empty finish_reason must be normalized to null, otherwise the translation layer locks stop_reason to end_turn: %s", cleaned)
 	}
 	if !strings.Contains(cleaned, `"finish_reason":null`) {
-		t.Fatalf("空 finish_reason 必须归一化为 null: %s", cleaned)
+		t.Fatalf("empty finish_reason must be normalized to null: %s", cleaned)
 	}
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(cleaned), &obj); err != nil {
-		t.Fatalf("清洗后应为合法 JSON: %v", err)
+		t.Fatalf("cleaned output should be valid JSON: %v", err)
 	}
 	if fr := obj["choices"].([]any)[0].(map[string]any)["finish_reason"]; fr != nil {
-		t.Fatalf("finish_reason 应为 null，实际 %#v", fr)
+		t.Fatalf("finish_reason should be null, got %#v", fr)
 	}
 
 	terminal := `{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls","logprobs":null}]}`
 	cleanedTerm := cleanChunkJSON(terminal)
 	if !strings.Contains(cleanedTerm, `"finish_reason":"tool_calls"`) {
-		t.Fatalf("终止分片的 finish_reason 必须原样保留: %s", cleanedTerm)
+		t.Fatalf("terminal chunk finish_reason must be preserved verbatim: %s", cleanedTerm)
 	}
 
-	// "stop" 同样必须保留，不能被误改
+	// "stop" must also be preserved and not be mistakenly rewritten
 	stopTerm := `{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
 	if c := cleanChunkJSON(stopTerm); !strings.Contains(c, `"finish_reason":"stop"`) {
-		t.Fatalf("finish_reason=stop 必须保留: %s", c)
+		t.Fatalf("finish_reason=stop must be preserved: %s", c)
 	}
 }
 
-// 旧版 function_call 空壳（name/arguments 均为空）应清除；真实的旧版调用必须保留。
+// Legacy function_call stubs (both name/arguments empty) should be removed;
+// real legacy calls must be preserved.
 func TestCleanChunkJSONRemovesLegacyFunctionCallStub(t *testing.T) {
 	stub := `{"id":"c1","choices":[{"index":0,"delta":{"function_call":{"arguments":"","name":""},"role":"assistant"},"finish_reason":"tool_calls"}]}`
 	cleaned := cleanChunkJSON(stub)
 	if strings.Contains(cleaned, "function_call") {
-		t.Fatalf("空壳 function_call 应被清除: %s", cleaned)
+		t.Fatalf("stub function_call should be removed: %s", cleaned)
 	}
 	if !strings.Contains(cleaned, `"finish_reason":"tool_calls"`) {
-		t.Fatalf("清理空壳不应影响 finish_reason: %s", cleaned)
+		t.Fatalf("removing the stub should not affect finish_reason: %s", cleaned)
 	}
 	if !strings.Contains(cleaned, `"role":"assistant"`) {
-		t.Fatalf("role 属合法字段，不应被删除: %s", cleaned)
+		t.Fatalf("role is a valid field and should not be deleted: %s", cleaned)
 	}
 
 	real := `{"id":"c1","choices":[{"index":0,"delta":{"function_call":{"name":"get_weather","arguments":"{}"}},"finish_reason":"function_call"}]}`
 	cleanedReal := cleanChunkJSON(real)
 	if !strings.Contains(cleanedReal, `"name":"get_weather"`) {
-		t.Fatalf("真实的旧版函数调用不应被误删: %s", cleanedReal)
+		t.Fatalf("real legacy function call should not be removed: %s", cleanedReal)
 	}
 }
 
-// 既有行为回归：delta 中的空值字段仍应被清除，非 JSON 原样返回。
+// Regression on existing behavior: empty-valued delta fields are still
+// removed, and non-JSON input is returned verbatim.
 func TestCleanChunkJSONRemovesEmptyDeltaFields(t *testing.T) {
-	cleaned := cleanChunkJSON(`{"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"思考中"},"finish_reason":""}]}`)
+	cleaned := cleanChunkJSON(`{"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"thinking"},"finish_reason":""}]}`)
 	if strings.Contains(cleaned, `"content"`) {
-		t.Fatalf("delta 中的空值应被清除: %s", cleaned)
+		t.Fatalf("empty delta values should be removed: %s", cleaned)
 	}
-	if !strings.Contains(cleaned, "思考中") {
-		t.Fatalf("非空字段不应被清除: %s", cleaned)
+	if !strings.Contains(cleaned, "thinking") {
+		t.Fatalf("non-empty fields should not be removed: %s", cleaned)
 	}
 	if got := cleanChunkJSON("event: ping"); got != "event: ping" {
-		t.Fatalf("非 JSON 行应原样返回，实际: %s", got)
+		t.Fatalf("non-JSON line should be returned verbatim, got: %s", got)
 	}
 }
 
@@ -116,9 +121,9 @@ func TestCleanChunkJSONPreservesToolDeltas(t *testing.T) {
 
 func TestStreamChatToolAndReasoningRoundTrip(t *testing.T) {
 	upstreamSSE := strings.Join([]string{
-		`data: {"id":"c1","choices":[{"index":0,"delta":{"reasoning_content":"检查 ","tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":null}]}`,
-		`data: {"choices":[{"index":0,"delta":{"reasoning_content":"两个城市。\n","tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":null}]}`,
-		`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"","type":"","function":{"name":"","arguments":"\"上海\"}"}},{"index":0,"id":"","type":"","function":{"name":"","arguments":"\"北京\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		`data: {"id":"c1","choices":[{"index":0,"delta":{"reasoning_content":"Checking ","tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":null}]}`,
+		`data: {"choices":[{"index":0,"delta":{"reasoning_content":"two cities.\n","tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":null}]}`,
+		`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"","type":"","function":{"name":"","arguments":"\"Shanghai\"}"}},{"index":0,"id":"","type":"","function":{"name":"","arguments":"\"Beijing\"}"}}]},"finish_reason":"tool_calls"}]}`,
 		`data: [DONE]`,
 	}, "\n\n") + "\n\n"
 	code, out := runStreamCase(t, func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +145,7 @@ func TestStreamChatToolAndReasoningRoundTrip(t *testing.T) {
 		t.Fatalf("tool completion = %#v", choice)
 	}
 	assistant := choice["message"].(map[string]any)
-	trace := "检查 两个城市。\n"
+	trace := "Checking two cities.\n"
 	if assistant["reasoning_content"] != trace {
 		t.Fatalf("stream changed reasoning: %#v", assistant)
 	}
@@ -148,7 +153,7 @@ func TestStreamChatToolAndReasoningRoundTrip(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("tool calls = %#v", calls)
 	}
-	for i, want := range []struct{ id, arguments string }{{"call_a", `{"city":"北京"}`}, {"call_b", `{"city":"上海"}`}} {
+	for i, want := range []struct{ id, arguments string }{{"call_a", `{"city":"Beijing"}`}, {"call_b", `{"city":"Shanghai"}`}} {
 		call := calls[i].(map[string]any)
 		function := call["function"].(map[string]any)
 		if call["id"] != want.id || call["type"] != "function" || function["name"] != "lookup" || function["arguments"] != want.arguments {
@@ -159,10 +164,10 @@ func TestStreamChatToolAndReasoningRoundTrip(t *testing.T) {
 		"model": "deepseek-v4.1-flash", "stream": true, "reasoning_effort": "high",
 		"messages": []any{
 			map[string]any{"role": "system", "content": "Use tools to answer."},
-			map[string]any{"role": "user", "content": "查询两个城市"},
+			map[string]any{"role": "user", "content": "Query two cities"},
 			assistant,
-			map[string]any{"role": "tool", "tool_call_id": "call_a", "content": "晴天"},
-			map[string]any{"role": "tool", "tool_call_id": "call_b", "content": "多云"},
+			map[string]any{"role": "tool", "tool_call_id": "call_a", "content": "Sunny"},
+			map[string]any{"role": "tool", "tool_call_id": "call_b", "content": "Cloudy"},
 		},
 	})
 	if err != nil {
@@ -181,7 +186,7 @@ func TestStreamChatToolAndReasoningRoundTrip(t *testing.T) {
 	if string(gotCalls) != string(wantCalls) {
 		t.Fatalf("replay changed tool calls: got %s, want %s", gotCalls, wantCalls)
 	}
-	for i, want := range []struct{ id, content string }{{"call_a", "晴天"}, {"call_b", "多云"}} {
+	for i, want := range []struct{ id, content string }{{"call_a", "Sunny"}, {"call_b", "Cloudy"}} {
 		result := replayed[i+3].(map[string]any)
 		if result["role"] != "tool" || result["tool_call_id"] != want.id || result["content"] != want.content {
 			t.Fatalf("tool result %d changed: %#v", i, result)
@@ -189,8 +194,9 @@ func TestStreamChatToolAndReasoningRoundTrip(t *testing.T) {
 	}
 }
 
-// runStreamCase 用假账号 + 假上游跑通真实 handleChatCompletions 链路，
-// 返回客户端最终收到的状态码与 SSE 字节。
+// runStreamCase drives the real handleChatCompletions path with a fake account
+// and fake upstream, returning the status code and SSE bytes the client
+// ultimately receives.
 func runStreamCase(t *testing.T, upstream http.HandlerFunc) (int, string) {
 	t.Helper()
 
@@ -236,8 +242,9 @@ func runStreamCase(t *testing.T, upstream http.HandlerFunc) (int, string) {
 	return rec.Code, rec.Body.String()
 }
 
-// 端到端：上游下发「每个分片都带 finish_reason:""」的含工具调用流，
-// 客户端收到的分片里绝不能残留空串，终止分片必须是 "tool_calls"。
+// End to end: the upstream sends a tool-call stream where every chunk carries
+// finish_reason:""; no empty string may remain in the chunks the client
+// receives, and the terminal chunk must be "tool_calls".
 func TestStreamChatResponseKeepsToolCallFinishReason(t *testing.T) {
 	upstreamSSE := strings.Join([]string{
 		`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":"","logprobs":null}]}`,
@@ -252,30 +259,31 @@ func TestStreamChatResponseKeepsToolCallFinishReason(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(upstreamSSE))
 	})
-	t.Logf("状态码=%d 客户端收到:\n%s", code, out)
+	t.Logf("status=%d client received:\n%s", code, out)
 
 	if code != http.StatusOK {
-		t.Fatalf("期望 200，实际 %d", code)
+		t.Fatalf("expected 200, got %d", code)
 	}
 	if strings.Contains(out, `"finish_reason":""`) {
-		t.Fatalf("客户端不应收到空 finish_reason（会把 stop_reason 锁成 end_turn）: %s", out)
+		t.Fatalf("client must not receive an empty finish_reason (it would lock stop_reason to end_turn): %s", out)
 	}
 	if !strings.Contains(out, `"finish_reason":"tool_calls"`) {
-		t.Fatalf("终止分片必须保留 finish_reason=tool_calls: %s", out)
+		t.Fatalf("terminal chunk must keep finish_reason=tool_calls: %s", out)
 	}
 	if !strings.Contains(out, `"name":"Bash"`) {
-		t.Fatalf("工具调用必须透传: %s", out)
+		t.Fatalf("tool call must be passed through: %s", out)
 	}
 	if strings.Contains(out, "function_call") {
-		t.Fatalf("旧版 function_call 空壳必须被清除: %s", out)
+		t.Fatalf("legacy function_call stub must be removed: %s", out)
 	}
 	if !strings.HasSuffix(out, "data: [DONE]\n\n") {
-		t.Fatalf("缺少 [DONE] 结束标记")
+		t.Fatalf("missing [DONE] terminator")
 	}
 }
 
-// 官方上游首帧是 SSE 注释；CPA 必须看到注释而不是 data: : heartbeat。
-// 同时确保 event/id/retry 元数据不会变成非 JSON 数据帧。
+// The official upstream's first frame is an SSE comment; CPA must see the
+// comment rather than data: : heartbeat.
+// Also ensure event/id/retry metadata never becomes a non-JSON data frame.
 func TestStreamChatResponsePreservesHeartbeatFraming(t *testing.T) {
 	upstreamSSE := ": heartbeat\r\n\r\nevent: message\r\nid: 123\r\nretry: 1000\r\nx-extension: ignored\r\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\r\n\r\n" +

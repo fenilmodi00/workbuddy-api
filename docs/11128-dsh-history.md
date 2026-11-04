@@ -1,43 +1,43 @@
-# DSH 历史回放与 GUI 环境说明兼容
+# DSH History Replay and GUI Environment-Sentence Compatibility
 
-> **历史实现记录：** 下文描述早期 DSH 专用处理。自 v1.14.43 起，身份句和 GUI 完整开头均迁入 `identity.replacements`，不再有专用硬编码改写；普通词条统一按大小写敏感的字面替换执行，代码区域也遵循同一规则。当前配置与受限首位通配边界见[使用指南](user-guide.md#配置文字替换与受限首位通配)。
+> **Historical implementation note:** The text below describes early DSH-specific handling. Since v1.14.43, the identity sentence and the full GUI opening have moved into `identity.replacements`, with no dedicated hardcoded rewrites; ordinary entries run as case-sensitive literal replacements, and code regions follow the same rule. For current config and the restricted leading-wildcard boundaries, see the [user guide](user-guide.md#configuring-text-replacement-and-the-restricted-leading-wildcard).
 
-关联 [Issue #24](https://github.com/CangShui/workbuddy-gateway/issues/24)
-和 [Issue #21](https://github.com/CangShui/workbuddy-gateway/issues/21)。
+Related: [Issue #24](https://github.com/CangShui/workbuddy-gateway/issues/24)
+and [Issue #21](https://github.com/CangShui/workbuddy-gateway/issues/21).
 
-现有规则只处理 system 的第一个文本块，且执行时间早于配置提示词注入。
-因此 assistant 历史、后续文本块和 `systemPrompt.fallback/force` 仍可能带有
-同一已知身份句；Anthropic 的文本块合并还会使后续块开头的位置丢失。
-仅处理身份前缀也不会覆盖 DSH 的 GUI 环境说明。
+The existing rules only processed the first system text block, and ran before config prompt injection.
+So assistant history, later text blocks, and `systemPrompt.fallback/force` could still carry the
+same known identity sentence; Anthropic's text-block merging also loses the position of later block starts.
+Handling only the identity prefix also left the DSH GUI environment sentence uncovered.
 
-本补丁只补齐以下边界：
+This patch only closes the following gaps:
 
-- system / assistant 字符串及每个标准 `type: "text"` 块的已知身份前缀，
-  沿用已有的中性替换和大小写匹配规则；前导空白及正文中段不参与前缀匹配。
-- 对 GUI 已知的两句开头做精确匹配，只把第一句中的
-  `the DeepSeek Harness Web GUI` 改成 `a Web GUI`。
-  后续页面指代规则及功能说明保持原文，不依赖整个段落的版本或摘要。
-- GUI 规则保留围栏、行内和缩进代码；反引号分隔符状态跨行保留。
-- 三协议在 fallback / force 注入后执行共享处理；Messages 在 system / assistant
-  文本块合并前额外执行同一幂等处理。
+- Known identity prefixes of system / assistant strings and every standard `type: "text"` block,
+  reusing the existing neutral replacement and case-sensitive matching rules; leading whitespace and mid-body occurrences do not participate in prefix matching.
+- Exact matching on the two known GUI opening sentences, changing only
+  `the DeepSeek Harness Web GUI` in the first sentence to `a Web GUI`.
+  Later page-reference rules and feature descriptions stay verbatim, without relying on a version or summary of the whole paragraph.
+- The GUI rules preserve fenced, inline, and indented code; backtick-delimiter state is carried across lines.
+- The three protocols run the shared handling after fallback / force injection; Messages additionally runs the same idempotent pass
+  before system / assistant text-block merging.
 
-已知 GUI 开头来自 DeepSeek Harness 的公开包
-[`@deepseek-ai/dsh-harness-dev-context`](https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/context/harness-dev-context)。
-实现也参考了
-[dsh-connect-workbuddy v4.15.1 的说明](https://github.com/dingminhua/dsh-connect-workbuddy/releases/tag/v4.15.1)。
+The known GUI opening comes from DeepSeek Harness's public package
+[`@deepseek-ai/dsh-harness-dev-context`](https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/context/harness-dev-context).
+The implementation also referenced
+[dsh-connect-workbuddy v4.15.1 release notes](https://github.com/dingminhua/dsh-connect-workbuddy/releases/tag/v4.15.1).
 
-用户正文、工具结果、工具参数、reasoning 和图片块不参与新增规则。
-日志只记录固定规则和命中数，不新增请求正文日志。
-现有完整请求诊断开关、账号调度、SSE 转换和计费逻辑不变。
-本补丁不改请求头、客户端签名或授权身份，也不增加收费重试。
-若上游仍返回 11128，错误继续原样返回；这不是全部渠道限制的通用解决方案。
+User body text, tool results, tool arguments, reasoning, and image blocks never participate in the new rules.
+Logs record only fixed-rule names and hit counts, with no new request-body logging.
+The existing full-request diagnostic switch, account scheduling, SSE conversion, and billing logic are unchanged.
+This patch does not change headers, client signatures, or authorization identity, and adds no billed retries.
+If the upstream still returns 11128, the error is returned as-is; this is not a universal solution to all channel restrictions.
 
-## 验证范围
+## Validation Scope
 
-基于上游 main `ceb2ac8` 先增加 HTTP 回归测试，24 组配置注入用例和
-12 组历史回放用例在原代码上失败。修复后检查三协议的流式与聚合请求，
-并覆盖代码边界、工具参数及结果关联、日志内容、重复处理和继续拒绝时不重试。
+On top of upstream main `ceb2ac8`, HTTP regression tests were added first, and 24 config-injection cases plus
+12 history-replay cases failed against the original code. After the fix, streaming and aggregated requests of all
+three protocols were checked, covering code boundaries, tool argument and result association, log content, repeated processing, and no-retry on continued rejection.
 
-相关兼容逻辑已经在 fork 中验证并部署；本次上游移植只使用合成请求和本地
-`httptest` 上游，不读取生产凭据或重放私人会话，不新增真实收费调用。
-这不代表完整长期会话或之后的上游策略变化已全部验证。
+The related compatibility logic was already verified and deployed in the fork; this upstream port uses only synthetic requests and a local
+`httptest` upstream, reads no production credentials, replays no private sessions, and adds no real billed calls.
+This does not mean full long-running sessions or later upstream policy changes have all been validated.

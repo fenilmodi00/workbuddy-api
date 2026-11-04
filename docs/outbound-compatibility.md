@@ -1,21 +1,21 @@
-# 多 Harness 出站兼容
+# Multi-Harness Outbound Compatibility
 
-三个原生入口在协议转换后共用同一条出站准备链：
+The three native entry points share the same outbound preparation chain after protocol conversion:
 
-- Chat Completions：`/v1/chat/completions`
-- OpenAI Responses：`/v1/responses`
-- Anthropic Messages：`/v1/messages`
+- Chat Completions: `/v1/chat/completions`
+- OpenAI Responses: `/v1/responses`
+- Anthropic Messages: `/v1/messages`
 
-目标是尽量对齐已验证的官方请求结构，同时保留客户端的指令、工具和参数语义。
-**不是逐字复制官方私有 system prompt，也不承诺绕过服务端渠道校验。**
-参数和请求头基于 2026-10-21 国内桌面实抓样本，不声称自动跟随官网最新版本。
+The goal is to align with the verified official request structure as closely as possible while preserving the client's instruction, tool, and parameter semantics.
+**It does not copy the official private system prompt verbatim, and it does not promise to bypass server-side channel validation.**
+Parameters and headers are based on desktop samples captured domestically on 2026-10-21 and do not claim to automatically track the latest official site version.
 
-## 开启和回退
+## Enabling and Fallback
 
-**先部署包含本功能的新构建，再添加配置字段。旧二进制不认识 requestProfile，
-可能拒绝新配置；本次代码完成不代表生产服务已经更新。**
+**Deploy a new build containing this feature before adding the config field. Older binaries do not recognize requestProfile
+and may reject the new config; landing this code does not mean the production service is already updated.**
 
-在已有配置的 `upstream` 对象内增加以下字段，不要替换其他配置或凭据：
+Add the following field inside the `upstream` object of an existing config, without replacing other settings or credentials:
 
 ```json
 {
@@ -25,109 +25,109 @@
 }
 ```
 
-- 配置热加载后影响新模型请求，无需重启。
-- 改为 `"legacy"` 可回退。字段省略、空字符串或 null 使用 legacy。
-- 非法值或错误类型会被配置校验拒绝；热加载保留上一份有效配置，不会部分应用。
-- 新示例配置显式使用 official；已有配置不会被程序自动改写。
-- 一次逻辑请求只选择一次 profile，热加载不会改变在飞请求及其重试的压缩和头部策略。
-- 本功能没有自动开启 `debug.fullRequests`。
+- After config hot reload the setting affects new model requests; no restart needed.
+- Switch to `"legacy"` to fall back. Omitted field, empty string, or null means legacy.
+- Invalid values or wrong types are rejected by config validation; hot reload keeps the last valid config and never partially applies.
+- New example configs use official explicitly; existing configs are never rewritten automatically.
+- The profile is selected once per logical request; hot reload never changes the compression or header policy of in-flight requests and their retries.
+- This feature does not automatically enable `debug.fullRequests`.
 
-## 官方兼容模式做什么
+## What Official Compatibility Mode Does
 
-### 统一正文
+### Unified Body
 
-1. 保留已有 developer→system、已知前缀净化、工具历史修复、推理历史修复及全局提示词规则。
-2. 只合并**连续前导、无附加元数据的纯文本 system**，保留文本顺序，并在合并后追加配置的强制提示词。
-   不跨越 user/assistant/tool 边界，不丢弃图片、name、cache_control 等元数据；
-   无法无损合并时保留原结构。
-3. 在缺少该字段时补 `stream_options.include_usage=true`，不覆盖显式 false。
-4. 对已有完整样本的 `deepseek-v4.1-flash`：
-   - 未指定 temperature，且未指定 top_p 时，补 temperature=1；
-   - 未指定 verbosity 时，补 verbosity=high；
-   - 未声明输出预算且模型目录还没有上限时，补已验证的 max_tokens=128000。
-5. Chat 的 max_completion_tokens 在没有 max_tokens 时转为 max_tokens；
-   两者同时存在时不擅自覆盖客户端值。客户端仍应避免传入互相冲突的预算。
-6. 未知模型不猜测 temperature、verbosity 或输出预算上限。
+1. Keeps the existing developer→system handling, known-prefix sanitization, tool-history repair, reasoning-history repair, and global prompt rules.
+2. Merges only **consecutive leading plain-text system messages without extra metadata**, preserving text order, and appends the configured forced prompt after merging.
+   It never crosses user/assistant/tool boundaries and never drops metadata such as images, name, or cache_control;
+   when lossless merging is impossible, the original structure is kept.
+3. Adds `stream_options.include_usage=true` when the field is missing, without overriding an explicit false.
+4. For `deepseek-v4.1-flash`, which has a complete captured sample:
+   - When temperature is unspecified and top_p is unspecified, adds temperature=1;
+   - When verbosity is unspecified, adds verbosity=high;
+   - When no output budget is declared and the model catalog has no cap yet, adds the verified max_tokens=128000.
+5. Chat's max_completion_tokens is converted to max_tokens when max_tokens is absent;
+   when both exist, the client's values are never overridden. Clients should still avoid sending conflicting budgets.
+6. Unknown models get no guessed temperature, verbosity, or output budget cap.
 
-`null` 视为未声明；有效的显式 `0`、`false`、较短输出预算及 low/high/max 均保留。
-tool_choice 和 parallel_tool_calls 不因官方样本省略就被删除，工具名称、参数 schema 不被裁剪成官方的 23 个工具。
-网关仍按原有逻辑向上游使用 SSE，为非流式客户端本地聚合。
+`null` counts as undeclared; valid explicit `0`, `false`, shorter output budgets, and low/high/max are all preserved.
+tool_choice and parallel_tool_calls are not deleted merely because the official sample omits them, and tool names and parameter schemas are not trimmed down to the official 23 tools.
+The gateway still uses SSE upstream as before and aggregates locally for non-streaming clients.
 
-### 补齐协议参数转换
+### Completing Protocol Parameter Conversion
 
-这些转换修正不依赖 official 开关：
+These conversion fixes do not depend on the official switch:
 
-| 原协议字段 | 网关 Chat 字段 |
+| Source protocol field | Gateway Chat field |
 |---|---|
-| Responses reasoning.effort | reasoning_effort，保留 max 等显式值 |
+| Responses reasoning.effort | reasoning_effort, preserving explicit values like max |
 | Responses text.verbosity | verbosity |
-| Responses parallel_tool_calls | parallel_tool_calls，保留 false |
+| Responses parallel_tool_calls | parallel_tool_calls, preserving false |
 | Responses max_output_tokens | max_tokens |
-| Messages output_config.effort | reasoning_effort，优先于旧 thinking.effort 和预算推导 |
-| Messages thinking.type=disabled | 继续关闭思考，不被 output_config 再次开启 |
-| Messages tool_choice.disable_parallel_tool_use | parallel_tool_calls 的反值 |
+| Messages output_config.effort | reasoning_effort, taking priority over legacy thinking.effort and budget derivation |
+| Messages thinking.type=disabled | Thinking stays disabled and is not re-enabled by output_config |
+| Messages tool_choice.disable_parallel_tool_use | Inverted value of parallel_tool_calls |
 
-不执行 `high→max` 的无条件升级。用户主动选 high、辅助标题任务使用 high，
-与前置代理错误降档不是一回事。
+No unconditional `high→max` upgrade is performed. A user actively choosing high, or an auxiliary title task using high,
+is not the same thing as a fronting proxy wrongly downgrading the effort.
 
-### 国内模型请求头及压缩
+### Domestic Model Headers and Compression
 
-仅国内模型 POST `/v2/chat/completions` 使用已采集的静态头：
+Only domestic model POST `/v2/chat/completions` requests use the captured static headers:
 
-- User-Agent：`WorkBuddy/5.8.3 WorkBuddy/5.8.3 CLI/2.161.0`
-- Accept：`application/json`
-- X-IDE-Type / X-IDE-Name / X-IDE-Version：`WorkBuddy / WorkBuddy / 5.8.3`
-- X-Private-Data：`true`
-- X-Codebuddy-Request：`1`
-- X-Requested-With：`XMLHttpRequest`
-- x-stainless-*：对齐已采集的 Node SDK 静态值
-- X-Agent-Intent / X-Agent-Purpose / X-Agent-Type：`craft / conversation / main`
-- X-Product：`SaaS`
-- X-Request-ID 与 X-Conversation-Message-ID 使用相同的 32 位消息 ID；
-  同一逻辑请求的安全重试沿用该标识。
+- User-Agent: `WorkBuddy/5.8.3 WorkBuddy/5.8.3 CLI/2.161.0`
+- Accept: `application/json`
+- X-IDE-Type / X-IDE-Name / X-IDE-Version: `WorkBuddy / WorkBuddy / 5.8.3`
+- X-Private-Data: `true`
+- X-Codebuddy-Request: `1`
+- X-Requested-With: `XMLHttpRequest`
+- x-stainless-*: aligned with the captured Node SDK static values
+- X-Agent-Intent / X-Agent-Purpose / X-Agent-Type: `craft / conversation / main`
+- X-Product: `SaaS`
+- X-Request-ID and X-Conversation-Message-ID use the same 32-character message ID;
+  safe retries of the same logical request reuse that identifier.
 
-保留账号所属的 access token、用户/企业/域信息及会话标识；
-模型请求不再携带旧版 X-Client-ID、X-Client-Version、Origin、Referer、
-X-Refresh-Token 和缺省 X-No-* 头。
-登录、刷新、额度、模型目录等控制接口保持原逻辑。
+The account's access token, user/enterprise/domain info, and session identifiers are preserved;
+model requests no longer carry the legacy X-Client-ID, X-Client-Version, Origin, Referer,
+X-Refresh-Token, and default X-No-* headers.
+Control endpoints such as login, refresh, quota, and the model catalog keep their original logic.
 
-模型 JSON 使用 gzip 压缩，请求头与实际压缩字节、Content-Length 一致。
-响应压缩交给 Go HTTP 客户端处理，不声明无法解码的 br/compress 等能力。
+Model JSON is gzip-compressed, with headers consistent with the actual compressed bytes and Content-Length.
+Response compression is handled by the Go HTTP client, and decode capabilities such as br/compress are never declared.
 
-2026-10-22 用真实短请求探测过 `https://copilot.tencent.com/v2/responses`，
-返回 HTTP 404 `Route Not Found`。因此当前仍使用 `/v2/chat/completions`，
-不把尚未支持的 Responses 上游路径切过去。
+On 2026-10-22, `https://copilot.tencent.com/v2/responses` was probed with a real short request
+and returned HTTP 404 `Route Not Found`. For now `/v2/chat/completions` remains in use,
+and the not-yet-supported Responses upstream path is not switched to.
 
-以下字段不凭空制造：
+The following fields are never fabricated:
 
-- X-Device-Token 等设备凭证；
-- x-stainless / Node 运行时等不属于当前 Go 网关的 SDK 身份；
-- 不能可靠判断的 Agent 类型、用途和业务增长事件；
-- 未采集验证的 B3、ACP 等其他链路字段。
+- Device credentials such as X-Device-Token;
+- SDK identities such as x-stainless / Node runtime that do not belong to this Go gateway;
+- Agent type, purpose, and business growth events that cannot be reliably determined;
+- Other tracing fields such as B3 and ACP that were never captured and verified.
 
-国际站的 UA、认证头、站点和请求编码保持 legacy，不把国内桌面头复制到国际站。
-official 的正文准备规则仍适用于该请求；未知模型依旧不注入未经验证的采样字段。
-国内模型 URL 当前仍沿用原有账号站点配置，未改成抓包中另一域名，不把近似兼容宣传为完全相同的官方链路。
+International sites keep legacy UA, auth headers, site, and request encoding; domestic desktop headers are not copied to them.
+The official body-preparation rules still apply to those requests; unknown models still get no unverified sampled fields injected.
+Domestic model URLs still follow the original per-account site configuration and were not changed to the other domain seen in captures; near-compatibility is not advertised as the identical official link.
 
-### Responses 工具保真
+### Responses Tool Fidelity
 
-Responses 的 namespace、custom 和 web_search 工具不再被静默丢弃：
+Responses' namespace, custom, and web_search tools are no longer silently dropped:
 
-- namespace 子工具以 `namespace__tool` 的扁平 function 名发给 Chat 上游；
-- custom 工具（例如 `apply_patch`）以带单字符串 `input` 的 function 发给上游；
-- web_search 作为可调用的 function 工具保留；
-- 上游返回工具调用时，网关按映射恢复 `namespace`、`custom_tool_call` 及
-  `response.custom_tool_call_input.*` 事件，客户端看到的是原始 Responses 形状；
-- 历史中的 `function_call`、`custom_tool_call` 及其 output 会一并转换，避免续轮丢失。
+- Namespace subtools are sent to the Chat upstream as flat function names of the form `namespace__tool`;
+- Custom tools (for example `apply_patch`) are sent upstream as functions with a single string `input`;
+- web_search is kept as a callable function tool;
+- When the upstream returns tool calls, the gateway restores `namespace`, `custom_tool_call`, and
+  `response.custom_tool_call_input.*` events per the mapping, so the client sees the original Responses shape;
+- `function_call`, `custom_tool_call`, and their outputs in history are converted as well, so follow-up turns lose nothing.
 
-这不是把 Chat 上游变成完整 OpenAI Responses 实现；工具的实际执行仍由客户端完成。
+This does not turn the Chat upstream into a full OpenAI Responses implementation; actual tool execution is still done by the client.
 
-### 身份展示
+### Identity Presentation
 
-system、developer 和 assistant 历史中的展示身份替换可在 `config.json` 的 `identity`
-段配置；省略时使用本版默认目标 `WorkBuddy`。`identity:{}`、空 `target` 或空 `replacements` 也按默认值运行，不会阻断启动。
+Presentation identity replacement in system, developer, and assistant history is configured in the `identity`
+section of `config.json`; when omitted, this version's default target `WorkBuddy` is used. `identity:{}`, an empty `target`, or empty `replacements` also run with the defaults and never block startup.
 
-想更接近官方 WorkBuddy 文案，可把目标设为 `WorkBuddy`：
+To match the official WorkBuddy wording more closely, set the target to `WorkBuddy`:
 
 ```json
 {
@@ -138,7 +138,7 @@ system、developer 和 assistant 历史中的展示身份替换可在 `config.js
 }
 ```
 
-需要逐词控制时使用 `replacements`；键是原文，值是替换文本：
+For word-by-word control, use `replacements`; keys are the original text and values are the replacements:
 
 ```json
 {
@@ -159,81 +159,81 @@ system、developer 和 assistant 历史中的展示身份替换可在 `config.js
 }
 ```
 
-`enabled:false` 完全关闭替换。规则只作用于 system/developer/assistant 文本；
-user、tool、reasoning 实测值、工具参数和工具结果不参与。官方版不经过网关，
-所以官方直连请求的原文不会被这套规则改写。
-当前实现是文本级替换，正文中的产品名和技能说明也会被替换；不是只改开头身份句。
+`enabled:false` fully disables replacement. Rules apply only to system/developer/assistant text;
+user, tool, observed reasoning values, tool arguments, and tool results never participate. The official client does not go through the gateway,
+so the original text of official direct requests is never rewritten by these rules.
+The current implementation is text-level replacement, so product names and skill descriptions in the body are also replaced; it is not limited to the opening identity sentence.
 
-Grok Build 和其他模型标签按 `identity.replacements` 配置处理，保留请求 `model`。本版默认包含 `"You are(.*)released by xAI": "You are WorkBuddy"`，新装生成、旧配置升级启动自动补齐缺失项，已有自定义值及关闭开关保留。它仅匹配每个文本块开头，不跨行，动态部分最多 256 个 Unicode 字符，且必须有非空首尾固定文本；不判断客户端来源或句子语义，符合句式的普通任务说明也可能命中。
+Grok Build and other model labels are handled via the `identity.replacements` config, preserving the request's `model`. This version includes `"You are(.*)released by xAI": "You are WorkBuddy"` by default; fresh installs generate it and upgrades from older configs fill in missing entries on startup, while existing custom values and disabled switches are preserved. It matches only the start of each text block, does not span lines, caps its dynamic part at 256 Unicode characters, and requires non-empty fixed text at both ends; it does not judge client origin or sentence semantics, so ordinary task instructions matching the pattern may also hit.
 
-旧 DSH 身份句、GUI 完整开头和两条固定模板改写已全部迁入默认配置词条；关闭 `identity.enabled` 后，这些文字改写也停止。普通键统一按大小写敏感的全局字面替换执行，不再单独保护 GUI 句子所在的代码片段；user/tool、工具参数和 reasoning 内容保持不参与。省略或空映射仍使用默认规则，完整默认项以 `config.example.json` 为准。真实上游接受情况尚未验证。
+The legacy DSH identity sentence, the full GUI opening, and two fixed template rewrites have all moved into the default config entries; turning off `identity.enabled` stops those text rewrites too. Ordinary keys run as case-sensitive global literal replacements, and the code snippet containing the GUI sentence is no longer specially protected; user/tool, tool arguments, and reasoning content still never participate. Omitted or empty mappings still use the default rules, and the authoritative defaults are in `config.example.json`. Real upstream acceptance is not yet verified.
 
-## Codex、dsh、Claude Code、Grok Build 接入建议
+## Integration Notes for Codex, dsh, Claude Code, and Grok Build
 
-尽量让客户端直接连接网关对应的原生协议入口，避免先经过另一个 Responses→Chat 或 Messages→Chat 翻译层。
+Have clients connect directly to the gateway's matching native protocol entry point whenever possible, avoiding an extra Responses→Chat or Messages→Chat translation layer in between.
 
-- Codex / dsh 使用 Responses 时，可以原样提交 instructions、developer/user、工具与 reasoning.effort。
-- Claude Code 等使用 Messages 时，可以原样提交 system、thinking、output_config 和 Anthropic 工具。
-- 原生 Chat 客户端保留 system/developer 与 user 的区别。
+- Codex / dsh using Responses can submit instructions, developer/user, tools, and reasoning.effort as-is.
+- Claude Code and others using Messages can submit system, thinking, output_config, and Anthropic tools as-is.
+- Native Chat clients should keep the distinction between system/developer and user.
 
-### 流式字段与历史回传
+### Streaming Fields and History Return
 
-- Chat 的 `delta.tool_calls` 省略值为 `""` 的 `id`、`type`、`function.name`；保留 `index`、`function.arguments` 与扩展字段。客户端按 `index` 累计参数。处理逐片完成，适用于全部模型与客户端。字段定义见 [OpenAI 流式工具调用说明](https://developers.openai.com/api/docs/guides/function-calling#streaming)。
-- Messages 的 thinking 开始事件包含 `thinking:""` 和 `signature:""`，随后发送 `thinking_delta`、`signature_delta` 和 `content_block_stop`，遵循 [Anthropic 流式事件示例](https://platform.claude.com/docs/en/build-with-claude/streaming#streaming-request-with-thinking)。当前结束签名由网关生成，仅用于本项目的兼容输出，不具备 Anthropic 服务端签名验证能力。
-- Chat 的非空 `reasoning_content` 原样传递；客户端在下一轮请求中完整回传推理历史。DeepSeek 带工具请求的要求见 [Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)。已经丢失的工具名称或推理文本无法由输出清理恢复，更新后使用新会话验证。
+- Chat's `delta.tool_calls` omits `id`, `type`, and `function.name` when their value is `""`; it keeps `index`, `function.arguments`, and extension fields. Clients accumulate arguments by `index`. Processing is done chunk by chunk and applies to all models and clients. Field definitions: [OpenAI streaming tool-call docs](https://developers.openai.com/api/docs/guides/function-calling#streaming).
+- The Messages thinking start event contains `thinking:""` and `signature:""`, followed by `thinking_delta`, `signature_delta`, and `content_block_stop`, following the [Anthropic streaming event example](https://platform.claude.com/docs/en/build-with-claude/streaming#streaming-request-with-thinking). The current end signature is generated by the gateway, used only for this project's compatibility output, and has no Anthropic server-side signature verification capability.
+- Chat's non-empty `reasoning_content` passes through unchanged; clients must return the full reasoning history in the next request. DeepSeek's tool-request requirements: [Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/). Tool names or reasoning text already lost cannot be recovered by output sanitization; verify with a new session after updating.
 
-本地回归覆盖交错工具分片、参数拼接、推理文本与工具结果回传。2026-11-01 使用 `deepseek-v4.1-flash` 完成合成 `echo` 请求验证：现有网关的响应经过修复后的转发函数，保留工具名称及推理内容，回传工具结果后得到正确回答。该验证在隔离进程中进行，未替换正在运行的网关，也未运行 Grok CLI 的完整会话。
+Local regression covers interleaved tool chunks, argument stitching, and returning reasoning text and tool results. On 2026-11-01 a synthetic `echo` request was verified with `deepseek-v4.1-flash`: the response from the existing gateway went through the repaired forwarding function, preserved tool names and reasoning content, and produced a correct answer after tool results were returned. That verification ran in an isolated process, without replacing the running gateway or running a full Grok CLI session.
 
-当前 Responses 工具转译支持 function、namespace 子工具、custom 和 web_search
-的请求/响应保真映射。托管搜索的实际搜索结果仍由客户端执行；不能把本模式当作
-全量 OpenAI API 等价实现。
+Current Responses tool translation supports fidelity-mapped requests/responses for function,
+namespace subtools, custom, and web_search. Actual search results for hosted search are still executed by the client; this mode must not be treated
+as a full OpenAI API-equivalent implementation.
 
-本轮诊断发现过“客户端 max，经 CPA 后到网关已是 high”和“本地 developer，到网关已是 user”。
-网关不能从已经丢失的角色和档位可靠反推出原意：
+This round of diagnostics found cases like "client sent max, but it reached the gateway as high after CPA" and "locally developer, but user by the time it hit the gateway".
+The gateway cannot reliably recover the original intent from roles and effort levels already lost:
 
-- 不把所有 high 强制改为 max；
-- 不因 user 文本里出现 `<app-context>`、Codex 或 Harness 关键词就提升为 system；
-- 经过前置代理时，应同时修正其档位映射和角色翻译，不能只改本网关。
+- It does not force all high to max;
+- It does not promote user text to system because it contains `<app-context>`, Codex, or Harness keywords;
+- When a fronting proxy is involved, its effort mapping and role translation should be fixed too; changing only this gateway is not enough.
 
-## 日志与排障
+## Logging and Troubleshooting
 
-新增事件使用现有 TraceID，写入原有项目 `logs/`：
+New events use the existing TraceID and are written to the existing project `logs/`:
 
-- `official_request_body_prepared`：补入哪些默认字段，不记录提示词正文；
-- `official_instruction_messages_merged`：合并的前导指令数量；
-- `upstream_request_profile_applied`：使用哪个 profile、是否采用国内头、压缩前后字节数；
-- 配置切换与编码失败也有持久化审计。
+- `official_request_body_prepared`: which default fields were added, without recording prompt body text;
+- `official_instruction_messages_merged`: the number of merged leading instructions;
+- `upstream_request_profile_applied`: which profile was used, whether domestic headers were applied, and byte counts before/after compression;
+- Config switches and encoding failures also get persisted audit records.
 
-只有显式开启 enabled 和 fullRequests 才记录完整脱敏 JSON。
-在 gzip 模式下，完整出站日志明确标记：
+Only with both enabled and fullRequests explicitly turned on is the full redacted JSON recorded.
+In gzip mode, the full outbound log is explicitly marked:
 
 ```text
 body_representation = decoded_json_before_content_encoding
 content_encoding = gzip
-wire_body_bytes = 实际压缩后长度
-body_bytes = 未压缩JSON长度
+wire_body_bytes = actual compressed length
+body_bytes = uncompressed JSON length
 ```
 
-因此能直接比对完整 messages/tools，而不会把 gzip 二进制误当 JSON。
-这些是 HTTP 发送前快照，不是 TLS 抓包。排障后应关闭 fullRequests，完整业务正文依然敏感。
+So full messages/tools can be compared directly without mistaking gzip binaries for JSON.
+These are snapshots taken before HTTP send, not TLS captures. Turn off fullRequests after troubleshooting; the full business body remains sensitive.
 
-## 验证与边界
+## Validation and Boundaries
 
-新增测试使用合成账号、指令和本地上游，不访问真实模型服务：
+New tests use synthetic accounts, instructions, and a local upstream, never touching real model services:
 
-- 三协议 × 流式/聚合六种入口，生成相同语义输入的相同上游 JSON；
-- 真实 HTTP 接收 gzip、usage 和与消息 ID 相等的请求 ID；
-- high/max/off、显式 false/0、未知模型与短预算保留；
-- 消息合并边界、图片及 schema 保留；
-- 热加载 last-good、请求快照及安全重试；
-- 只读入历史私有采集材料的可选离线重放。
+- Six entry points (three protocols × streaming/aggregated) produce identical upstream JSON for the same semantic input;
+- Real HTTP receives gzip, usage, and a request ID equal to the message ID;
+- high/max/off, explicit false/0, unknown models, and short budgets are preserved;
+- Message-merge boundaries, image and schema preservation;
+- Hot-reload last-good config, request snapshots, and safe retries;
+- Optional offline replay that only reads historical private capture material.
 
 ```powershell
 go test ./...
 go test -race ./...
 ```
 
-可选历史采集重放（不发网络请求）：
+Optional historical capture replay (sends no network requests):
 
 ```powershell
 $env:WORKBUDDY_COMPAT_CAPTURE = 'C:\private\captured-requests.private.json'
@@ -241,11 +241,11 @@ try { go test -run '^TestOfficialPrivateCaptureReplay$' -count=1 -v }
 finally { Remove-Item Env:WORKBUDDY_COMPAT_CAPTURE }
 ```
 
-fixture 必须是诊断采集器产生的、含 requests 数组的完整脱敏记录。
-原始采集文件及官方私有提示词不提交仓库。通过本地测试不等于生产上游验收，
-也不能保证服务端永远接受任何 Harness。
+The fixture must be a fully redacted record with a requests array produced by the diagnostic capture tool.
+Original capture files and official private prompts are never committed to the repository. Passing local tests is not production upstream acceptance
+and cannot guarantee the server will accept any harness forever.
 
-协议参数参考：
-[OpenAI Responses 参数](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)、
-[Anthropic effort](https://platform.claude.com/docs/en/build-with-claude/effort)。
-官方桌面默认值和静态头来自本机授权采集，不能由通用 API 文档替代。
+Protocol parameter references:
+[OpenAI Responses parameters](https://developers.openai.com/api/reference/cli/resources/responses/methods/create),
+[Anthropic effort](https://platform.claude.com/docs/en/build-with-claude/effort).
+The official desktop defaults and static headers come from authorized captures on this machine and cannot be replaced by generic API docs.

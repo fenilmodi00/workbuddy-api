@@ -68,7 +68,7 @@ func TestConversationIDsLifecycleAndSource(t *testing.T) {
 		raw, _ := os.ReadFile(file)
 		audit += string(raw)
 	}
-	if !strings.Contains(audit, "[会话头准备]") || !strings.Contains(audit, "conversation-header-test") {
+	if !strings.Contains(audit, "[Conversation headers prepared]") || !strings.Contains(audit, "conversation-header-test") {
 		t.Fatal("missing trace-linked persisted conversation audit")
 	}
 	for _, secret := range []string{clientID, turnID, messageID} {
@@ -129,7 +129,8 @@ func conversationFixtureSSE(tool bool) string {
 		"data: [DONE]\n\n"
 }
 
-// 3 协议 × 流式/聚合 × 国内/国际 × 文本/工具，共 24 条真实处理器路径。
+// 3 protocols × streaming/aggregate × domestic/international × text/tools:
+// 24 real handler paths in total.
 func TestConversationHeadersAllProtocolsStreamsSitesAndTools(t *testing.T) {
 	for _, site := range []string{"cn", "intl"} {
 		for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"} {
@@ -245,7 +246,7 @@ func TestConversationIDsSurviveSafeRetryAndAccountSiteSwitch(t *testing.T) {
 	cfg.HttpClient = &http.Client{Transport: retryTransportFunc(func(req *http.Request) (*http.Response, error) {
 		tuples = append(tuples, conversationTuple(req))
 		if len(tuples) == 1 {
-			return nil, io.EOF // 请求头尚未发送，允许安全重试。
+			return nil, io.EOF // Request headers not yet sent; safe to retry.
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok"))}, nil
 	})}

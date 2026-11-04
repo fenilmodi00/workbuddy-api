@@ -32,7 +32,7 @@ func repoRoot(t *testing.T) string {
 	return filepath.Dir(file)
 }
 
-// jsonKeyPaths 递归收集 JSON 对象的字段路径，用于比较示例文件与运行时结构。
+// jsonKeyPaths recursively collects JSON object field paths, used to compare the example file with runtime structures.
 func jsonKeyPaths(value any, prefix string) []string {
 	var out []string
 	switch v := value.(type) {
@@ -62,7 +62,7 @@ func decodeObject(t *testing.T, raw []byte) map[string]any {
 	return obj
 }
 
-// 示例覆盖默认运行时字段及全局账号规则；互斥的模型 allowlist 作为替代模式不同时列出。
+// The example covers default runtime fields and the global account rule; the mutually exclusive model allowlist is listed separately as an alternative pattern.
 func TestConfigExampleCoversEveryRuntimeField(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "config.example.json"))
 	if err != nil {
@@ -93,7 +93,7 @@ func TestConfigExampleCoversEveryRuntimeField(t *testing.T) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Fatalf("config.example.json 缺少配置项: %v", missing)
+		t.Fatalf("config.example.json is missing config items: %v", missing)
 	}
 	var extra []string
 	for path := range got {
@@ -103,11 +103,11 @@ func TestConfigExampleCoversEveryRuntimeField(t *testing.T) {
 	}
 	sort.Strings(extra)
 	if len(extra) > 0 {
-		t.Fatalf("config.example.json 含未定义配置项: %v", extra)
+		t.Fatalf("config.example.json contains undefined config items: %v", extra)
 	}
 }
 
-// 全新部署：直接使用示例文件必须能正常启动，并落到默认端口。
+// Fresh deployment: using the example file directly must start normally and fall to the default ports.
 func TestConfigExampleStartsFreshDeployment(t *testing.T) {
 	isolatedGatewayConfig(t)
 	t.Cleanup(func() { setIdentityConfig(runtimeIdentityConfig{}) })
@@ -120,13 +120,13 @@ func TestConfigExampleStartsFreshDeployment(t *testing.T) {
 	}
 	cfg.PortExplicit = false
 	if err := loadRuntimeConfig(runtimeConfigFile); err != nil {
-		t.Fatalf("示例配置无法加载: %v", err)
+		t.Fatalf("example config failed to load: %v", err)
 	}
 	if cfg.Port != defaultAPIPort || cfg.WebPort != defaultWebPort {
-		t.Fatalf("示例配置端口=%d/%d，期望 %d/%d", cfg.Port, cfg.WebPort, defaultAPIPort, defaultWebPort)
+		t.Fatalf("example config ports=%d/%d, expected %d/%d", cfg.Port, cfg.WebPort, defaultAPIPort, defaultWebPort)
 	}
 	if currentAdminKey() != "" || currentAPIKey() != "" {
-		t.Fatal("示例配置不应预置任何 Key")
+		t.Fatal("example config must not preset any Keys")
 	}
 }
 
@@ -156,13 +156,13 @@ func TestConfigExampleIncludesIdentityCompatibilityDefaults(t *testing.T) {
 	}
 }
 
-// 空值/缺省：端口为 0 或省略、Key 为空、开关为 false 时都必须按默认值启动。
+// Empty/omitted values: ports 0 or omitted, empty Keys, and false toggles must all start with defaults.
 func TestConfigEmptyValuesFallBackToDefaults(t *testing.T) {
 	for name, content := range map[string]string{
-		"gateway 全空值":  `{"gateway":{"apiPort":0,"webPort":0,"adminKey":"","apiKeyEnabled":false,"apiKey":""}}`,
-		"gateway 空对象":  `{"gateway":{}}`,
-		"完全省略 gateway": `{}`,
-		"仅端口为 0":       `{"gateway":{"apiPort":0,"webPort":0}}`,
+		"gateway all-empty":     `{"gateway":{"apiPort":0,"webPort":0,"adminKey":"","apiKeyEnabled":false,"apiKey":""}}`,
+		"gateway empty object":  `{"gateway":{}}`,
+		"gateway fully omitted": `{}`,
+		"only ports zero":       `{"gateway":{"apiPort":0,"webPort":0}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			isolatedGatewayConfig(t)
@@ -171,20 +171,20 @@ func TestConfigEmptyValuesFallBackToDefaults(t *testing.T) {
 			}
 			cfg.PortExplicit = false
 			if err := loadRuntimeConfig(runtimeConfigFile); err != nil {
-				t.Fatalf("空值配置必须能启动: %v", err)
+				t.Fatalf("empty-value config must start: %v", err)
 			}
 			if cfg.Port != defaultAPIPort || cfg.WebPort != defaultWebPort {
-				t.Fatalf("端口=%d/%d，期望默认 %d/%d", cfg.Port, cfg.WebPort, defaultAPIPort, defaultWebPort)
+				t.Fatalf("ports=%d/%d, expected defaults %d/%d", cfg.Port, cfg.WebPort, defaultAPIPort, defaultWebPort)
 			}
 			if currentAPIKey() != "" || currentAdminKey() != "" {
-				t.Fatal("空值配置不应启用任何鉴权")
+				t.Fatal("empty-value config must not enable any authentication")
 			}
-			// 空值配置下服务必须真的能起来（含 -webui 双端口）。
+			// With an empty-value config the service must really start (including -webui dual ports).
 			cfg.WebUI = true
 			cfg.Port, cfg.WebPort = freeTCPPort(t), freeTCPPort(t)
 			_, listeners, err := prepareGatewayServers()
 			if err != nil {
-				t.Fatalf("空值配置监听失败: %v", err)
+				t.Fatalf("empty-value config failed to listen: %v", err)
 			}
 			for _, listener := range listeners {
 				_ = listener.Close()
@@ -204,7 +204,7 @@ func freeTCPPort(t *testing.T) int {
 	return port
 }
 
-// 空的 Key 字符串必须被规范化为空值，不能被当成有效凭据。
+// Empty Key strings must be normalized to unset values and must not be treated as valid credentials.
 func TestConfigBlankKeysAreTreatedAsUnset(t *testing.T) {
 	isolatedGatewayConfig(t)
 	content := `{"gateway":{"apiPort":8317,"webPort":8316,"adminKey":"","apiKeyEnabled":false,"apiKey":""}}`
@@ -215,9 +215,9 @@ func TestConfigBlankKeysAreTreatedAsUnset(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(currentAdminKey()) != "" || strings.TrimSpace(currentAPIKey()) != "" {
-		t.Fatal("空 Key 不应被视为已配置")
+		t.Fatal("empty Key must not be treated as configured")
 	}
 	if !reflect.DeepEqual(gatewaySettingsView()["apiKeyEnabled"], false) {
-		t.Fatal("apiKeyEnabled=false 必须保持关闭")
+		t.Fatal("apiKeyEnabled=false must stay disabled")
 	}
 }

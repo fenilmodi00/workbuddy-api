@@ -24,7 +24,7 @@ var lastLogCleanup struct {
 	days int
 }
 
-// 写入时按本地日期切换文件。与清理共用打开文件登记，不能删除正在写入的旧日志。
+// Switches files by local date on write. Shares the open-file registry with cleanup; the log being written cannot be deleted.
 type dailyLogWriter struct {
 	mu                sync.Mutex
 	prefix, extension string
@@ -134,17 +134,17 @@ func cleanupLogs(now time.Time, days int, trace string, schedule ...time.Time) (
 		} else if result.Failed > 0 {
 			status = "partial"
 		}
-		detail := fmt.Sprintf("保留天数=%d，删除=%d，失败=%d，跳过正在写入=%d", days, result.Deleted, result.Failed, result.SkippedActive)
+		detail := fmt.Sprintf("retention days=%d, deleted=%d, failed=%d, skipped active=%d", days, result.Deleted, result.Failed, result.SkippedActive)
 		if resultErr != nil {
 			detail = safeDebugError(resultErr)
 		}
 		logScheduledTask("log_cleanup", "completed", status, trace, started, next, detail)
 	}()
 	if days < 0 || days > 36500 {
-		return result, gatewayValidationError("日志保留天数无效")
+		return result, gatewayValidationError("log retention days is invalid")
 	}
 	if days == 0 {
-		log.Printf("[日志清理] traceId=%s 结果=跳过 保留天数=0 说明=未删除任何日志，0表示保留全部", trace)
+		log.Printf("[Log cleanup] traceId=%s result=skipped retentionDays=0 note=no logs deleted; 0 means keep everything", trace)
 		return result, nil
 	}
 	logCleanupMu.Lock()
@@ -158,7 +158,7 @@ func cleanupLogs(now time.Time, days int, trace string, schedule ...time.Time) (
 		return result, err
 	}
 	if !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 {
-		return result, errors.New("日志目录不是普通目录或是符号链接，拒绝清理")
+		return result, errors.New("log directory is not a regular directory or is a symlink; cleanup refused")
 	}
 	entries, err := os.ReadDir(logDir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -172,7 +172,7 @@ func cleanupLogs(now time.Time, days int, trace string, schedule ...time.Time) (
 		return result, err
 	}
 	defer root.Close()
-	log.Printf("[日志清理] traceId=%s 阶段=扫描 保留天数=%d 最早保留日期=%s 文件数=%d 说明=仅清理命名受限的历史日志，不跟随符号链接，不触及配置和凭据",
+	log.Printf("[Log cleanup] traceId=%s stage=scan retentionDays=%d earliest kept date=%s file count=%d note=cleans only pattern-restricted historical logs, does not follow symlinks, never touches config or credentials",
 		trace, days, cutoff.Format("2006-01-02"), len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
@@ -202,15 +202,15 @@ func cleanupLogs(now time.Time, days int, trace string, schedule ...time.Time) (
 		activeLogsMu.Unlock()
 		if removeErr != nil {
 			result.Failed++
-			log.Printf("[日志清理] traceId=%s 文件=%q 结果=删除失败 原因=%s", trace, name, safeDebugError(removeErr))
+			log.Printf("[Log cleanup] traceId=%s file=%q result=delete failed reason=%s", trace, name, safeDebugError(removeErr))
 			continue
 		}
 		result.Deleted++
 		result.DeletedBytes += info.Size()
 		result.Files = append(result.Files, name)
-		log.Printf("[日志清理] traceId=%s 文件=%q 文件日期=%s 字节=%d 结果=已删除 原因=超出保留天数", trace, name, date.Format("2006-01-02"), info.Size())
+		log.Printf("[Log cleanup] traceId=%s file=%q file date=%s bytes=%d result=deleted reason=beyond retention days", trace, name, date.Format("2006-01-02"), info.Size())
 	}
-	log.Printf("[日志清理] traceId=%s 结果=完成 已删除=%d 回收字节=%d 跳过正在写入=%d 失败=%d", trace, result.Deleted, result.DeletedBytes, result.SkippedActive, result.Failed)
+	log.Printf("[Log cleanup] traceId=%s result=completed deleted=%d bytes reclaimed=%d skipped active=%d failed=%d", trace, result.Deleted, result.DeletedBytes, result.SkippedActive, result.Failed)
 	return result, nil
 }
 
@@ -225,20 +225,20 @@ func scheduledLogCleanup(now time.Time) {
 	}
 	cleanupScheduleMu.Unlock()
 	if days == 0 && previousDays != 0 {
-		logScheduledTask("log_cleanup", "disabled", "disabled", newTraceID(), time.Time{}, time.Time{}, "保留天数已改为0，自动清理关闭")
+		logScheduledTask("log_cleanup", "disabled", "disabled", newTraceID(), time.Time{}, time.Time{}, "retention days changed to 0; automatic cleanup disabled")
 	}
 	if !due {
 		return
 	}
 	trace := newTraceID()
 	if _, err := cleanupLogs(now, days, trace, now.Add(time.Hour)); err != nil {
-		log.Printf("[日志清理] traceId=%s 阶段=自动任务 结果=失败 原因=%s 说明=保留现有日志，下个周期重试", trace, safeDebugError(err))
+		log.Printf("[Log cleanup] traceId=%s stage=scheduled task result=failed reason=%s note=existing logs kept; retry next cycle", trace, safeDebugError(err))
 	}
 }
 
 func saveLogRetention(days int, trace string) error {
 	if days < 0 || days > 36500 {
-		return gatewayValidationError("日志保留天数必须为 0～36500，0 表示不自动清理")
+		return gatewayValidationError("log retention days must be 0–36500; 0 means no automatic cleanup")
 	}
 	runtimeConfigMu.Lock()
 	defer runtimeConfigMu.Unlock()
@@ -252,48 +252,48 @@ func saveLogRetention(days int, trace string) error {
 		return err
 	}
 	doc["logs"], _ = json.Marshal(map[string]int{"retentionDays": days})
-	log.Printf("[日志设置] traceId=%s 阶段=配置写入 旧保留天数=%d 新保留天数=%d 说明=其他配置段原样保留", trace, logRetentionDays.Load(), days)
+	log.Printf("[Log settings] traceId=%s stage=config write old retention days=%d new retention days=%d note=other config sections kept as-is", trace, logRetentionDays.Load(), days)
 	return persistRuntimeDocument(doc, old, trace)
 }
 
 func handleWebUILogSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		log.Printf("[日志设置] traceId=%s 阶段=读取 保留天数=%d 结果=成功", debugTraceID(r), logRetentionDays.Load())
+		log.Printf("[Log settings] traceId=%s stage=read retentionDays=%d result=success", debugTraceID(r), logRetentionDays.Load())
 		writeJSON(w, http.StatusOK, map[string]any{"retentionDays": logRetentionDays.Load()})
 	case http.MethodPost:
 		var input struct {
 			Days *int `json:"retentionDays"`
 		}
 		if err := decodeAdminJSON(w, r, &input); err != nil || input.Days == nil {
-			log.Printf("[日志设置] traceId=%s 阶段=参数校验 结果=拒绝 原因=保留天数缺失或字段格式无效 状态码=400", debugTraceID(r))
-			writeJSONError(w, http.StatusBadRequest, "必须提供 retentionDays 整数")
+			log.Printf("[Log settings] traceId=%s stage=parameter validation result=rejected reason=retention days missing or field format invalid status code=400", debugTraceID(r))
+			writeJSONError(w, http.StatusBadRequest, "an integer retentionDays must be provided")
 			return
 		}
 		if err := saveLogRetention(*input.Days, debugTraceID(r)); err != nil {
-			writeAdminOperationError(w, r, "日志设置", err)
+			writeAdminOperationError(w, r, "Log settings", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"retentionDays": *input.Days, "saved": true})
 	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET/POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "only GET/POST are supported")
 	}
 }
 
 func handleWebUILogCleanup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "only POST is supported")
 		return
 	}
 	var input map[string]json.RawMessage
 	if err := decodeAdminJSON(w, r, &input); err != nil || input == nil || len(input) != 0 {
-		log.Printf("[日志清理] traceId=%s 阶段=参数校验 结果=拒绝 原因=请求JSON无效 状态码=400", debugTraceID(r))
-		writeJSONError(w, http.StatusBadRequest, "清理请求必须为空 JSON 对象")
+		log.Printf("[Log cleanup] traceId=%s stage=parameter validation result=rejected reason=invalid request JSON status code=400", debugTraceID(r))
+		writeJSONError(w, http.StatusBadRequest, "cleanup request must be an empty JSON object")
 		return
 	}
 	result, err := cleanupLogs(time.Now(), int(logRetentionDays.Load()), debugTraceID(r))
 	if err != nil {
-		writeAdminOperationError(w, r, "日志清理", err)
+		writeAdminOperationError(w, r, "Log cleanup", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

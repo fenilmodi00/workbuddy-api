@@ -59,14 +59,14 @@ func TestRuntimeReloadLastGoodAndDefaults(t *testing.T) {
 	good := `{"gateway":{"adminKey":"admin","apiKeyEnabled":true,"apiKey":"key"},"systemPrompt":{"force":"synthetic"},"upstream":{"headerTimeoutSeconds":41,"idleTimeoutSeconds":17,"transientRetries":0},"models":{"blocklist":["off"],"accounts":{"all":{"blocklist":["b.json"]}}}}`
 	writeRuntimeFixture(t, good)
 	if !watcher.reload() {
-		t.Fatal("有效配置必须加载")
+		t.Fatal("valid config must load")
 	}
 	if watcher.reload() {
-		t.Fatal("相同内容不重复应用")
+		t.Fatal("identical content is not applied twice")
 	}
 	header, idle, retries := upstreamSettings()
 	if header != 41*time.Second || idle != 17*time.Second || retries != 0 {
-		t.Fatal("上游配置未生效")
+		t.Fatal("upstream config did not take effect")
 	}
 	for _, bad := range []string{
 		``, `null`, `[]`, `{`, `{} {}`, `{"unknown":true}`,
@@ -77,34 +77,34 @@ func TestRuntimeReloadLastGoodAndDefaults(t *testing.T) {
 	} {
 		writeRuntimeFixture(t, bad)
 		if watcher.reload() {
-			t.Fatalf("无效配置被接受: %q", bad)
+			t.Fatalf("invalid config was accepted: %q", bad)
 		}
 		if currentAdminKey() != "admin" || currentAPIKey() != "key" || configuredSystemPrompts().force != "synthetic" {
-			t.Fatal("无效配置部分覆盖了有效配置")
+			t.Fatal("invalid config partially overwrote the valid config")
 		}
 		if disabled, _ := modelDisabled("off"); !disabled {
-			t.Fatal("无效配置清除了名单")
+			t.Fatal("invalid config cleared the blocklist")
 		}
 	}
 	if err := os.Remove(runtimeConfigFile); err != nil {
 		t.Fatal(err)
 	}
 	if watcher.reload() || currentAdminKey() != "admin" {
-		t.Fatal("短暂删除不能清空生效配置")
+		t.Fatal("brief removal must not clear the effective config")
 	}
 	writeRuntimeFixture(t, `{}`)
 	if !watcher.reload() {
-		t.Fatal("修复后必须重新应用")
+		t.Fatal("after fixing, config must be applied again")
 	}
 	if currentAPIKey() != "" || currentAdminKey() != "" || configuredSystemPrompts().force != "" {
-		t.Fatal("省略配置不能残留旧值")
+		t.Fatal("omitting config must not leave stale values")
 	}
 	header, idle, retries = upstreamSettings()
 	if header != upstreamHeaderTimeoutDefault || idle != upstreamIdleTimeoutDefault || retries != upstreamTransientRetriesDefault {
-		t.Fatal("省略超时不能残留旧值")
+		t.Fatal("omitting timeouts must not leave stale values")
 	}
 	if ok, _ := modelAccountAllowed("new", &Account{Path: "b.json"}, nil); !ok {
-		t.Fatal("省略账号规则未恢复")
+		t.Fatal("omitting account rules did not restore")
 	}
 }
 
@@ -115,24 +115,24 @@ func TestRuntimeReloadDetectsRevertAfterWebWrite(t *testing.T) {
 	writeRuntimeFixture(t, original)
 	watcher := runtimeConfigWatcher{}
 	if !watcher.reload() {
-		t.Fatal("初始加载失败")
+		t.Fatal("initial load failed")
 	}
 	if err := savePolicyToggle("model", "one", false, "revert"); err != nil {
 		t.Fatal(err)
 	}
-	writeRuntimeFixture(t, original) // 在扫描前立即撤销网页修改。
+	writeRuntimeFixture(t, original) // revert the web UI change right away, before the scan.
 	if !watcher.reload() {
-		t.Fatal("撤销到旧文件内容被错误地认为未修改")
+		t.Fatal("reverting to the old file content was wrongly considered unchanged")
 	}
 	if disabled, _ := modelDisabled("one"); disabled {
-		t.Fatal("旧内容恢复后仍残留网页禁用规则")
+		t.Fatal("stale web UI disable rule remained after old content was restored")
 	}
 	if err := saveAPIKeySettings(true, "api", "revert"); err != nil {
 		t.Fatal(err)
 	}
 	writeRuntimeFixture(t, original)
 	if !watcher.reload() || currentAPIKey() != "" {
-		t.Fatal("鉴权设置撤销未被扫描识别")
+		t.Fatal("auth settings revert was not detected by the scan")
 	}
 }
 
@@ -147,13 +147,13 @@ func TestOlderConfigEmptyAccountRulesRemainCompatible(t *testing.T) {
 	} {
 		writeRuntimeFixture(t, text)
 		if err := loadRuntimeConfig(runtimeConfigFile); err != nil {
-			t.Fatalf("旧版/空配置不可读取: %s: %v", text, err)
+			t.Fatalf("older/empty config must not be readable: %s: %v", text, err)
 		}
 		if ok, _ := modelAccountAllowed("any", &Account{Path: "a.json"}, nil); !ok {
-			t.Fatal("旧配置导致默认账号被停用")
+			t.Fatal("old config disabled the default account")
 		}
 		if disabled, _ := modelDisabled("any"); disabled {
-			t.Fatal("旧配置导致默认模型被停用")
+			t.Fatal("old config disabled the default model")
 		}
 	}
 }
@@ -170,34 +170,34 @@ func TestGlobalWhitelistToggleAndProbeSkips(t *testing.T) {
 	}
 	for _, acc := range accounts {
 		if ok, _ := modelAccountAllowed("m", acc, accounts); ok {
-			t.Fatal("关闭最后一个白名单账号不能放开其他账号")
+			t.Fatal("disabling the last allowlisted account must not unblock other accounts")
 		}
 	}
 	if acc := pickProbeAccountForModel("cn", "m"); acc != nil {
-		t.Fatal("后台探测不应选择全局关闭的账号")
+		t.Fatal("background probing must not pick a globally disabled account")
 	}
 	result := probeAccountModel(context.Background(), accounts[0], "m")
 	if result.Status != "skipped" {
-		t.Fatalf("显式探测不应发上游请求: %+v", result)
+		t.Fatalf("explicit probe must not send an upstream request: %+v", result)
 	}
 	if err := savePolicyToggle("account", "b.json", true, "global-white"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := modelAccountAllowed("new-model", accounts[1], accounts); !ok {
-		t.Fatal("无法将白名单外账号重新启用")
+		t.Fatal("failed to re-enable the account outside the allowlist")
 	}
 	data, _ := os.ReadFile(runtimeConfigFile)
 	if strings.Contains(string(data), `" ALL "`) {
-		t.Fatal("保存后未规范化保留键 all")
+		t.Fatal("after saving, reserved key all was not normalized")
 	}
 	global := decodeObject(t, data)["models"].(map[string]any)["accounts"].(map[string]any)["all"].(map[string]any)
 	if _, exists := global["allowlist"]; exists {
-		t.Fatal("网页账号操作必须删除 all.allowlist 字段")
+		t.Fatal("web UI account operations must delete the all.allowlist field")
 	}
 	setModelFilter([]string{"off"}, nil)
 	result = probeAccountModel(context.Background(), accounts[1], "off")
 	if result.Status != "skipped" {
-		t.Fatal("关闭的模型不应被显式探测")
+		t.Fatal("disabled model must not be explicitly probed")
 	}
 }
 
@@ -207,13 +207,13 @@ func TestAccountToggleConvertsGlobalWhitelistPreservingOtherStates(t *testing.T)
 		enable               bool
 		blocked              []string
 	}{
-		{"开启白名单外账号", `{"allowlist":["a.json"]}`, "b.json", true, []string{"c.json"}},
-		{"关闭最后一个白名单账号", `{"allowlist":["a.json"]}`, "a.json", false, []string{"a.json", "b.json", "c.json"}},
-		{"保留原黑名单和未加载账号", `{"allowlist":["a.json","b.json"],"blocklist":["b.json","offline.json"]}`, "a.json", false, []string{"a.json", "b.json", "c.json", "offline.json"}},
-		{"开启白名单内但被黑名单拒绝的账号", `{"allowlist":["a.json","b.json"],"blocklist":["b.json"]}`, "b.json", true, []string{"c.json"}},
-		{"空白名单不限制其他账号", `{"allowlist":[],"blocklist":["b.json"]}`, "a.json", false, []string{"a.json", "b.json"}},
-		{"null白名单删除字段", `{"allowlist":null,"blocklist":["b.json"]}`, "b.json", true, []string{}},
-		{"null全局规则", `null`, "b.json", false, []string{"b.json"}},
+		{"enable account outside allowlist", `{"allowlist":["a.json"]}`, "b.json", true, []string{"c.json"}},
+		{"disable last allowlisted account", `{"allowlist":["a.json"]}`, "a.json", false, []string{"a.json", "b.json", "c.json"}},
+		{"keep original blocklist and unloaded accounts", `{"allowlist":["a.json","b.json"],"blocklist":["b.json","offline.json"]}`, "a.json", false, []string{"a.json", "b.json", "c.json", "offline.json"}},
+		{"enable allowlisted account rejected by blocklist", `{"allowlist":["a.json","b.json"],"blocklist":["b.json"]}`, "b.json", true, []string{"c.json"}},
+		{"empty allowlist does not restrict other accounts", `{"allowlist":[],"blocklist":["b.json"]}`, "a.json", false, []string{"a.json", "b.json"}},
+		{"null allowlist deletes field", `{"allowlist":null,"blocklist":["b.json"]}`, "b.json", true, []string{}},
+		{"null global rule", `null`, "b.json", false, []string{"b.json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolatePolicies(t)
@@ -227,7 +227,7 @@ func TestAccountToggleConvertsGlobalWhitelistPreservingOtherStates(t *testing.T)
 			body, _ := json.Marshal(map[string]any{"target": tc.target, "enabled": tc.enable})
 			response := adminRequest(handler, http.MethodPost, "/admin/api/account-toggle", "admin", string(body))
 			if response.Code != http.StatusOK {
-				t.Fatalf("开关保存失败: %d %s", response.Code, response.Body.String())
+				t.Fatalf("toggle save failed: %d %s", response.Code, response.Body.String())
 			}
 			raw, _ := os.ReadFile(runtimeConfigFile)
 			doc := decodeObject(t, raw)
@@ -235,10 +235,10 @@ func TestAccountToggleConvertsGlobalWhitelistPreservingOtherStates(t *testing.T)
 			rules := models["accounts"].(map[string]any)
 			global := rules["all"].(map[string]any)
 			if _, exists := global["allowlist"]; exists || len(global) != 1 {
-				t.Fatalf("all必须只写入blocklist: %+v", global)
+				t.Fatalf("all must write only the blocklist: %+v", global)
 			}
 			if _, exists := rules[" ALL "]; exists {
-				t.Fatal("旧all拼写没有删除")
+				t.Fatal("old ' ALL ' spelling was not deleted")
 			}
 			var typed runtimeFileConfig
 			_ = json.Unmarshal(raw, &typed)
@@ -246,7 +246,7 @@ func TestAccountToggleConvertsGlobalWhitelistPreservingOtherStates(t *testing.T)
 			got, _ := json.Marshal(gotBlocks)
 			want, _ := json.Marshal(tc.blocked)
 			if string(got) != string(want) {
-				t.Fatalf("黑名单=%s，期望=%s", got, want)
+				t.Fatalf("blocklist=%s, want=%s", got, want)
 			}
 			for _, acc := range accounts {
 				blocked := false
@@ -254,26 +254,26 @@ func TestAccountToggleConvertsGlobalWhitelistPreservingOtherStates(t *testing.T)
 					blocked = blocked || acc.Path == name
 				}
 				if allowed, _ := modelAccountAllowed("unconfigured", acc, accounts); allowed == blocked {
-					t.Fatalf("账号%s转换后的全局状态错误", acc.Path)
+					t.Fatalf("account %s has wrong global state after conversion", acc.Path)
 				}
 			}
 			original := decodeObject(t, []byte(content))["models"].(map[string]any)["accounts"].(map[string]any)["m"]
 			before, _ := json.Marshal(original)
 			after, _ := json.Marshal(rules["m"])
 			if string(before) != string(after) || configuredSystemPrompts().force != "keep" || currentModelPolicyMode() != "allowlist" {
-				t.Fatal("转换all改变了模型名单、模型专属账号规则或提示词")
+				t.Fatal("converting all changed the model list, model-specific account rules, or system prompt")
 			}
 			if ok, _ := modelAccountAllowed("m", accounts[1], accounts); ok {
-				t.Fatal("全局启用绕过模型专属白名单")
+				t.Fatal("global enable bypasses the model-specific allowlist")
 			}
 			fresh := &Account{Path: "new.json"}
 			if ok, _ := modelAccountAllowed("unconfigured", fresh, []*Account{fresh}); !ok {
-				t.Fatal("转换为黑名单后新账号应默认开启")
+				t.Fatal("after converting to blocklist, a new account should be enabled by default")
 			}
 			files, _ := filepath.Glob(filepath.Join(logDir, "gateway-*.log"))
 			logData, _ := os.ReadFile(files[0])
-			if !strings.Contains(string(logData), "[账号开关规则] traceId=gateway-config-test") {
-				t.Fatal("转换过程未使用请求TraceID落盘")
+			if !strings.Contains(string(logData), "[Account toggle rules] traceId=gateway-config-test") {
+				t.Fatal("conversion did not persist with the request trace ID")
 			}
 		})
 	}
@@ -291,16 +291,16 @@ func TestAccountWhitelistConversionKeepsDuplicateNamesBlocked(t *testing.T) {
 	}
 	for _, acc := range accounts[1:] {
 		if allowed, _ := modelAccountAllowed("m", acc, accounts); allowed {
-			t.Fatal("转换后放开了原来被拒绝的重名账号")
+			t.Fatal("conversion unblocked a previously rejected duplicate-name account")
 		}
 	}
 	before, _ := os.ReadFile(runtimeConfigFile)
 	if err := savePolicyToggle("account", "first/same.json", true, "duplicates"); err == nil {
-		t.Fatal("重名账号不能通过网页单独启用")
+		t.Fatal("duplicate-name account must not be enabled individually via the web UI")
 	}
 	after, _ := os.ReadFile(runtimeConfigFile)
 	if string(before) != string(after) {
-		t.Fatal("拒绝重名目标时不应写入文件")
+		t.Fatal("rejecting a duplicate target must not write the file")
 	}
 }
 
@@ -320,20 +320,20 @@ func TestRuntimeLoopHotKeysDebugAndPorts(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if currentAdminKey() != "second" || currentAPIKey() != "api" || !debugLoggingEnabled() {
-		t.Fatal("实际循环没有热更新")
+		t.Fatal("actual loop did not hot-reload")
 	}
 	if cfg.Port != 9317 || cfg.WebPort != 9316 {
-		t.Fatal("热更新不能修改实际监听端口展示")
+		t.Fatal("hot reload must not change the actual listen port display")
 	}
 	r := httptest.NewRequest("GET", "/", nil)
 	debugEvent(r, "debug", "hot_reload_test", nil)
 	files, _ := filepath.Glob(filepath.Join(logDir, "debug-*.jsonl"))
 	if len(files) != 1 {
-		t.Fatal("热开启调试未落盘")
+		t.Fatal("hot-enabled debug was not persisted")
 	}
 	data, _ := os.ReadFile(files[0])
 	if !strings.Contains(string(data), "hot_reload_test") {
-		t.Fatal("热调试事件未写入")
+		t.Fatal("hot debug event was not written")
 	}
 }
 
@@ -347,17 +347,17 @@ func TestGlobalAccountRuleCannotBeOverridden(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if ok, reason := modelAccountAllowed("m", a, accounts); ok || !strings.Contains(reason, "全局") {
-		t.Fatal("模型白名单绕过全局停用")
+	if ok, reason := modelAccountAllowed("m", a, accounts); ok || !strings.Contains(reason, "global") {
+		t.Fatal("model allowlist bypasses global disable")
 	}
 	if acc, _, err := nextAccountForModel("other", nil); err != nil || acc != b {
-		t.Fatalf("未配置模型必须遵守全局规则: %v", err)
+		t.Fatalf("unconfigured model must follow global rules: %v", err)
 	}
 	if _, _, err := nextAccountForModel("m", nil); err == nil {
-		t.Fatal("应拒绝无法调度的模型")
+		t.Fatal("must reject an undispatchable model")
 	}
 	if rows := buildAllModelStatSnapshots(time.Now(), accounts); len(rows) != 1 || rows[0].ID != "m" || rows[0].AvailableAccounts != 0 {
-		t.Fatalf("all 不应成为虚假模型: %+v", rows)
+		t.Fatalf("all must not become a fake model: %+v", rows)
 	}
 }
 
@@ -376,17 +376,17 @@ func TestWebTogglePreservesConfigAndConvertsAllowlist(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 	if a.Disabled || a.Auth == nil {
-		t.Fatal("开关不应修改授权失效或删除凭据")
+		t.Fatal("toggle must not modify auth-invalid state or delete credentials")
 	}
 	for _, model := range []string{"one", "two", "unknown"} {
 		if ok, _ := modelAccountAllowed(model, a, accounts); ok {
-			t.Fatalf("全局停用未应用到 %s", model)
+			t.Fatalf("global disable was not applied to %s", model)
 		}
 	}
 	rows := []accountSnapshot{{Path: "a.json", State: "active"}, {Path: "b.json", State: "active"}}
 	annotateAccountPolicies(rows)
 	if *rows[0].SchedulingEnabled || summarizeAccounts(rows)["paused"] != 1 {
-		t.Fatal("账号开关/总览未反映停用")
+		t.Fatal("account toggle/overview did not reflect the disable")
 	}
 	w = adminRequest(handler, "POST", "/admin/api/model-toggle", "admin", `{"target":"two","enabled":true}`)
 	if w.Code != 200 {
@@ -396,16 +396,16 @@ func TestWebTogglePreservesConfigAndConvertsAllowlist(t *testing.T) {
 	obj := decodeObject(t, data)
 	models := obj["models"].(map[string]any)
 	if _, exists := models["allowlist"]; exists {
-		t.Fatal("网页写入必须删除白名单键")
+		t.Fatal("web UI write must delete the allowlist key")
 	}
 	for id, want := range map[string]bool{"one": true, "two": true, "three": false} {
 		disabled, _ := modelDisabled(id)
 		if disabled == want {
-			t.Fatalf("转换丢失模型 %s 原状态", id)
+			t.Fatalf("conversion lost the original state of model %s", id)
 		}
 	}
 	if configuredSystemPrompts().force != "synthetic preserve" || !strings.Contains(string(data), `"a.json"`) {
-		t.Fatal("写入丢失其他配置")
+		t.Fatal("write lost other config")
 	}
 	writeStatusSnapshot()
 	w = adminRequest(handler, "GET", "/admin/api/models", "admin", "")
@@ -414,21 +414,21 @@ func TestWebTogglePreservesConfigAndConvertsAllowlist(t *testing.T) {
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &view)
 	if len(view.Models) != 3 {
-		t.Fatalf("停用模型没有保留在管理列表: %s", w.Body.String())
+		t.Fatalf("disabled model was not kept in the admin list: %s", w.Body.String())
 	}
 	w = adminRequest(handler, "POST", "/admin/api/model-toggle", "admin", `{"target":"three","enabled":true}`)
 	if w.Code != 200 {
-		t.Fatalf("无法重新启用: %s", w.Body.String())
+		t.Fatalf("failed to re-enable: %s", w.Body.String())
 	}
 	w = adminRequest(handler, "POST", "/admin/api/account-toggle", "admin", `{"target":"a.json","enabled":true}`)
 	if w.Code != 200 {
-		t.Fatalf("无法重新启用账号: %s", w.Body.String())
+		t.Fatalf("failed to re-enable account: %s", w.Body.String())
 	}
 	if ok, _ := modelAccountAllowed("two", a, accounts); !ok {
-		t.Fatal("恢复后没有参与模型专属调度")
+		t.Fatal("after restore, did not participate in model-specific dispatch")
 	}
 	if ok, _ := modelAccountAllowed("two", b, accounts); ok {
-		t.Fatal("开关不应覆盖模型专属规则")
+		t.Fatal("toggle must not overwrite model-specific rules")
 	}
 }
 
@@ -452,7 +452,7 @@ func TestWebPolicyWritesGuardedAndNoLostUpdates(t *testing.T) {
 	} {
 		w := adminRequest(handler, "POST", "/admin/api/model-toggle", tc.key, tc.body)
 		if w.Code != tc.status {
-			t.Fatalf("状态码=%d want=%d %s", w.Code, tc.status, w.Body.String())
+			t.Fatalf("status=%d want=%d %s", w.Code, tc.status, w.Body.String())
 		}
 	}
 	r := httptest.NewRequest("POST", "http://localhost/admin/api/model-toggle", strings.NewReader(`{"target":"one","enabled":false}`))
@@ -463,7 +463,7 @@ func TestWebPolicyWritesGuardedAndNoLostUpdates(t *testing.T) {
 	wrongOrigin := httptest.NewRecorder()
 	handler.ServeHTTP(wrongOrigin, r)
 	if wrongOrigin.Code != http.StatusForbidden {
-		t.Fatal("跨站写入应在业务前被拦截")
+		t.Fatal("cross-site write should be intercepted before the business logic")
 	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 3)
@@ -482,18 +482,18 @@ func TestWebPolicyWritesGuardedAndNoLostUpdates(t *testing.T) {
 	}
 	for _, id := range []string{"one", "two"} {
 		if off, _ := modelDisabled(id); !off {
-			t.Fatal("并发写入丢失模型状态")
+			t.Fatal("concurrent writes lost model state")
 		}
 	}
 	data, _ := os.ReadFile(runtimeConfigFile)
 	if !strings.Contains(string(data), `"api"`) || currentAPIKey() != "api" {
-		t.Fatal("并发写入丢失鉴权设置")
+		t.Fatal("concurrent writes lost auth settings")
 	}
-	// 外部修改管理 Key 后旧会话不能继续覆盖文件。
+	// After the admin key is changed externally, old sessions must not keep overwriting the file.
 	writeRuntimeFixture(t, `{"gateway":{"adminKey":"external"}}`)
 	w := adminRequest(handler, "POST", "/admin/api/model-toggle", "admin", `{"target":"one","enabled":true}`)
 	if w.Code != 409 {
-		t.Fatalf("外部配置冲突应拒绝覆盖: %d", w.Code)
+		t.Fatalf("external config conflict should reject the overwrite: %d", w.Code)
 	}
 }
 
@@ -505,16 +505,16 @@ func TestPolicyWriteAndDebugFailuresPreserveState(t *testing.T) {
 		t.Fatal(err)
 	}
 	catalogModels = map[string][]catalogModel{"cn": {{ID: "one"}}}
-	// 无效的磁盘配置不能被页面“顺手修好”或覆盖。
+	// Invalid on-disk config must not be 'conveniently fixed' or overwritten by the page.
 	writeRuntimeFixture(t, `{"gateway":{"adminKey":"admin"},"models":{"accounts":{"all":{"blocklist":["bad/path.json"]}}}}`)
 	if err := savePolicyToggle("model", "one", false, "invalid-disk"); err == nil {
-		t.Fatal("坏配置不能覆盖")
+		t.Fatal("bad config must not be overwritten")
 	}
 	if disabled, _ := modelDisabled("one"); disabled {
-		t.Fatal("写入失败改变了运行时状态")
+		t.Fatal("write failure changed the runtime state")
 	}
 	writeRuntimeFixture(t, original)
-	// 已有文件占用 logs 路径时，开启调试失败必须保留其他有效配置。
+	// When an existing file occupies the logs path, a failed debug enablement must preserve the other valid config.
 	oldCwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -530,13 +530,13 @@ func TestPolicyWriteAndDebugFailuresPreserveState(t *testing.T) {
 	writeRuntimeFixture(t, `{"gateway":{"adminKey":"changed"},"debug":{"enabled":true},"models":{"blocklist":["one"]}}`)
 	watcher := runtimeConfigWatcher{}
 	if watcher.reload() {
-		t.Fatal("调试日志不可写仍然加载了配置")
+		t.Fatal("config was still loaded even though the debug log is not writable")
 	}
 	if currentAdminKey() != "admin" || debugLoggingEnabled() {
-		t.Fatal("调试失败改变了其他运行时状态")
+		t.Fatal("debug failure changed other runtime state")
 	}
 	if disabled, _ := modelDisabled("one"); disabled {
-		t.Fatal("调试失败改变了模型规则")
+		t.Fatal("debug failure changed model rules")
 	}
 }
 
@@ -557,6 +557,6 @@ func TestHotTransportClonesForChangedHeaderTimeout(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 	if base.ResponseHeaderTimeout != time.Second || transport.transport == base || transport.transport.ResponseHeaderTimeout != 3*time.Second {
-		t.Fatal("活跃 Transport 被原地修改")
+		t.Fatal("active Transport was modified in place")
 	}
 }

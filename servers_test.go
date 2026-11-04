@@ -142,7 +142,7 @@ func TestGatewayPortSwapRejectedWithoutDroppingListeners(t *testing.T) {
 	gatewayServers.register(servers, listeners)
 	gatewayServers.start(make(chan error, 2))
 	if _, _, err := gatewayServers.apply(gatewayFileConfig{APIPort: cfg.WebPort, WebPort: cfg.Port}, cfg.WebPort, true); err == nil ||
-		!strings.Contains(err.Error(), "互换") {
+		!strings.Contains(err.Error(), "swapping") {
 		t.Fatalf("port swap should be rejected clearly: %v", err)
 	}
 }

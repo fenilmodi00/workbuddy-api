@@ -10,8 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// WorkBuddy 5.8.4 的 buildConversationHeaders 使用 session.id、当前轮次 ID，
-// 以及每次模型调用新生成的 UUID（message ID 去掉连字符）。不要用普通 TraceID 代替会话。
+// WorkBuddy 5.8.4's buildConversationHeaders uses session.id, the current turn
+// ID, and a UUID generated per model call (message ID without hyphens). Do not
+// substitute an ordinary TraceID for the session.
 const (
 	conversationIDHeader        = "X-Conversation-ID"
 	conversationRequestIDHeader = "X-Conversation-Request-ID"
@@ -27,8 +28,10 @@ type conversationHeaders struct {
 	Source    string
 }
 
-// 非 UUID 的客户端会话键规范化为 UUIDv5，不直接发送或记录任意客户端文本。
-// 命名空间固定、与标准 DNS/URL 命名空间分离；API Key 仅参与摘要，绝不落日志。
+// Client session keys that are not UUIDs are normalized to UUIDv5; arbitrary
+// client text is never sent or logged. The namespace is fixed and separate from
+// the standard DNS/URL namespaces; the API key only participates in the digest
+// and is never logged.
 var conversationNamespace = uuid.MustParse("7518352d-f297-5ede-9583-a32f3413b74d")
 
 func usableConversationSeed(value string) string {
@@ -46,7 +49,8 @@ func usableConversationSeed(value string) string {
 
 func normalizedConversationID(value, kind, caller string) string {
 	if id, err := uuid.Parse(value); err == nil && id != uuid.Nil {
-		// 保留官方主路径所用的 32 位无连字符格式；其他 UUID 表示规范为标准格式。
+		// Preserve the 32-char hyphen-free format used by the official main
+		// path; other UUID spellings normalize to the standard format.
 		if len(value) == 32 {
 			return strings.ToLower(value)
 		}
@@ -63,16 +67,19 @@ func conversationHeadersFor(r *http.Request) *conversationHeaders {
 	return value
 }
 
-// prepareConversationContext 必须在协议转换前读取原请求的会话元数据。
-// 转换后仍使用同一个 request context，三个协议、流式/聚合、换号/重试共享同一组头。
-// 无客户端会话键时每个 HTTP 调用独立生成，不根据提示词/模型名推测或合并会话。
+// prepareConversationContext must read the original request's conversation
+// metadata before protocol conversion. After conversion the same request
+// context is still used: all three protocols, streaming/aggregate, and
+// account-switch/retry share the same set of headers. When no client session
+// key exists, each HTTP call generates its own; sessions are never inferred or
+// merged from prompt/model names.
 func prepareConversationContext(r *http.Request, body map[string]any) *conversationHeaders {
 	if existing := conversationHeadersFor(r); existing != nil {
 		return existing
 	}
 	h := &conversationHeaders{
 		ID: uuid.NewString(), RequestID: uuid.NewString(),
-		MessageID: strings.ReplaceAll(uuid.NewString(), "-", ""), Source: "独立生成",
+		MessageID: strings.ReplaceAll(uuid.NewString(), "-", ""), Source: "independently generated",
 	}
 	if r == nil {
 		return h
@@ -94,13 +101,13 @@ func prepareConversationContext(r *http.Request, body map[string]any) *conversat
 	}
 	seed := usableConversationSeed(r.Header.Get(conversationIDHeader))
 	if seed != "" {
-		h.Source = "客户端会话头"
+		h.Source = "client conversation header"
 	} else if seed = usableConversationSeed(r.Header.Get("X-Session-ID")); seed != "" {
-		h.Source = "客户端Session头"
+		h.Source = "client session header"
 	} else if seed = bodyValue(body, "conversation_id", "conversationId", "session_id", "sessionId"); seed != "" {
-		h.Source = "请求会话字段"
+		h.Source = "request session field"
 	} else if seed = bodyValue(metadata, "conversation_id", "conversationId", "session_id", "sessionId"); seed != "" {
-		h.Source = "请求metadata会话字段"
+		h.Source = "request metadata session field"
 	}
 	if seed != "" {
 		h.ID = normalizedConversationID(seed, "conversation", caller)
@@ -130,13 +137,15 @@ func prepareConversationContext(r *http.Request, body map[string]any) *conversat
 	if trace == "" {
 		trace = r.Header.Get("X-Trace-ID")
 	}
-	log.Printf("[会话头准备] traceId=%s 来源=%s 会话ID已就绪=true 轮次ID已就绪=true 消息ID已就绪=true 说明=同一逻辑请求的重试和换号沿用同一组标识；不记录会话键、提示词或令牌",
+	log.Printf("[Conversation headers prepared] traceId=%s source=%s conversation_id_ready=true turn_id_ready=true message_id_ready=true note=Retries and account switches of the same logical request reuse the same identifiers; session keys, prompts, and tokens are not logged",
 		trace, h.Source)
 	return h
 }
 
-// backendHeaders 的统一兜底也覆盖 CLI probe 和后台价格探测。
-// 只有模型推理调用经过这里；登录、续期、额度查询不注入会话头。
+// setConversationHeaders' unified fallback also covers the CLI probe and
+// background price probing.
+// Only model inference calls go through here; login, renewal, and quota queries
+// do not inject conversation headers.
 func setConversationHeaders(req *http.Request) {
 	h := conversationHeadersFor(req)
 	if h == nil {

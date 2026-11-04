@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-// 脱敏仅用于日志/调试展示。不得把脱敏后的错误送回业务分类或上游响应解析。
+// Redaction is for logs/debug display only. Redacted errors must not be fed back into business classification or upstream response parsing.
 var sensitiveSecrets sync.Map
 
 var (
@@ -38,7 +38,7 @@ func redactSensitiveText(text string) string {
 	sensitiveSecrets.Range(func(key, _ any) bool {
 		value := key.(string)
 		secrets = append(secrets, value)
-		// 错误正文可能是 JSON 字符串；同时隐藏其转义后的表示。
+		// The error body may be a JSON string; hide its escaped representation too.
 		escaped := strconv.Quote(value)
 		escaped = escaped[1 : len(escaped)-1]
 		if escaped != value {
@@ -46,7 +46,7 @@ func redactSensitiveText(text string) string {
 		}
 		return true
 	})
-	// 长值优先、一次替换，避免重叠秘密值导致部分泄漏或改写替换标记。
+	// Longest values first, one replacement pass, so overlapping secret values cannot cause partial leaks or rewritten replacement markers.
 	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
 	var pairs []string
 	for _, secret := range secrets {
@@ -76,7 +76,7 @@ func redactSensitiveText(text string) string {
 	return bearerLikeRe.ReplaceAllString(text, "[REDACTED]")
 }
 
-// 短秘密值仅替换完整词，避免短测试密钥吞掉普通错误原因中的单个字母。
+// Short secret values are replaced only as whole words, so a short test key cannot swallow single letters in an ordinary error reason.
 func redactShortSecret(text, secret string) string {
 	word := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
 	var out strings.Builder
@@ -110,7 +110,7 @@ func (w *redactingLogWriter) Write(data []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// io.Writer 返回消耗的原始输入长度，而不是脱敏后的输出长度。
+	// io.Writer implementations must return the consumed original input length, not the redacted output length.
 	return len(data), nil
 }
 

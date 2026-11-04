@@ -106,7 +106,7 @@ func TestCheckinSuccessAndAlreadyDonePreventAllFurtherAttempts(t *testing.T) {
 			if !s.nextLocked(*now).IsZero() {
 				t.Fatal("finished day must not advertise a fabricated fixed next-day sign-in time")
 			}
-			if view := s.view(target, *now); view.Status != "success" || checkinDisplay(view, "cn", *now) != "已签" {
+			if view := s.view(target, *now); view.Status != "success" || checkinDisplay(view, "cn", *now) != "Signed" {
 				t.Fatalf("success display: %+v", view)
 			}
 			restarted := newDailyCheckinScheduler(s.file)
@@ -219,7 +219,7 @@ func TestCheckinUTC8DayRollAndClockRollback(t *testing.T) {
 	s.saveLocked("synthetic-fixture")
 	yesterday := s.view(target, *now)
 	tomorrow := time.Date(2026, 10, 25, 16, 1, 0, 0, time.UTC) // UTC+8 October 26
-	if got := checkinDisplay(yesterday, "cn", tomorrow); got != "待签" {
+	if got := checkinDisplay(yesterday, "cn", tomorrow); got != "Pending" {
 		t.Fatalf("yesterday success leaked into today: %s", got)
 	}
 	if len(s.planAndClaim(tomorrow, targets, false)) != 0 || s.doc.Date != "2026-10-26" {
@@ -318,13 +318,14 @@ func TestCheckinTransportExplicitSuccessAndOneHTTPRequest(t *testing.T) {
 		status             int
 	}{
 		{"success", `{"code":0}`, "ok", 200},
+		// Upstream Chinese body still recognised as already-checked-in.
 		{"already", `{"code":10001,"msg":"今天已签到"}`, "already", 409},
 		{"missing-code", `{}`, "failed", 200},
 		{"http-failure", `{"code":0}`, "failed", 500},
-		{"auth-failure", `{"code":14001,"msg":"已签到"}`, "failed", 401},
+		{"auth-failure", `{"code":14001,"msg":"already checked in"}`, "failed", 401},
 		{"bad-json", `<html>error</html>`, "failed", 200},
 		{"business-failure", `{"code":10002}`, "failed", 200},
-		{"unrelated-error-message", `{"code":10002,"msg":"已签到状态检查失败"}`, "failed", 200},
+		{"unrelated-error-message", `{"code":10002,"msg":"already checked in status check failed"}`, "failed", 200},
 		{"no-redirect-replay", `{"code":0}`, "failed", 307},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -401,7 +402,7 @@ func TestCheckinSnapshotAndTableShowTodayWithoutChangingModelLedger(t *testing.T
 		t.Fatalf("snapshot checkin missing: %+v", view)
 	}
 	table := renderAccountTable(snapshot.Accounts)
-	if !strings.Contains(table, "签到") || !strings.Contains(table, "已签") || strings.Contains(table, "免费模型") {
+	if !strings.Contains(table, "Checkin") || !strings.Contains(table, "Signed") || strings.Contains(table, "Free model") {
 		t.Fatalf("wrong monitor table: %s", table)
 	}
 	if target.account.ModelStates != nil {
@@ -419,7 +420,7 @@ func TestCheckinSnapshotAndTableShowTodayWithoutChangingModelLedger(t *testing.T
 		t.Fatal("reading status rewrote the schedule")
 	}
 	row := taskByID(t, taskViewDefinitions(), "daily_checkin")
-	if row.Schedule != "每日上午随机时间签到" {
+	if row.Schedule != "random time each morning" {
 		t.Fatalf("task page advertises old scheduling semantics: %s", row.Schedule)
 	}
 }

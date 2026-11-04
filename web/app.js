@@ -73,7 +73,7 @@
     if (!unix) return "-";
     var d = new Date(unix * 1000);
     if (isNaN(d.getTime())) return "-";
-    return d.toLocaleString("zh-CN", { hour12: false });
+    return d.toLocaleString("en-GB", { hour12: false });
   }
 
   function fmtMs(v, has) {
@@ -176,7 +176,7 @@
     table._tableSourceHTML = html;
   }
 
-  // setConn 更新右上角常驻连接状态，让每次请求的结果都可见（不会一闪而过）。
+  // setConn updates the persistent connection status in the top-right corner, so every request's outcome stays visible (no flash).
   function setConn(text, cls) {
     var el = $("conn");
     if (!el) return;
@@ -185,7 +185,7 @@
   }
 
   function nowText() {
-    return new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    return new Date().toLocaleTimeString("en-GB", { hour12: false });
   }
 
   function traceID() {
@@ -201,7 +201,7 @@
       headers: {"Authorization": "Bearer " + state.apiKey, "Content-Type": "application/json",
         "X-Workbuddy-Admin": "1", "X-Trace-ID": trace},
       body: JSON.stringify(record)
-    }).catch(function () { /* 原请求失败仍由服务端审计记录，不递归发送失败事件。 */ });
+    }).catch(function () { /* The original failure is still audited server-side; do not recurse on failed event reports. */ });
   }
 
   function lockDashboard() {
@@ -230,7 +230,7 @@
       $("latencyLegend").textContent = "";
       $("latencyLegend")._sourceHTML = "";
     }
-    $("statsAccount").innerHTML = '<option value="">全局 · 全部账号</option>';
+    $("statsAccount").innerHTML = '<option value="">Global · All accounts</option>';
     $("statsAccount")._sourceHTML = "";
     $("statsTable").querySelector("tbody").innerHTML = "";
     $("statsTable").querySelector("tbody")._sourceHTML = "";
@@ -243,9 +243,9 @@
     $("poolHealth").textContent = "—";
     $("poolHealth").className = "health-value";
     $("poolHealthBar").style.width = "0%";
-    $("poolHealthStatus").textContent = "等待账号状态";
-    $("accountAlertsInfo").textContent = "登录后读取账号异常日志。";
-    $("accountAlerts").innerHTML = '<p class="stats-empty">等待日志</p>';
+    $("poolHealthStatus").textContent = "Waiting for account status";
+    $("accountAlertsInfo").textContent = "Account anomaly logs load after login.";
+    $("accountAlerts").innerHTML = '<p class="stats-empty">Waiting for logs</p>';
     $("accountAlerts")._alertSourceHTML = null;
     if ($("accountAlertTooltip")) $("accountAlertTooltip").hidden = true;
     ["meta", "gatewayInfo", "logBox", "configBox", "tasksInfo"].forEach(function (id) {
@@ -275,64 +275,64 @@
       status = resp.status;
       return resp.json().then(function (data) { return {resp: resp, data: data}; });
     }).then(function (result) {
-      if (keyAtStart !== state.apiKey) throw new Error("登录状态已变化，忽略旧请求结果");
+      if (keyAtStart !== state.apiKey) throw new Error("Login state changed; ignoring stale request result");
       var resp = result.resp;
       if (resp.status === 401) {
         state.apiKey = "";
         sessionStorage.removeItem(KEY_STORAGE);
         lockDashboard();
-        setConn("鉴权失败 (401)", "danger");
-        showAlert("管理鉴权失败：请输入 config.json 中的 gateway.adminKey，模型 API Key 不能用于管理登录。");
-        throw new Error("管理鉴权失败");
+        setConn("Auth failed (401)", "danger");
+        showAlert("Admin auth failed: enter the gateway.adminKey from config.json; the model API Key cannot be used for admin login.");
+        throw new Error("Admin auth failed");
       }
       if (!resp.ok) {
         if (!options.quiet) {
-          setConn("请求失败 (" + resp.status + ")", "danger");
-          showAlert("HTTP " + resp.status + "：" + (result.data.error || "请求失败") +
-            (path.split("?")[0] === "/admin/api/config-edit" ? "；操作未完成，已有编辑输入保留。" : "；已有数据保留，未更新为零。"),
+          setConn("Request failed (" + resp.status + ")", "danger");
+          showAlert("HTTP " + resp.status + ": " + (result.data.error || "Request failed") +
+            (path.split("?")[0] === "/admin/api/config-edit" ? "; operation not completed, your edit input is preserved." : "; previous data preserved, nothing was zeroed out."),
             false, path.split("?")[0]);
         }
         var failure = new Error("HTTP " + resp.status);
         failure.status = resp.status;
-        failure.detail = result.data.error || "请求失败";
+        failure.detail = result.data.error || "Request failed";
         throw failure;
       }
       if (state.alertKind === "error" && state.alertSource === path.split("?")[0]) hideAlert();
-      setConn("已连接 · " + nowText(), "ok");
+      setConn("Connected · " + nowText(), "ok");
       reportUIEvent("request_completed", path, status, trace);
       return result.data;
     }).catch(function (err) {
       if (keyAtStart === state.apiKey) {
         reportUIEvent("request_failed", path, status, trace);
         if (!status && !options.quiet) {
-          setConn("连接失败", "danger");
-          showAlert("请求未完成；保留上次数据，请检查网络后重试。", false, path.split("?")[0]);
+          setConn("Connection failed", "danger");
+          showAlert("Request did not complete; previous data preserved. Check your network and retry.", false, path.split("?")[0]);
         }
       }
       throw err;
     });
   }
 
-  // ---- 渲染：总览 --------------------------------------------------------
+  // ---- Rendering: overview --------------------------------------------------------
   function renderPoolHealth(data) {
     var h = data.health || {}, p = h.percent;
     var known = !data.stale && typeof p === "number" && isFinite(p) && p >= 0 && p <= 100;
     var stateClass = known ? (p === 100 ? "healthy" : (p === 0 ? "unavailable" : "degraded")) : "unknown";
-    $("poolHealth").textContent = known ? p.toLocaleString("zh-CN", {maximumFractionDigits: 1}) + "%" : "—";
+    $("poolHealth").textContent = known ? p.toLocaleString("en-GB", {maximumFractionDigits: 1}) + "%" : "—";
     $("poolHealth").className = "health-value " + stateClass;
     $("poolHealthBar").style.width = known ? p + "%" : "0%";
     $("poolHealthBar").className = stateClass;
-    $("poolHealthStatus").textContent = data.stale ? "快照过旧 · 健康度待确认" :
-      h.state === "empty" ? "未加载账号 · 暂无健康度" : !known ? "健康度待确认" :
-      p === 100 ? "账号池全部可用" : p === 0 ? "账号池当前不可用，请查看告警" : "账号池部分受限，请查看告警";
+    $("poolHealthStatus").textContent = data.stale ? "Snapshot too old · health pending confirmation" :
+      h.state === "empty" ? "No accounts loaded · no health data" : !known ? "Health pending confirmation" :
+      p === 100 ? "All accounts in the pool are usable" : p === 0 ? "Account pool currently unavailable; see alerts" : "Account pool partially limited; see alerts";
   }
 
   function renderAccountAlerts(data) {
     state.lastAccountAlerts = data;
-    var labels = {urgent: "紧急", important: "重要", warning: "注意", notice: "提示"};
+    var labels = {urgent: "Urgent", important: "Important", warning: "Warning", notice: "Notice"};
     var alerts = data.alerts || [];
     var snapshot = state.lastStatus;
-    // 日志扫描短缓存期间仍用最新账号快照剔除已恢复项，不把历史故障继续当作当前告警。
+    // During the short log-scan cache, keep using the latest account snapshot to drop recovered items instead of treating past failures as current alerts.
     if (snapshot && !snapshot.stale && Array.isArray(snapshot.accounts)) {
       alerts = alerts.filter(function (a) {
         return snapshot.accounts.some(function (acc) {
@@ -342,10 +342,10 @@
       });
     }
     var notes = [];
-    if (data.stale || (snapshot && snapshot.stale)) notes.push("快照过旧，以下为上次确认的异常");
-    if (data.missingLogCount) notes.push("部分异常暂未找到对应日志，可能等待下一次扫描");
-    if (data.scanTruncated || data.listTruncated) notes.push("已达到读取上限，仅显示扫描范围内记录");
-    $("accountAlertsInfo").textContent = notes.length ? notes.join("；") + "。" : "";
+    if (data.stale || (snapshot && snapshot.stale)) notes.push("Snapshot too old; showing the last confirmed anomalies");
+    if (data.missingLogCount) notes.push("Some anomalies have no matching log yet; they may appear after the next scan");
+    if (data.scanTruncated || data.listTruncated) notes.push("Read limit reached; showing only records within the scanned range");
+    $("accountAlertsInfo").textContent = notes.length ? notes.join("; ") + "." : "";
     var html = alerts.length ? alerts.map(function (a) {
       var level = labels[a.severity] ? a.severity : "notice";
       var detail = labels[level] + " · " + a.label + " · " + a.account +
@@ -355,8 +355,8 @@
         '<span class="alert-priority">' + esc(labels[level]) + '</span><strong>' + esc(a.label) +
         '</strong><span class="account-alert-file">' + esc(a.account) + '</span><time>' + esc(fmtTime(a.at)) +
         '</time></div></article>';
-    }).join("") : '<p class="stats-empty">' + (data.missingLogCount ? "当前存在异常，但扫描范围内暂未找到对应日志" :
-      data.stale ? "暂无日志记录，账号状态待确认" : "未发现当前账号异常日志") + '</p>';
+    }).join("") : '<p class="stats-empty">' + (data.missingLogCount ? "Anomalies exist, but no matching logs were found within the scanned range" :
+      data.stale ? "No log records yet; account status pending confirmation" : "No current account anomaly logs found") + '</p>';
     // Unchanged polling must not replace a hovered/focused row or dismiss its details.
     if ($("accountAlerts")._alertSourceHTML !== html) {
       if ($("accountAlertTooltip")) $("accountAlertTooltip").hidden = true;
@@ -426,18 +426,18 @@
       if (generation === state.accountAlertsGeneration && key === state.apiKey) renderAccountAlerts(data);
     }).catch(function () {
       if (generation === state.accountAlertsGeneration && key === state.apiKey) {
-        $("accountAlertsInfo").textContent = "告警日志读取失败，保留上次结果；这不代表账号池没有异常。";
+        $("accountAlertsInfo").textContent = "Failed to read alert logs; keeping the previous result. This does not mean the account pool has no anomalies.";
       }
     }).then(function () { state.accountAlertsPending = false; });
   }
 
-  // 统计事实来自可选 stats.json；所有查询使用管理鉴权和既有前端落盘审计。
+  // Stats facts come from the optional stats.json; all queries use admin auth and the existing front-end persisted audit.
   function statsNumber(v) {
-    return Number(v || 0).toLocaleString("zh-CN", {maximumFractionDigits: 2});
+    return Number(v || 0).toLocaleString("en-GB", {maximumFractionDigits: 2});
   }
 
   function statsCredit(v) {
-    return Number(v || 0).toLocaleString("zh-CN", {maximumFractionDigits: 4});
+    return Number(v || 0).toLocaleString("en-GB", {maximumFractionDigits: 4});
   }
 
   function statsDuration(v) {
@@ -497,9 +497,9 @@
       left: padding(leftTicks, 52), right: dual ? padding(rightTicks, 44) : 16};
   }
 
-  // 原生 SVG，不访问 CDN。折线默认跨过无样本时间桶连接相邻样本；
-  // series.connectZero=true 时把无样本桶按 0 画（用量图使用）。
-  // 柱形仍只在有样本的桶出现；opts = {lines, bars, title, leftFormat, rightFormat, box}。
+  // Native SVG, no CDN access. Lines by default bridge empty buckets and connect adjacent samples;
+  // with series.connectZero=true, empty buckets are drawn as 0 (used by the usage chart).
+  // Bars still only appear in buckets with samples; opts = {lines, bars, title, leftFormat, rightFormat, box}.
   function statsComboChart(buckets, opts) {
     opts = opts || {};
     var lines = opts.lines || [], bars = opts.bars || [];
@@ -517,14 +517,14 @@
     var axes = statsChartAxes(buckets, opts, now);
     if (!axes.hasValues) {
       var futureOnly = buckets.length && buckets.every(function (b) { return statsBucketIsFuture(b, now); });
-      return '<p class="stats-empty">' + (futureOnly ? "所选时间范围尚未开始" : "该时间范围暂无可用样本") + '</p>';
+      return '<p class="stats-empty">' + (futureOnly ? "The selected time range has not started yet" : "No samples available for this time range") + '</p>';
     }
     var dual = axes.dual, leftMax = axes.leftMax, rightMax = axes.rightMax;
     var width = Math.max(260, Math.round(box.w)), height = Math.max(190, Math.round(box.h));
     var top = 18, bottom = 40;
     var leftTicks = axes.leftTicks, rightTicks = axes.rightTicks;
     var left = axes.left, right = axes.right;
-    // 两张图共用同一组边距时，日期刻度和十字线才能逐像素对齐。
+    // Date ticks and the crosshair align pixel-perfectly only when both charts share the same margins.
     if (opts.plotPad) {
       if (opts.plotPad.left != null) left = opts.plotPad.left;
       if (opts.plotPad.right != null) right = opts.plotPad.right;
@@ -543,7 +543,7 @@
         out += '<text class="chart-label" text-anchor="start" x="' + (width - right + 8) + '" y="' + (yy + 4) + '">' + esc(rightTicks[n]) + '</text>';
       }
     }
-    // 窄屏把日期缩成 MM-DD；刻度数量按可用宽度反推，避免标签互相重叠。
+    // On narrow screens dates shrink to MM-DD; tick count is derived from the available width to avoid overlapping labels.
     var narrow = width < 520;
     var tickLabel = function (text) {
       return narrow && /^\d{4}-\d{2}-\d{2}$/.test(text) ? text.slice(5) : text;
@@ -553,8 +553,8 @@
     var perTick = Math.max(44, widest * 7 + 14);
     var maxTicks = Math.max(2, Math.floor(plotW / perTick));
     var every = Math.max(1, Math.ceil(buckets.length / maxTicks));
-    // 首尾标签贴边（居中会溢出 viewBox 被裁），再按像素间距贪心取舍：
-    // 末尾刻度优先级最高，与前一个冲突时挤掉前一个，保证最后一个日期始终可见。
+    // First/last labels hug the edges (centering would overflow and clip the viewBox), then a greedy pixel-spacing pass:
+    // the last tick has top priority and evicts its predecessor on conflict, so the final date is always visible.
     var labelW = widest * 6.6;
     var lastIdx = buckets.length - 1;
     var candidates = [];
@@ -588,8 +588,8 @@
     });
     var model = {width: width, height: height, left: left, top: top, plotW: plotW, plotH: plotH, count: buckets.length, buckets: []};
     if (bars.length) {
-      // 柱组必须居中在该桶折线点的时间位置上，否则柱会比线偏半个桶位；
-      // 只做 SVG 边界保护，正常尺寸下不会触发。
+      // Bar groups must be centered on the time position of that bucket's line point, otherwise bars drift half a bucket;
+      // this is only SVG boundary protection and never triggers at normal sizes.
       var slot = plotW / Math.max(1, buckets.length);
       var groupW = Math.min(slot * 0.7, 24);
       var barW = Math.max(1, groupW / bars.length);
@@ -645,7 +645,7 @@
       });
       model.buckets.push(row);
     });
-    // 十字线、命中点和浮层都由同一份几何模型驱动，避免 SVG 缩放后坐标漂移。
+    // The crosshair, hit dots, and tooltip are all driven by the same geometry model to avoid drift when the SVG scales.
     out += '<line class="chart-crosshair" x1="0" y1="0" x2="0" y2="0" visibility="hidden"/>' +
       '<g class="chart-hover-dots">';
     lines.forEach(function (s) {
@@ -690,7 +690,7 @@
           if (!tooltipHTML[index]) {
             var rows = row.readout || row.lines.concat(row.bars);
             tooltipHTML[index] = '<div class="chart-tooltip-date">' + esc(row.label) + '</div>' +
-              (row.future ? '<div class="chart-tooltip-status">未到该时间</div>' : '') +
+              (row.future ? '<div class="chart-tooltip-status">Not yet due</div>' : '') +
               rows.map(function (item) {
                 var dot = item.color ? '<i class="series-dot ' + esc(item.color) + '"></i>' : "";
                 return '<div class="chart-tooltip-row"><span class="chart-tooltip-key">' + dot + esc(item.label) +
@@ -916,34 +916,34 @@
     var scopeOption = function (value, label) {
       return '<option value="' + esc(value) + '"' + (value === choice ? " selected" : "") + '>' + esc(label) + "</option>";
     };
-    setHTMLIfChanged($("statsAccount"), scopeOption("", "全局 · 全部账号") +
-      scopeOption("site:intl", "国际站 · 全部国际账号") + scopeOption("site:cn", "国内站 · 全部国内账号") +
+    setHTMLIfChanged($("statsAccount"), scopeOption("", "Global · All accounts") +
+      scopeOption("site:intl", "International sites · All international accounts") + scopeOption("site:cn", "Domestic sites · All domestic accounts") +
       (data.accounts || []).map(function (a) {
-        return scopeOption(a.id, a.file + " · " + (a.edition === "intl" ? "国际" : "国内") + " · " + a.id.slice(0, 6));
+        return scopeOption(a.id, a.file + " · " + (a.edition === "intl" ? "International" : "Domestic") + " · " + a.id.slice(0, 6));
       }).join(""));
     if (!siteScope && !(data.accounts || []).some(function (a) { return a.id === choice; })) choice = "";
     $("statsAccount").value = choice;
     state.statsAccount = choice;
-    var coverage = (s.tokenSamples || 0) + "/" + (s.requests || 0) + " 请求有 Token";
+    var coverage = (s.tokenSamples || 0) + "/" + (s.requests || 0) + " requests have tokens";
     setHTMLIfChanged($("usageSummary"),
-      statsCard("总消耗 Token", s.tokenSamples ? statsNumber(s.tokens) : "—", "输入 " + statsNumber(s.inputTokens) +
-        " · 输出 " + statsNumber(s.outputTokens) + " · 缓存读取 " + statsNumber(s.cachedTokens), "token") +
-      statsCard("总消耗积分", s.creditSamples ? statsCredit(s.credits) : "—", (s.creditSamples || 0) + "/" + (s.requests || 0) + " 请求有积分 · 仅计 usage.credit", "credit") +
-      statsCard("账号调用次数", statsNumber(s.requests), "完整 " + statsNumber(s.success) + " · 失败 / 不完整 " + statsNumber(s.failed), "neutral") +
-      statsCard("平均总耗时", statsDuration(s.avgLatencyMs), coverage, "token") +
-      statsCard("平均首Token (TTFT)", statsDuration(tokenTime(s)), (currentTTFT ? (s.ttftSamples || 0) : 0) + "/" + (s.requests || 0) + " 请求有新口径有效样本", "first"));
+      statsCard("Total tokens", s.tokenSamples ? statsNumber(s.tokens) : "—", "Input " + statsNumber(s.inputTokens) +
+        " · Output " + statsNumber(s.outputTokens) + " · Cache reads " + statsNumber(s.cachedTokens), "token") +
+      statsCard("Total credits", s.creditSamples ? statsCredit(s.credits) : "—", (s.creditSamples || 0) + "/" + (s.requests || 0) + " requests have credits · usage.credit only", "credit") +
+      statsCard("Account calls", statsNumber(s.requests), "Complete " + statsNumber(s.success) + " · Failed / incomplete " + statsNumber(s.failed), "neutral") +
+      statsCard("Avg total latency", statsDuration(s.avgLatencyMs), coverage, "token") +
+      statsCard("Avg first token (TTFT)", statsDuration(tokenTime(s)), (currentTTFT ? (s.ttftSamples || 0) : 0) + "/" + (s.requests || 0) + " requests have valid samples (new metric)", "first"));
     var sharedBox = {w: chartWidth, h: chartWidth < 520 ? 230 : 280};
     var tooltipRows = function (b) {
       return [
-        {label: "总 Token", color: "token", display: b.tokenSamples ? statsNumber(b.tokens) : (b.requests ? "—" : "0")},
-        {label: "积分", color: "credit", display: b.creditSamples ? statsCredit(b.credits) : (b.requests ? "—" : "0")},
-        {label: "平均总耗时", color: "token", display: statsDuration(b.avgLatencyMs)},
-        {label: "平均首Token", color: "first", display: statsDuration(tokenTime(b))}
+        {label: "Total tokens", color: "token", display: b.tokenSamples ? statsNumber(b.tokens) : (b.requests ? "—" : "0")},
+        {label: "Credits", color: "credit", display: b.creditSamples ? statsCredit(b.credits) : (b.requests ? "—" : "0")},
+        {label: "Avg total latency", color: "token", display: statsDuration(b.avgLatencyMs)},
+        {label: "Avg first token", color: "first", display: statsDuration(tokenTime(b))}
       ];
     };
     var usageOptions = {
-      lines: [{label: "总 Token", color: "token", connectZero: true, value: function (b) { return b.tokenSamples ? b.tokens : null; }}],
-      bars: [{label: "积分", color: "credit", value: function (b) { return b.creditSamples ? b.credits : null; }}],
+      lines: [{label: "Total tokens", color: "token", connectZero: true, value: function (b) { return b.tokenSamples ? b.tokens : null; }}],
+      bars: [{label: "Credits", color: "credit", value: function (b) { return b.creditSamples ? b.credits : null; }}],
       title: "",
       leftFormat: function (v) { return v >= 1000000 ? (v / 1000000).toFixed(2) + "M" : statsNumber(v); },
       rightFormat: statsCredit,
@@ -954,7 +954,7 @@
     var latencyRows = data.modelLatency || [];
     var latencyLines = [], latencyBars = [];
     latencyRows.forEach(function (row, index) {
-      var color = "m" + (index % 8), label = row.model || "未命名模型";
+      var color = "m" + (index % 8), label = row.model || "Unnamed model";
       latencyLines.push({label: label, color: color, value: function (_bucket, i) {
         var points = row.avgLatencyMs || [];
         return i < points.length ? points[i] : null;
@@ -986,9 +986,9 @@
     statsChartControllers = [];
     renderStatsChart("usageChart", rows, usageOptions);
     renderStatsChart("latencyChart", rows, latencyOptions);
-    // 明细改为按模型排名，跟随同一时间范围与账号筛选；服务端已按用量排序并剔除无调用模型。
+    // The breakdown is ranked by model and follows the same time range and account filter; the server already sorts by usage and drops models with no calls.
     var ranked = data.models || [];
-    $("statsRange").textContent = data.start + " → " + data.end + " · " + ranked.length + " 个模型有调用";
+    $("statsRange").textContent = data.start + " → " + data.end + " · " + ranked.length + " models with calls";
     setHTMLIfChanged($("statsTable").querySelector("tbody"), ranked.length ? ranked.map(function (m, i) {
       return "<tr><td>" + (i + 1) + "</td><td class='mono'>" + esc(m.model) + "</td><td>" + esc(statsNumber(m.requests)) + "</td><td>" +
         esc(m.success + " / " + m.failed) + "</td><td>" + esc(m.tokenSamples ? statsNumber(m.tokens) : "—") + "</td><td>" +
@@ -996,8 +996,8 @@
         esc(m.tokenSamples ? statsNumber(m.cachedTokens) : "—") + "</td><td>" +
         esc(m.creditSamples ? statsCredit(m.credits) : "—") + "</td><td>" + esc(statsDuration(m.avgLatencyMs)) + "</td><td>" +
         esc(statsDuration(tokenTime(m))) + "</td><td class='hint'>" + esc("Token " + m.tokenSamples + "/" + m.requests +
-          " · 积分 " + m.creditSamples + "/" + m.requests + " · TTFT " + (currentTTFT ? m.ttftSamples : 0) + "/" + m.requests) + "</td></tr>";
-    }).join("") : '<tr><td colspan="11" class="empty">所选范围没有模型调用记录</td></tr>');
+          " · credits " + m.creditSamples + "/" + m.requests + " · TTFT " + (currentTTFT ? m.ttftSamples : 0) + "/" + m.requests) + "</td></tr>";
+    }).join("") : '<tr><td colspan="11" class="empty">No model calls in the selected range</td></tr>');
     state.statsRenderKey = renderKey;
   }
 
@@ -1014,20 +1014,20 @@
       if (value) params.push(field + "=" + encodeURIComponent(value));
     });
     // Background refresh keeps the current layout and any storage warning.
-    if (!state.lastStats) $("statsInfo").textContent = "正在读取统计…";
+    if (!state.lastStats) $("statsInfo").textContent = "Loading stats…";
     return api("/admin/api/stats?" + params.join("&")).then(function (data) {
       if (version !== state.statsVersion || key !== state.apiKey) return;
       renderStats(data);
       state.statsLastPoll = Date.now();
     }).catch(function (err) {
       if (err && err.status === 400 && state.statsAccount) {
-        // 上次记住的账号已被删除时，退回全局查询而不是一直报错。
+        // When the remembered account was deleted, fall back to the global query instead of failing forever.
         state.statsAccount = "";
         rememberStatsFilter();
         state.statsVersion++;
         return;
       }
-      if (version === state.statsVersion && key === state.apiKey) $("statsInfo").textContent = "统计读取失败，图表保留上次结果；请检查筛选日期或稍后重试。";
+      if (version === state.statsVersion && key === state.apiKey) $("statsInfo").textContent = "Failed to load stats; charts keep the previous result. Check the filter dates or retry later.";
     }).then(function () {
       state.statsPending = false;
       if (version !== state.statsVersion && state.apiKey) return loadStats(true);
@@ -1047,30 +1047,30 @@
     return loadStats(true);
   }
 
-  var SITE_LABEL = { cn: "国内站", intl: "国际站" };
+  var SITE_LABEL = { cn: "Domestic site", intl: "International site" };
 
   function renderStatus(data) {
     state.lastStatus = data;
     var g = data.gateway || {};
     setHTMLIfChanged($("meta"),
       '<a class="chip chip-link" href="https://github.com/CangShui/workbuddy-gateway"' +
-      ' target="_blank" rel="noreferrer" title="在新标签页打开项目地址">v' + esc(g.version) + '</a>' +
+      ' target="_blank" rel="noreferrer" title="Open project URL in a new tab">v' + esc(g.version) + '</a>' +
       '<span class="chip">' + esc(g.listen) + '</span>' +
-      '<span class="chip">模型源 ' + esc(g.modelSource || "unavailable") + '</span>' +
-      '<span class="chip">更新 ' + esc(fmtTime(data.updatedAt)) + '</span>');
+      '<span class="chip">Model source ' + esc(g.modelSource || "unavailable") + '</span>' +
+      '<span class="chip">Updated ' + esc(fmtTime(data.updatedAt)) + '</span>');
 
     renderPoolHealth(data);
     if (state.lastAccountAlerts) renderAccountAlerts(state.lastAccountAlerts);
 
-    setHTMLIfChanged($("gatewayInfo"), kvRow("版本", g.version) +
-      kvRow("监听地址", g.listen) +
-      kvRow("API 鉴权", g.apiKeyEnabled ? "已启用" : "未启用") +
-      kvRow("管理台", g.webuiEnabled ? "已启用" : "未启用") +
-      kvRow("模型来源", g.modelSource || "unavailable") +
-      kvRow("快照更新", fmtTime(data.updatedAt)));
+    setHTMLIfChanged($("gatewayInfo"), kvRow("Version", g.version) +
+      kvRow("Listen address", g.listen) +
+      kvRow("API auth", g.apiKeyEnabled ? "Enabled" : "Disabled") +
+      kvRow("Web console", g.webuiEnabled ? "Enabled" : "Disabled") +
+      kvRow("Model source", g.modelSource || "unavailable") +
+      kvRow("Snapshot updated", fmtTime(data.updatedAt)));
 
     renderAccounts(data.accounts || []);
-    if (data.stale) showAlert("状态快照超过 15 秒未更新，当前展示的是上次数据，请检查网关状态。",
+    if (data.stale) showAlert("The status snapshot has not updated for over 15 seconds; showing the previous data. Check the gateway status.",
       false, "/admin/api/status");
   }
 
@@ -1079,17 +1079,17 @@
   }
 
   var STATE_TEXT = {
-    active: "可用", cooldown: "冷却", paid_exhausted: "付费耗尽",
-    quota_exhausted: "付费耗尽", expired: "已过期", disabled: "失效"
+    active: "Available", cooldown: "Cooldown", paid_exhausted: "Paid exhausted",
+    quota_exhausted: "Paid exhausted", expired: "Expired", disabled: "Invalid"
   };
   var STATE_CLASS = {
     active: "ok", cooldown: "warn", paid_exhausted: "warn",
     quota_exhausted: "warn", expired: "warn", disabled: "danger"
   };
 
-  // Cookie 仅保存两个显示偏好，不包含管理 Key、凭据、配置或账号信息。
-  // 统计筛选（粒度/范围/起止日期）记在 Cookie 里，退出登录或重新打开页面都能恢复。
-  // 只保存用户真正改过的日期：没动过就留空，继续用默认的滚动区间，避免把默认区间冻结住。
+  // Cookies only store two display preferences; they never contain the admin Key, credentials, config, or account data.
+  // Stats filters (granularity/scope/start and end dates) are stored in a Cookie and restored after logout or reopening the page.
+  // Only save dates the user actually changed: leave them empty otherwise and keep the default rolling window, so the default range is never frozen.
   var STATS_FILTER_COOKIE = "gateway_stats_filter";
 
   function readCookieRaw(name) {
@@ -1099,7 +1099,7 @@
         var pair = cookies[i].trim();
         if (pair.indexOf(name + "=") === 0) return decodeURIComponent(pair.slice(name.length + 1));
       }
-    } catch (_) { /* Cookie 被禁用时按默认值渲染，不影响登录与查询 */ }
+    } catch (_) { /* Render with defaults when Cookies are disabled; login and queries are unaffected */ }
     return "";
   }
 
@@ -1153,7 +1153,7 @@
     var remembered = writeStatsFilterCookie();
     var hint = $("statsFilterStatus");
     if (hint) {
-      hint.textContent = remembered ? "" : "统计筛选已应用，但浏览器没能保存 Cookie，刷新后可能记不住这次选择。";
+      hint.textContent = remembered ? "" : "Stats filter applied, but the browser could not save the Cookie; the selection may not survive a refresh.";
       hint.classList.toggle("hidden", remembered);
     }
     return remembered;
@@ -1168,7 +1168,7 @@
         var value = pair.slice(name.length + 1);
         return value === "1" ? true : value === "0" ? false : null;
       }
-    } catch (_) { /* Cookie 被禁用时回落到显示全部，不影响管理登录。 */ }
+    } catch (_) { /* Fall back to showing all when Cookies are disabled; admin login is unaffected */ }
     return null;
   }
 
@@ -1201,11 +1201,11 @@
     var enabled = $(filter.id).checked;
     var remembered = writeListFilterCookie(filter.cookie, enabled);
     var hint = $(filter.statusID);
-    hint.textContent = remembered ? "" : "本次筛选已应用，但浏览器未允许保存 Cookie，刷新后可能无法记住状态。";
+    hint.textContent = remembered ? "" : "Filter applied, but the browser did not allow saving a Cookie; the state may not survive a refresh.";
     hint.classList.toggle("hidden", remembered);
     reportUIEvent("list_filter_changed", filter.route, 0, trace, enabled);
     if (!remembered) reportUIEvent("list_filter_cookie_failed", filter.route, 0, trace, enabled);
-    // 筛选立即作用于已加载的数据；刷新中的响应也按当前勾选状态渲染。
+    // The filter applies immediately to loaded data; in-flight responses also render per the current checkbox state.
     if (kind === "accounts") {
       if (state.lastStatus) renderAccounts(state.lastStatus.accounts || []);
     } else if (state.lastModels) {
@@ -1213,7 +1213,7 @@
     }
   }
 
-  // ---- 账号：网页新增（复用 CLI 登录流程）与删除 ---------------------------
+  // ---- Accounts: add via web (reusing the CLI login flow) and delete ---------------------------
   function clearAddAccountArtifacts() {
     $("addAccountQr").removeAttribute("src");
     $("addAccountLink").href = "#";
@@ -1221,7 +1221,7 @@
     var copy = $("addAccountCopy");
     if (copy) {
       copy.disabled = true;
-      copy.textContent = "复制链接";
+      copy.textContent = "Copy link";
     }
   }
 
@@ -1250,18 +1250,18 @@
     if (!text) return;
     var button = $("addAccountCopy");
     var done = function (ok) {
-      button.textContent = ok ? "已复制" : "复制失败";
+      button.textContent = ok ? "Copied" : "Copy failed";
       if (!ok) {
-        // 非安全上下文或浏览器拒绝剪贴板权限时，至少把链接选中，方便手动复制。
+        // In insecure contexts or when the browser denies clipboard permission, at least select the link for manual copying.
         try {
           var range = document.createRange();
           range.selectNodeContents(link);
           var selection = window.getSelection();
           selection.removeAllRanges();
           selection.addRange(range);
-        } catch (_) { /* 选中失败不影响提示 */ }
+        } catch (_) { /* A failed selection does not affect the notice */ }
       }
-      window.setTimeout(function () { button.textContent = "复制链接"; }, 1500);
+      window.setTimeout(function () { button.textContent = "Copy link"; }, 1500);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       try {
@@ -1271,7 +1271,7 @@
           fallbackCopyText(text, done);
         });
         return;
-      } catch (_) { /* 继续走 execCommand 回退 */ }
+      } catch (_) { /* Fall through to the execCommand fallback */ }
     }
     fallbackCopyText(text, done);
   }
@@ -1289,9 +1289,9 @@
 
   function showAddAccountPending() {
     var left = addAccountRemainingSeconds();
-    $("addAccountStatus").textContent = "请用手机扫码完成授权；成功后凭据会自动保存并加载。" +
-      (left > 0 ? "剩余 " + fmtAddAccountRemaining(left) + "，超时后需重新获取。"
-        : "登录链接即将失效，请重新获取。");
+    $("addAccountStatus").textContent = "Scan the QR code with your phone to authorize; on success the credential is saved and loaded automatically." +
+      (left > 0 ? " Time remaining " + fmtAddAccountRemaining(left) + "; request a new link after it expires."
+        : "The login link is about to expire; please request a new one.");
   }
 
   function showAddAccountExpired() {
@@ -1299,14 +1299,14 @@
     state.addAccountPoll = 0;
     state.addAccountDeadline = 0;
     clearAddAccountArtifacts();
-    $("addAccountStatus").textContent = "登录链接已失效，请重新点击「获取登录接口」。";
+    $("addAccountStatus").textContent = "The login link has expired; please click \"Get login URL\" again.";
   }
 
   function openAddAccount() {
     $("addAccountPanel").classList.remove("hidden");
     $("addAccountResult").classList.add("hidden");
     clearAddAccountArtifacts();
-    $("addAccountStatus").textContent = "正在读取默认凭据名…";
+    $("addAccountStatus").textContent = "Reading the default credential name…";
     state.addAccountId = "";
     state.addAccountPoll = 0;
     state.addAccountDeadline = 0;
@@ -1314,7 +1314,7 @@
       $("addFile").value = data.defaultFile || "";
       $("addAccountStatus").textContent = "";
     }).catch(function () {
-      $("addAccountStatus").textContent = "读取默认凭据名失败，可手动填写。";
+      $("addAccountStatus").textContent = "Failed to read the default credential name; you can fill it in manually.";
     });
   }
 
@@ -1333,10 +1333,10 @@
   function startAddAccount() {
     var site = $("addSite").value === "intl" ? "intl" : "cn";
     var file = ($("addFile").value || "").replace(/^\s+|\s+$/g, "");
-    if (!file) { $("addAccountStatus").textContent = "请先填写凭据名。"; return; }
+    if (!file) { $("addAccountStatus").textContent = "Please enter a credential name first."; return; }
     if (state.addAccountId) closeAddAccount();
     $("addStart").disabled = true;
-    $("addAccountStatus").textContent = "正在获取登录接口…";
+    $("addAccountStatus").textContent = "Getting the login URL…";
     return api("/admin/api/account-add", {method: "POST", body: {site: site, file: file}}).then(function (data) {
       state.addAccountId = data.id || "";
       state.addAccountPoll = 0;
@@ -1351,7 +1351,7 @@
       showAddAccountPending();
       pollAddAccount();
     }).catch(function (err) {
-      $("addAccountStatus").textContent = "获取登录接口失败：" + ((err && err.detail) || "请稍后重试");
+      $("addAccountStatus").textContent = "Failed to get the login URL: " + ((err && err.detail) || "please try again later");
     }).then(function () { $("addStart").disabled = false; });
   }
 
@@ -1373,17 +1373,17 @@
       state.addAccountId = "";
       state.addAccountDeadline = 0;
       if (status === "done") {
-        $("addAccountStatus").textContent = "登录成功，凭据已保存为 " + (data.savedAs || "") + "，账号池已自动加载。";
-        showAlert("账号已添加：" + (data.savedAs || ""), true);
+        $("addAccountStatus").textContent = "Login succeeded; the credential was saved as " + (data.savedAs || "") + " and the account pool reloaded automatically.";
+        showAlert("Account added: " + (data.savedAs || ""), true);
         refreshActive();
       } else if (status === "expired") {
         showAddAccountExpired();
       } else if (status === "cancelled") {
         clearAddAccountArtifacts();
-        $("addAccountStatus").textContent = "登录已取消。";
+        $("addAccountStatus").textContent = "Login cancelled.";
       } else {
         clearAddAccountArtifacts();
-        $("addAccountStatus").textContent = "登录失败：" + (data.error || "请重试");
+        $("addAccountStatus").textContent = "Login failed: " + (data.error || "please retry");
       }
     }).catch(function (err) {
       if (state.addAccountId !== id) return;
@@ -1391,7 +1391,7 @@
         showAddAccountExpired();
         return;
       }
-      $("addAccountStatus").textContent = "查询登录进度失败，保留上次结果。";
+      $("addAccountStatus").textContent = "Failed to query login progress; keeping the previous result.";
     });
   }
 
@@ -1402,14 +1402,14 @@
     if (!btn) return;
     var name = btn.getAttribute("data-account-delete");
     if (!name) return;
-    if (!window.confirm("确定删除凭据 " + name + " ？\n\n" +
-        "会从账号池移除该账号，并删除运行目录下的对应凭据文件。统计与历史日志保留，操作不可撤销。")) return;
+    if (!window.confirm("Delete credential " + name + " ?\n\n" +
+        "This removes the account from the pool and deletes its credential file from the working directory. Stats and historical logs are kept. This cannot be undone.")) return;
     state.policyVersion++;
     api("/admin/api/account-delete", {method: "POST", body: {file: name}}).then(function () {
-      showAlert("已删除凭据 " + name + "，账号池已同步移除。", true);
+      showAlert("Deleted credential " + name + "; the account was removed from the pool.", true);
       return refreshActive();
     }).catch(function (err) {
-      showAlert("删除失败：" + ((err && err.detail) || "请稍后重试"), false);
+      showAlert("Delete failed: " + ((err && err.detail) || "please try again later"), false);
     });
   }
 
@@ -1418,22 +1418,22 @@
     var today = new Date(now + 8 * 3600000).toISOString().slice(0, 10);
     var status = c.status || "pending", message = c.message || "";
     if (a.edition === "intl" || status === "unsupported") {
-      return '<span class="badge" title="国际站或企业账号不参与个人签到">—</span>';
+      return '<span class="badge" title="International or enterprise accounts do not participate in personal checkin">—</span>';
     }
     if (c.date !== today) {
       var hour = new Date(now + 8 * 3600000).getUTCHours();
       var minute = new Date(now + 8 * 3600000).getUTCMinutes();
       status = hour * 60 + minute >= 570 ? "missed" : "pending";
-      message = status === "missed" ? "今日窗口已过，不补签" : "等待北京时间今天的随机计划";
+      message = status === "missed" ? "Today\u2019s window has passed; no makeup checkin" : "Waiting for today\u2019s random plan (Beijing time)";
     }
-    var labels = {pending: "待签", running: "待签", success: "已签", failed: "失败", missed: "未签", unknown: "未知"};
+    var labels = {pending: "Pending", running: "Pending", success: "Checked in", failed: "Failed", missed: "Missed", unknown: "Unknown"};
     var styles = {success: "ok", failed: "danger", unknown: "warn"};
-    var detail = "北京时间 " + today + " · " + message;
+    var detail = "Beijing time " + today + " · " + message;
     if (c.date === today && c.nextAt) {
-      detail += " · 计划 " + new Date(c.nextAt * 1000).toLocaleString("zh-CN", {timeZone: "Asia/Shanghai", hour12: false});
+      detail += " · Scheduled " + new Date(c.nextAt * 1000).toLocaleString("en-GB", {timeZone: "Asia/Shanghai", hour12: false});
     }
     return '<span class="badge ' + (styles[status] || "") + '" title="' + esc(detail) + '">' +
-      (labels[status] || "未知") + '</span>';
+      (labels[status] || "Unknown") + '</span>';
   }
 
   function renderAccounts(list) {
@@ -1447,17 +1447,17 @@
     var focusTarget = focusedPolicyTarget(tb);
     if (!list.length) {
       updateTableBody(tb, '<tr><td colspan="16" class="empty">' +
-        (onlyUsable ? "没有符合条件的可用账号，取消勾选可查看全部账号。" : "暂无账号数据（服务是否已写入状态快照？）") + '</td></tr>');
+        (onlyUsable ? "No usable accounts match the filter; uncheck the option to see all accounts." : "No account data yet (has the service written a status snapshot?)") + '</td></tr>');
       return;
     }
     var html = list.map(function (a, i) {
       var st = STATE_TEXT[a.state] || a.state || "-";
       var cls = STATE_CLASS[a.state] || "";
       if (a.schedulingEnabled === false) {
-        st = a.state === "active" ? "已停用" : "已停用 · " + st;
+        st = a.state === "active" ? "Disabled" : "Disabled · " + st;
         cls = "warn";
       }
-      var site = a.edition === "intl" ? "国际站" : "国内站";
+      var site = a.edition === "intl" ? "International site" : "Domestic site";
       return '<tr data-row-key="' + esc(a.path) + '">' +
         "<td>" + (i + 1) + "</td>" +
         "<td>" + policySwitch("account", a.path, a.schedulingEnabled !== false, a.schedulingReason) + "</td>" +
@@ -1469,13 +1469,13 @@
         "<td>" + esc(quotaAmount(a, "total")) + "</td>" +
         "<td>" + esc(quotaAmount(a, "used")) + "</td>" +
         "<td>" + esc(quotaAmount(a, "remaining")) + "</td>" +
-        "<td>" + esc((a.planLabel || "-") + (a.planStale ? "（待刷新）" : "")) + "</td>" +
+        "<td>" + esc((a.planLabel || "-") + (a.planStale ? " (stale)" : "")) + "</td>" +
         "<td>" + checkinCell(a) + "</td>" +
         "<td>" + esc(count(a.modelCooldowns)) + "</td>" +
         "<td>" + esc(fmtTime(a.lastRefreshTime)) + "</td>" +
         "<td>" + esc(count(a.refreshFailCount)) + "</td>" +
         "<td><button class=\"ghost danger\" type=\"button\" data-account-delete=\"" +
-        esc(a.path) + "\">删除</button></td>" +
+        esc(a.path) + "\">Delete</button></td>" +
         "</tr>";
     }).join("");
     updateTableBody(tb, html);
@@ -1484,12 +1484,12 @@
 
   function quotaAmount(account, kind) {
     if (!account.quotaKnown) return "-";
-    if (account.quotaUnlimited && (kind === "total" || kind === "remaining")) return "不限";
+    if (account.quotaUnlimited && (kind === "total" || kind === "remaining")) return "Unlimited";
     var value = kind === "total" ? account.quotaTotal : (kind === "used" ? account.quotaUsed : account.quotaRemaining);
     return count(value);
   }
 
-  // ---- 渲染：模型 --------------------------------------------------------
+  // ---- Rendering: models --------------------------------------------------------
   function focusedPolicyTarget(table) {
     var element = document.activeElement;
     return element && table.contains(element) && element.classList.contains("policy-switch") ?
@@ -1506,10 +1506,10 @@
   function policySwitch(kind, target, enabled, reason) {
     return '<button type="button" role="switch" class="policy-switch" data-kind="' + esc(kind) +
       '" data-target="' + esc(target) + '" aria-checked="' + enabled + '" aria-label="' +
-      esc((kind === "account" ? "账号 " : "模型 ") + target + " 调度开关") +
-      '" title="' + esc(reason || (enabled ? "允许调度" : "已停用")) + '"' +
+      esc((kind === "account" ? "Account " : "Model ") + target + " scheduling switch") +
+      '" title="' + esc(reason || (enabled ? "Scheduling allowed" : "Disabled")) + '"' +
       (state.togglePending ? " disabled" : "") + '><span class="switch-track" aria-hidden="true"></span>' +
-      (enabled ? "已开启" : "已停用") + '</button>';
+      (enabled ? "Enabled" : "Disabled") + '</button>';
   }
 
   function togglePolicy(event) {
@@ -1524,11 +1524,11 @@
     document.querySelectorAll(".policy-switch").forEach(function (b) { b.disabled = true; });
     return api(endpoint, {method: "POST", body: {target: target, enabled: enabled}})
       .then(function () {
-        // 保存成功才修改控件，不将失败伪装成已生效。
+        // Only update the control after a successful save; never mask a failure as applied.
         button.setAttribute("aria-checked", String(enabled));
-        button.lastChild.textContent = enabled ? "已开启" : "已停用";
-        showAlert("已写入 config.json，" + (kind === "account" ? "账号全局调度" : "模型") +
-          (enabled ? "已开启。" : "已停用。") + "已有请求不被中断。", true);
+        button.lastChild.textContent = enabled ? "Enabled" : "Disabled";
+        showAlert("Written to config.json; " + (kind === "account" ? "account global scheduling" : "model") +
+          (enabled ? " enabled." : " disabled.") + " Running requests are not interrupted.", true);
       }).catch(function () {}).then(function () {
         state.togglePending = false;
         state.policyVersion++;
@@ -1547,11 +1547,11 @@
     var tb = $("modelsTable").querySelector("tbody");
     var focusTarget = focusedPolicyTarget(tb);
     $("modelPolicyHint").textContent = data.policyMode === "allowlist" ?
-      "当前使用模型白名单，开关反映白名单规则。首次修改开关会删除 models.allowlist，将当前模型列表的启停状态转为 models.blocklist；以后新增模型默认开启。" :
-      "模型开关写入 models.blocklist 并立即生效；停用模型保留统计记录，取消筛选可查看全部模型，客户端模型目录会隐藏停用项。";
+      "A model allowlist is active; toggles reflect allowlist rules. The first toggle deletes models.allowlist and converts the current on/off states into models.blocklist; models added later default to enabled." :
+      "Model toggles are written to models.blocklist and take effect immediately; disabled models keep their stats records, uncheck the filter to see all models, and the client model catalog hides disabled ones.";
     if (!list.length) {
       updateTableBody(tb, '<tr><td colspan="10" class="empty">' +
-        (onlyUsable ? "没有符合条件的可用模型，取消勾选可查看全部模型。" : "暂无模型数据") + '</td></tr>');
+        (onlyUsable ? "No usable models match the filter; uncheck the option to see all models." : "No model data yet") + '</td></tr>');
       return;
     }
     var html = list.map(function (m) {
@@ -1571,21 +1571,21 @@
     updateTableBody(tb, html);
     restorePolicyFocus(tb, focusTarget);
     restoreRateDetails(tb);
-    if (data.stale) showAlert("模型统计快照过旧，当前展示的是上次数据。", false, "/admin/api/models");
+    if (data.stale) showAlert("The model stats snapshot is too old; showing the previous data.", false, "/admin/api/models");
   }
 
-  // ---- 倍率来源：全部取自普通日志，没有记录就显示「没有日志」 -------------------
+  // ---- Multiplier sources: all from regular logs; show "No logs" when there is no record -------------------
   function rateKey(site, model) {
     return site + "|" + String(model || "").trim().toLowerCase();
   }
 
   function rateCell(site, model, text) {
-    var label = site === "cn" ? "国内" : "国际";
+    var label = site === "cn" ? "Domestic" : "International";
     return "<td class='rate-cell'><div class='rate-line'><span class='rate-value'>" + esc(text || "-") +
       "</span><button type='button' class='rate-info' data-rate-site='" + esc(site) +
-      "' data-rate-model='" + esc(model) + "' aria-expanded='false' aria-label='查看" + label +
-      "倍率数据来源与更新时间'>!</button></div>" +
-      "<div class='rate-detail hidden' role='region' aria-label='" + label + "倍率来源详情'></div></td>";
+      "' data-rate-model='" + esc(model) + "' aria-expanded='false' aria-label='View " + label +
+      " multiplier data source and update time'>!</button></div>" +
+      "<div class='rate-detail hidden' role='region' aria-label='" + label + " multiplier source details'></div></td>";
   }
 
   function ensureRateDetails() {
@@ -1606,20 +1606,20 @@
   function rateDetailHTML(payload, site, model) {
     var info = payload && payload.rates ? payload.rates[rateKey(site, model)] : null;
     if (!info || !info.hasLog) {
-      return "<p class='rate-none'>没有日志</p><p class='hint'>" +
-        esc(payload && payload.noLogHint || "普通日志中没有该模型的倍率记录。") + "</p>";
+      return "<p class='rate-none'>No logs</p><p class='hint'>" +
+        esc(payload && payload.noLogHint || "No multiplier record for this model in the regular logs.") + "</p>";
     }
-    // 不再标注「状态：未知」：该结论是实测过的，写「未知」会让人误以为从未检测。
-    var meta = "<div class='rate-meta'><span>来源：" + esc(info.source) + "</span>" +
-      "<span>更新时间：" + esc(fmtTime(info.updatedAt)) + "</span></div>";
+    // No longer label a "Status: unknown": the conclusion was actually measured; "unknown" would suggest it was never checked.
+    var meta = "<div class='rate-meta'><span>Source: " + esc(info.source) + "</span>" +
+      "<span>Updated: " + esc(fmtTime(info.updatedAt)) + "</span></div>";
     var html = meta;
     if (info.explain) html += "<p class='rate-explain'>" + esc(info.explain) + "</p>";
     if (info.unknown && info.refreshHint) {
-      html += "<p class='rate-refresh'><strong>如何刷新：</strong>" + esc(info.refreshHint) + "</p>";
+      html += "<p class='rate-refresh'><strong>How to refresh: </strong>" + esc(info.refreshHint) + "</p>";
     }
     var others = info.others || [];
     if (others.length) {
-      html += "<div class='rate-others'><div class='rate-logs-title'>其他记录</div><ul>" +
+      html += "<div class='rate-others'><div class='rate-logs-title'>Other records</div><ul>" +
         others.map(function (record) {
           return "<li>" + esc(record.source) + " · " + esc(fmtTime(record.updatedAt)) + " · " +
             esc(record.explain || record.value || "") + "</li>";
@@ -1627,10 +1627,10 @@
     }
     var raw = (info.records || []).filter(function (record) { return record.logLine; });
     if (raw.length) {
-      // 轮询会重建表格，展开状态必须自己记住，否则每次刷新都会被自动折叠。
+      // Polling rebuilds the table, so the expanded state must be remembered here or every refresh would collapse it.
       var rawOpen = state.openRawLogs[rateKey(site, model)] === true;
       html += "<details class='rate-raw'" + (rawOpen ? " open" : "") +
-        "><summary>原始日志（" + raw.length + " 条，默认折叠）</summary><ul>" +
+        "><summary>Raw logs (" + raw.length + " lines, collapsed by default)</summary><ul>" +
         raw.map(function (record) { return "<li><code>" + esc(record.logLine) + "</code></li>"; }).join("") +
         "</ul></details>";
     }
@@ -1642,10 +1642,10 @@
     var model = button.getAttribute("data-rate-model");
     panel.classList.remove("hidden");
     button.setAttribute("aria-expanded", "true");
-    panel.innerHTML = "<p class='hint'>读取日志中…</p>";
+    panel.innerHTML = "<p class='hint'>Reading logs…</p>";
     ensureRateDetails().then(function (payload) {
       panel.innerHTML = rateDetailHTML(payload, site, model);
-      // details 的 toggle 事件不冒泡，只能在渲染后逐个绑定，用于记住展开状态。
+      // The details toggle event does not bubble, so bind each one after rendering to remember the expanded state.
       var details = panel.querySelector("details.rate-raw");
       if (details) {
         details.addEventListener("toggle", function () {
@@ -1658,7 +1658,7 @@
         });
       }
     }).catch(function () {
-      panel.innerHTML = "<p class='hint'>日志读取失败，请稍后重试；没有数据时不猜测来源。</p>";
+      panel.innerHTML = "<p class='hint'>Failed to read logs; please try again later. With no data, the source is not guessed.</p>";
     });
   }
 
@@ -1693,7 +1693,7 @@
     });
   }
 
-  // ---- 渲染：日志 --------------------------------------------------------
+  // ---- Rendering: logs --------------------------------------------------------
   function loadLogs(initial) {
     var file = initial ? "" : $("logFile").value;
     var lines = $("logLines").value;
@@ -1708,26 +1708,26 @@
         if (data.file) sel.value = data.file;
       }
       var box = $("logBox");
-      if (data.error) { box.textContent = "\u8bfb\u53d6\u65e5\u5fd7\u5931\u8d25: " + data.error; return; }
+      if (data.error) { box.textContent = "Failed to read logs: " + data.error; return; }
       var lines = (data.lines || []).slice().reverse();
-      box.textContent = lines.length ? lines.join("\n") : "\u8be5\u6587\u4ef6\u6682\u65e0\u65e5\u5fd7\u3002";
+      box.textContent = lines.length ? lines.join("\n") : "No logs in this file yet.";
       box.scrollTop = 0;
-      if (data.truncated) showAlert("\u65e5\u5fd7\u8fbe\u5230\u672c\u6b21\u8bfb\u53d6\u9884\u7b97\uff0c\u53ea\u5c55\u793a\u90e8\u5206\u884c\uff1b\u539f\u65e5\u5fd7\u6587\u4ef6\u672a\u4fee\u6539\u3002");
+      if (data.truncated) showAlert("The log read reached this run\u2019s budget; showing only some lines. The original log file is unchanged.");
     }).catch(function () {
       if (!initial && file) return loadLogs(true);
     });
   }
 
-  // ---- 渲染：配置 --------------------------------------------------------
+  // ---- Rendering: config --------------------------------------------------------
   function loadConfig() {
     var version = ++state.configPreviewVersion;
     return api("/admin/api/config").then(function (data) {
       if (version !== state.configPreviewVersion) return;
       var box = $("configBox");
-      if (!data.exists) { box.textContent = "未找到 " + (data.path || "config.json"); return; }
+      if (!data.exists) { box.textContent = "Not found: " + (data.path || "config.json"); return; }
       box.textContent = data.content;
     }).catch(function () {
-      // 保留上次内容。
+      // Keep the previous content.
     });
   }
 
@@ -1741,7 +1741,7 @@
       $(id).disabled = busy;
     });
     $("configEditor").readOnly = busy;
-    $("saveConfig").textContent = busy && state.configMode === "edit" ? "处理中…" : "校验并保存";
+    $("saveConfig").textContent = busy && state.configMode === "edit" ? "Processing…" : "Validate and save";
   }
 
   function resetConfigEditor() {
@@ -1755,7 +1755,7 @@
     $("configEditorPanel").classList.add("hidden");
     $("configBox").classList.remove("hidden");
     $("editConfig").classList.remove("hidden");
-    $("configTitle").textContent = "config.json（预览 · Key 已隐藏）";
+    $("configTitle").textContent = "config.json (preview · keys hidden)";
     $("cancelConfigEdit").disabled = false;
     setConfigBusy(false);
   }
@@ -1773,7 +1773,7 @@
 
   function exitConfigEdit() {
     if (state.configPending && state.configMode === "edit") return false;
-    if (configDirty() && !window.confirm("有未保存的配置修改。退出会丢弃这些修改，是否继续？")) return false;
+    if (configDirty() && !window.confirm("There are unsaved config changes. Exiting discards them. Continue?")) return false;
     reportUIEvent("config_edit_cancelled", "/admin/api/config-edit", 0, traceID());
     resetConfigEditor();
     hideAlert();
@@ -1782,13 +1782,13 @@
 
   function loadConfigEditor() {
     if (state.configPending || state.configMode === "preview") return Promise.resolve();
-    if (configDirty() && !window.confirm("重新加载会丢弃未保存的修改，是否继续？")) return Promise.resolve();
+    if (configDirty() && !window.confirm("Reloading discards unsaved changes. Continue?")) return Promise.resolve();
     var version = ++state.configVersion;
     var trace = traceID();
     setConfigBusy(true);
     reportUIEvent("config_edit_acknowledged", "/admin/api/config-edit", 0, trace);
-    $("configEditorStatus").textContent = "正在加载服务器配置…";
-    $("configResult").textContent = "正在加载服务器配置…";
+    $("configEditorStatus").textContent = "Loading the server config…";
+    $("configResult").textContent = "Loading the server config…";
     return api("/admin/api/config-edit?acknowledged=1", {trace: trace}).then(function (data) {
       if (version !== state.configVersion) return;
       state.configRevision = data.revision;
@@ -1799,12 +1799,12 @@
       $("configBox").classList.add("hidden");
       $("configEditorPanel").classList.remove("hidden");
       $("editConfig").classList.add("hidden");
-      $("configTitle").textContent = "config.json（编辑 · 包含真实 Key）";
-      $("configEditorStatus").textContent = "已加载原文。保存前会校验配置和版本；其他页面或服务器修改过配置时将拒绝覆盖。";
+      $("configTitle").textContent = "config.json (editing · contains real keys)";
+      $("configEditorStatus").textContent = "Raw content loaded. The config and revision are validated before saving; if another page or the server changed the config, the save is rejected.";
       $("configResult").textContent = "";
     }).catch(function (err) {
       if (version !== state.configVersion) return;
-      var message = "加载失败：" + (err.detail || err.message) + "。已有输入保留。";
+      var message = "Load failed: " + (err.detail || err.message) + ". Existing input preserved.";
       $("configEditorStatus").textContent = message;
       $("configResult").textContent = message;
     }).then(function () {
@@ -1821,37 +1821,37 @@
     var parsed;
     try {
       parsed = JSON.parse(content);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("必须是单个 JSON 对象");
-      if (new TextEncoder().encode(content).length > 1048576) throw new Error("超过 1 MiB");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Must be a single JSON object");
+      if (new TextEncoder().encode(content).length > 1048576) throw new Error("Exceeds 1 MiB");
     } catch (_) {
-      $("configEditorStatus").textContent = "配置未保存：请输入不超过 1 MiB 的完整 JSON 对象，请检查引号、逗号和括号。";
+      $("configEditorStatus").textContent = "Config not saved: enter a complete JSON object of at most 1 MiB; check quotes, commas, and brackets.";
       reportUIEvent("config_validation_failed", "/admin/api/config-edit", 400, trace);
       return Promise.resolve();
     }
     var nextAdminKey = parsed.gateway && parsed.gateway.adminKey || "";
     var adminKeyChanged = nextAdminKey !== state.apiKey;
     var removal = !nextAdminKey;
-    if (removal && !window.confirm("你正在清空管理 Key（或删除 gateway.adminKey）。保存后管理登录将不可用，需要在服务器本机重新设置。确认清空？")) {
+    if (removal && !window.confirm("You are clearing the admin Key (or deleting gateway.adminKey). After saving, admin login will be unavailable until it is reset on the server itself. Clear it?")) {
       reportUIEvent("config_edit_cancelled", "/admin/api/config-edit", 0, trace);
       return Promise.resolve();
     }
-    if (!window.confirm("确认将整份配置写入服务器 config.json？\n密钥、规则、提示词和监听端口都会立即热切换；已有连接与流式请求继续完成。日志保留规则可能触发不可撤销的删除。" +
-        (adminKeyChanged ? "\n管理 Key 已修改，保存后需要重新登录，请先妥善保存新 Key。" : ""))) {
+    if (!window.confirm("Write the entire config to the server\u2019s config.json?\nKeys, rules, prompts, and listening ports hot-reload immediately; existing connections and streaming requests finish. Log retention rules may trigger irreversible deletion." +
+        (adminKeyChanged ? "\nThe admin Key changed; you must log in again after saving. Store the new Key safely first." : ""))) {
       reportUIEvent("config_edit_cancelled", "/admin/api/config-edit", 0, trace);
       return Promise.resolve();
     }
     var version = state.configVersion;
     setConfigBusy(true);
     $("cancelConfigEdit").disabled = true;
-    $("configEditorStatus").textContent = "正在校验并保存…";
+    $("configEditorStatus").textContent = "Validating and saving…";
     return api("/admin/api/config-edit", {method: "POST", trace: trace,
       body: {content: content, revision: state.configRevision, acknowledged: true, confirmAdminKeyRemoval: removal}
     }).then(function (data) {
       if (version !== state.configVersion) return;
       var message = (data.settings && data.settings.restartRequired ?
-        "配置已保存，但监听端口尚未热切换，请检查服务器日志。" :
-        "配置已保存，全部配置项已热生效，监听端口已同步。") +
-        (data.settings && data.settings.apiPortOverridden ? " API 端口受 -port 启动参数覆盖。" : "");
+        "Config saved, but the listening port has not hot-switched yet; check the server logs." :
+        "Config saved; all settings are hot-applied and the listening port is synced.") +
+        (data.settings && data.settings.apiPortOverridden ? " The API port is overridden by the -port startup flag." : "");
       resetConfigEditor();
       $("configResult").textContent = message;
       if (data.adminKeyChanged) {
@@ -1859,8 +1859,8 @@
         sessionStorage.removeItem(KEY_STORAGE);
         $("apiKey").value = "";
         lockDashboard();
-        showAlert(message + (data.adminKeyCleared ? " 管理 Key 已清空，请在服务器本机重新设置。" : " 管理 Key 已修改，请使用新 Key 重新登录。"), true);
-        setConn("需要重新设置管理 Key 或登录", "");
+        showAlert(message + (data.adminKeyCleared ? " The admin Key was cleared; reset it on the server itself." : " The admin Key changed; log in again with the new Key."), true);
+        setConn("Reset the admin Key or log in again", "");
       } else {
         state.settingsLoadVersion++;
         state.logSettingsVersion++;
@@ -1871,8 +1871,8 @@
     }).catch(function (err) {
       if (version !== state.configVersion) return;
       $("configEditorStatus").textContent = err.status === 409 ?
-        "版本冲突：服务器配置已变化。修改未写入，当前输入保留。请先核对修改，再重新加载最新配置。" :
-        "保存未完成：" + (err.detail || err.message) + "。当前输入保留，请检查后重试。";
+        "Version conflict: the server config changed. Your edit was not written and the current input is preserved. Review your changes, then reload the latest config." :
+        "Save not completed: " + (err.detail || err.message) + ". Current input preserved; check and retry.";
     }).then(function () {
       if (version !== state.configVersion) return;
       $("cancelConfigEdit").disabled = false;
@@ -1881,19 +1881,19 @@
   }
 
   function renderTasks(data) {
-    var labels = {success: "成功", failed: "失败", partial: "部分失败", cancelled: "已取消",
-      skipped: "跳过", running: "执行中", disabled: "未启用", unknown: "无执行记录"};
+    var labels = {success: "Success", failed: "Failed", partial: "Partial failure", cancelled: "Cancelled",
+      skipped: "Skipped", running: "Running", disabled: "Not enabled", unknown: "No run record"};
     var classes = {success: "ok", failed: "danger", partial: "warn", cancelled: "warn", running: "warn"};
-    $("tasksInfo").textContent = "服务器日志时区：" + (data.timezone || "-") + "（表内时间按浏览器时区显示） · 刷新 " + fmtTime(data.generatedAt) +
-      (data.truncated ? " · 日志扫描达到预算，缺失记录不代表未执行。" : " · 执行记录以日志为准。");
+    $("tasksInfo").textContent = "Server log timezone: " + (data.timezone || "-") + " (table times shown in the browser timezone) · Refreshed " + fmtTime(data.generatedAt) +
+      (data.truncated ? " · The log scan reached its budget; missing records do not mean the task did not run." : " · Run records follow the logs.");
     $("tasksTable").querySelector("tbody").innerHTML = (data.tasks || []).map(function (task) {
-      var next = task.nextRunAt ? fmtTime(task.nextRunAt) + (task.nextEstimated ? "（推算）" : "") :
-        (!task.enabled ? "未启用" : task.oneShot && task.lastFinishedAt ? "本次启动已完成" : "等待调度日志");
-      return "<tr><td data-label='任务'>" + esc(task.name) + "</td><td data-label='启用'>" + (task.enabled ? "开启" : "关闭") +
-        "</td><td data-label='执行周期' class='task-description'>" + esc(task.schedule) + "</td><td data-label='上次执行记录'>" + esc(fmtTime(task.lastRunAt)) +
-        "</td><td data-label='上次完成'>" + esc(fmtTime(task.lastFinishedAt)) + "</td><td data-label='执行结果'><span class='badge " +
-        (classes[task.status] || "") + "'>" + esc(labels[task.status] || "无执行记录") +
-        "</span></td><td data-label='下次预计执行'>" + esc(next) + "</td><td data-label='日志说明' class='task-description'>" + esc(task.detail || "当前服务尚无该任务日志，或日志已清理") +
+      var next = task.nextRunAt ? fmtTime(task.nextRunAt) + (task.nextEstimated ? " (estimated)" : "") :
+        (!task.enabled ? "Not enabled" : task.oneShot && task.lastFinishedAt ? "Completed for this startup" : "Waiting for scheduling logs");
+      return "<tr><td data-label='Task'>" + esc(task.name) + "</td><td data-label='Enabled'>" + (task.enabled ? "On" : "Off") +
+        "</td><td data-label='Schedule' class='task-description'>" + esc(task.schedule) + "</td><td data-label='Last run'>" + esc(fmtTime(task.lastRunAt)) +
+        "</td><td data-label='Last completed'>" + esc(fmtTime(task.lastFinishedAt)) + "</td><td data-label='Result'><span class='badge " +
+        (classes[task.status] || "") + "'>" + esc(labels[task.status] || "No run record") +
+        "</span></td><td data-label='Next expected run'>" + esc(next) + "</td><td data-label='Log notes' class='task-description'>" + esc(task.detail || "No logs for this task in the current service yet, or the logs were cleaned up") +
         (task.logFile ? "<br><span class='mono'>" + esc(task.logFile) + "</span>" : "") + "</td></tr>";
     }).join("");
   }
@@ -1918,36 +1918,36 @@
   function saveLogSettings() {
     var days = Number($("logRetentionDays").value);
     if ($("logRetentionDays").value.trim() === "" || !Number.isInteger(days) || days < 0 || days > 36500) {
-      showAlert("保留天数必须是 0～36500 的整数，0 表示保留全部。");
+      showAlert("Retention days must be an integer from 0 to 36500; 0 keeps everything.");
       reportUIEvent("log_validation_failed", "/admin/api/log-settings", 0, traceID());
       return;
     }
-    if (days > 0 && !window.confirm("保存后会自动删除超出 " + days + " 天的项目日志，删除不可撤销。是否继续？")) return;
+    if (days > 0 && !window.confirm("Saving will automatically delete project logs older than " + days + " days; deletion is irreversible. Continue?")) return;
     $("saveLogSettings").disabled = true;
     return api("/admin/api/log-settings", {method: "POST", body: {retentionDays: days}})
       .then(function (data) {
         state.logSettings = data;
-        $("logCleanupResult").textContent = "已写入 config.json。保留天数：" + days + (days === 0 ? "（不自动清理）。" : " 天，自动清理已启用。");
+        $("logCleanupResult").textContent = "Written to config.json. Retention: " + days + (days === 0 ? " (no automatic cleanup)." : " days; automatic cleanup enabled.");
       }).catch(function () {}).then(function () { $("saveLogSettings").disabled = false; });
   }
 
   function cleanupExpiredLogs() {
     var days = state.logSettings && state.logSettings.retentionDays;
     if (!days) {
-      $("logCleanupResult").textContent = "当前配置保留全部，不会删除任何日志。请先保存正数保留天数。";
+      $("logCleanupResult").textContent = "The current config keeps everything and deletes no logs. Save a positive retention number first.";
       reportUIEvent("log_validation_failed", "/admin/api/log-cleanup", 0, traceID());
       return;
     }
-    if (!window.confirm("按已保存的 " + days + " 天保留规则删除过期项目日志，删除不可撤销。是否继续？")) return;
+    if (!window.confirm("Expired project logs will be deleted per the saved " + days + "-day retention rule; deletion is irreversible. Continue?")) return;
     $("cleanupLogs").disabled = true;
     return api("/admin/api/log-cleanup", {method: "POST", body: {}}).then(function (data) {
-      $("logCleanupResult").textContent = "已删除 " + data.deleted + " 个日志文件，回收 " + data.deletedBytes +
-        " 字节；跳过正在写入 " + data.skippedActive + " 个，失败 " + data.failed + " 个。";
+      $("logCleanupResult").textContent = "Deleted " + data.deleted + " log files and reclaimed " + data.deletedBytes +
+        " bytes; skipped " + data.skippedActive + " being written, " + data.failed + " failed.";
       loadLogs(true);
     }).catch(function () {}).then(function () { $("cleanupLogs").disabled = false; });
   }
 
-  // ---- 路由与轮询 --------------------------------------------------------
+  // ---- Routing and polling --------------------------------------------------------
   function refreshActive() {
     if (!state.apiKey || state.refreshPending || state.togglePending) return Promise.resolve();
     if (state.activeTab === "tasks" && Date.now() - state.tasksLastPoll < 15000) return Promise.resolve();
@@ -1959,7 +1959,7 @@
         renderPoolHealth({stale: true});
       }
       if ($("conn").className.indexOf("danger") === -1) {
-        setConn("连接失败", "danger");
+        setConn("Connection failed", "danger");
       }
     };
     var pending = Promise.resolve();
@@ -1967,7 +1967,7 @@
       pending = api("/admin/api/status").then(function (data) {
         if (!state.togglePending && policyVersion === state.policyVersion) renderStatus(data);
       }).catch(onErr).then(function () {
-        // 统计是附加信息：不并入 refreshActive 的完成链，避免统计变慢时拖住状态轮询。
+        // Stats are auxiliary: keep them out of refreshActive's completion chain so slow stats never stall status polling.
         if (state.activeTab === "overview") {
           loadStats(false);
           loadAccountAlerts();
@@ -2011,14 +2011,14 @@
     state.settings = data;
     $("apiKeyEnabled").checked = data.apiKeyEnabled;
     $("modelAPIKey").value = "";
-    $("apiKeyState").textContent = data.apiKeyConfigured ? "已配置 API Key，留空将保留原值。" : "尚未配置 API Key。";
+    $("apiKeyState").textContent = data.apiKeyConfigured ? "API Key configured; leaving it blank keeps the current value." : "API Key not configured yet.";
     $("apiPortValue").textContent = data.apiPort;
     $("webPortValue").textContent = data.webPort;
     $("configuredApiPort").value = data.configuredApiPort || data.apiPort;
     $("configuredWebPort").value = data.configuredWebPort || data.webPort;
-    $("portSettingsStatus").textContent = (data.restartRequired ? "端口配置尚未切换，请检查服务器日志。 " :
-      "配置端口与实际监听一致。 ") + (data.apiPortOverridden ? "API 端口被启动参数 -port 覆盖，配置值不会改变实际监听。 " : "") +
-      "修改并保存后立即热切换监听；已有连接和流式请求继续完成，请用新端口重新打开控制台。";
+    $("portSettingsStatus").textContent = (data.restartRequired ? "The port config has not switched yet; check the server logs. " :
+      "The configured ports match the actual listeners. ") + (data.apiPortOverridden ? "The API port is overridden by the -port startup flag; the config value will not change the actual listener. " : "") +
+      "After editing and saving, the listener hot-switches immediately; existing connections and streaming requests finish. Reopen the console on the new port.";
   }
 
   function loadSettings() {
@@ -2040,7 +2040,7 @@
     var enabled = $("apiKeyEnabled").checked;
     var key = $("modelAPIKey").value;
     if (enabled && !key && !(state.settings && state.settings.apiKeyConfigured)) {
-      showAlert("开启 API Key 校验前必须输入一个 Key。");
+      showAlert("Enter a Key before enabling API Key verification.");
       reportUIEvent("settings_validation_failed", "/admin/api/settings", 0, traceID());
       return;
     }
@@ -2048,7 +2048,7 @@
     return api("/admin/api/settings", {method: "POST", body: {apiKeyEnabled: enabled, apiKey: key}})
       .then(function (data) {
         renderSettings(data);
-        showAlert("已写入 config.json，API 鉴权设置立即生效；管理鉴权未改变。", true);
+        showAlert("Written to config.json; API auth settings take effect immediately. Admin auth is unchanged.", true);
       }).catch(function () {}).then(function () { setSettingsBusy(false); });
   }
 
@@ -2057,7 +2057,7 @@
     var webPort = Number($("configuredWebPort").value);
     if (!Number.isInteger(apiPort) || !Number.isInteger(webPort) || apiPort < 1 || apiPort > 65535 ||
       webPort < 1 || webPort > 65535 || apiPort === webPort) {
-      showAlert("端口必须是 1～65535 的整数，且 API 与 Web 端口不能相同。");
+      showAlert("Ports must be integers from 1 to 65535, and the API and Web ports must be different.");
       reportUIEvent("settings_validation_failed", "/admin/api/settings", 0, traceID());
       return;
     }
@@ -2065,17 +2065,17 @@
     return api("/admin/api/settings", {method: "POST", body: {apiPort: apiPort, webPort: webPort}})
       .then(function (data) {
         renderSettings(data);
-        showAlert("端口已写入 config.json 并热切换；已有连接继续完成，请用新端口重新打开控制台。", true);
+        showAlert("Ports written to config.json and hot-switched; existing connections finish. Reopen the console on the new port.", true);
       }).catch(function () {}).then(function () { setSettingsBusy(false); });
   }
 
-  // 管理 Key 仅保存在当前标签页会话，验证成功后才保存。
+  // The admin Key is kept only in this tab's session and stored only after successful verification.
   function saveKey() {
     if (state.configMode !== "preview" && !exitConfigEdit()) return Promise.resolve();
     var key = $("apiKey").value.trim();
-    if (!key) { showAlert("请输入管理 Key。"); return Promise.resolve(); }
+    if (!key) { showAlert("Please enter the admin Key."); return Promise.resolve(); }
     state.apiKey = key;
-    setConn("校验中…", "");
+    setConn("Verifying…", "");
     return api("/admin/api/settings").then(function (data) {
       sessionStorage.setItem(KEY_STORAGE, key);
       reportRestoredListFilters();
@@ -2083,13 +2083,13 @@
       $("tabs").classList.remove("hidden");
       $("dashboard").classList.remove("hidden");
       $("setupPanel").classList.add("hidden");
-      showAlert("管理鉴权通过。", true);
+      showAlert("Admin auth passed.", true);
       refreshActive();
     }).catch(function () {
-      // api() 已提示 401 / HTTP 错误；这里补充网络类错误。
+      // api() already reports 401 / HTTP errors; here we add network-class errors.
       if ($("conn").className.indexOf("danger") === -1) {
-        setConn("连接失败", "danger");
-        showAlert("无法连接管理端口，请检查访问地址与 Web 端口。");
+        setConn("Connection failed", "danger");
+        showAlert("Cannot reach the admin port; check the access address and Web port.");
       }
     });
   }
@@ -2097,9 +2097,9 @@
   function initializeAdmin() {
     $("initializeAdmin").disabled = true;
     return api("/admin/api/setup", {method: "POST", body: {}}).then(function (data) {
-      // 原文仅本次弹窗显示，不写 console、日志或 localStorage。
-      window.alert("管理 Key 已成功写入 config.json：\n\n" + data.adminKey +
-        "\n\n请妥善保存。这是唯一一次自动展示；遗忘时请在服务器本机查看 config.json。");
+      // The raw Key is shown only in this popup; never written to console, logs, or localStorage.
+      window.alert("The admin Key was successfully written to config.json:\n\n" + data.adminKey +
+        "\n\nStore it safely. This is the only time it is shown automatically; if forgotten, view config.json on the server itself.");
       $("apiKey").value = data.adminKey;
       return saveKey();
     }).catch(function () {}).then(function () { $("initializeAdmin").disabled = false; });
@@ -2113,18 +2113,18 @@
         lockDashboard();
         $("setupPanel").classList.remove("hidden");
         $("initializeAdmin").disabled = !data.canInitialize;
-        setConn("等待初始化", "");
+        setConn("Waiting for initialization", "");
         if (!data.canInitialize) {
-          showAlert("当前不是本机访问，无法在此页面自动生成管理 Key。可选方式：" +
-            "① 在服务器本机打开本页面；② 用 SSH 本地端口转发（ssh -L 8316:127.0.0.1:8316 用户@服务器）后访问；" +
-            "③ 直接在服务器上编辑 config.json，把 gateway.adminKey 设为随机字符串，保存后约 1 秒生效。");
+          showAlert("This is not a local connection, so the admin Key cannot be generated automatically on this page. Options:" +
+            " ① open this page on the server itself; ② use SSH local port forwarding (ssh -L 8316:127.0.0.1:8316 user@server) and access it;" +
+            " ③ edit config.json directly on the server, set gateway.adminKey to a random string, and it takes effect about 1 second after saving.");
         }
       } else if (state.apiKey) {
         saveKey();
       } else {
         lockDashboard();
-        setConn("等待管理登录", "");
-        showAlert("请输入 config.json 中的 gateway.adminKey。");
+        setConn("Waiting for admin login", "");
+        showAlert("Enter the gateway.adminKey from config.json.");
       }
     }).catch(function () {});
   }
@@ -2141,7 +2141,7 @@
   }
 
   function init() {
-    // 清理旧版同源页面遗留的模型 API Key，不把它误当成管理 Key。
+    // Clean up model API Keys left by older same-origin pages; never mistake them for the admin Key.
     localStorage.removeItem("wb_gateway_api_key");
     initListFilters();
     initStatsFilter();
@@ -2154,7 +2154,7 @@
     $("statsApply").addEventListener("click", function () { changeStatsFilter(false); });
     $("statsPeriod").addEventListener("change", function () { changeStatsFilter(true); });
     $("statsAccount").addEventListener("change", function () { changeStatsFilter(false); });
-    // 图表 viewBox 跟随容器宽度，窗口尺寸变化后重绘一次（用 rAF 合并连续事件）。
+    // The chart viewBox follows the container width; redraw once after window resizes (rAF coalesces bursts).
     var statsResizePending = false;
     window.addEventListener("resize", function () {
       if (!state.lastStats || statsResizePending) return;
@@ -2182,7 +2182,7 @@
     $("reloadConfigEditor").addEventListener("click", loadConfigEditor);
     $("saveConfig").addEventListener("click", saveConfigEditor);
     $("configEditor").addEventListener("input", function () {
-      $("configEditorStatus").textContent = configDirty() ? "有未保存的修改。离开配置页会提示确认；不会自动保存。" : "内容未修改。";
+      $("configEditorStatus").textContent = configDirty() ? "There are unsaved changes. Leaving the config panel asks for confirmation; nothing is saved automatically." : "Content unchanged.";
     });
     window.addEventListener("beforeunload", function (event) {
       if (!configDirty() && !state.configPending) return;

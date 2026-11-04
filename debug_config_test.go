@@ -29,10 +29,10 @@ func TestDebugConfigTolerantValues(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := parseRuntimeConfig([]byte(tc.document))
 			if err != nil {
-				t.Fatalf("容错配置不应阻断启动: %v", err)
+				t.Fatalf("tolerant config must not block startup: %v", err)
 			}
 			if c.Debug.Enabled != tc.enabled || c.Debug.FullRequests != tc.full {
-				t.Fatalf("debug 解析错误: %+v，期望 enabled=%t fullRequests=%t", c.Debug, tc.enabled, tc.full)
+				t.Fatalf("debug parse error: %+v, want enabled=%t fullRequests=%t", c.Debug, tc.enabled, tc.full)
 			}
 		})
 	}
@@ -50,17 +50,17 @@ func TestMissingConfigDefaultsDebugOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := loadRuntimeConfig(runtimeConfigFile); err != nil {
-		t.Fatalf("缺少 config.json 时不应阻断启动: %v", err)
+		t.Fatalf("startup must not be blocked when config.json is missing: %v", err)
 	}
 	if cfg.DebugEnabled || debugFullRequests.Load() {
-		t.Fatal("缺少配置时完整请求日志必须默认关闭")
+		t.Fatal("full request logging must default to off when config is missing")
 	}
 }
 
 func TestConfigExampleDeclaresDebugPlaceholders(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "config.example.json"))
 	if os.IsNotExist(err) {
-		t.Skip("config.example.json 不在隔离回归目录，仓库内测试会覆盖该文件")
+		t.Skip("config.example.json is outside the isolated regression directory; repo tests would overwrite that file")
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -71,15 +71,15 @@ func TestConfigExampleDeclaresDebugPlaceholders(t *testing.T) {
 	}
 	debug, ok := document["debug"]
 	if !ok {
-		t.Fatal("config.example.json 缺少 debug 段")
+		t.Fatal("config.example.json is missing the debug section")
 	}
 	for _, key := range []string{"enabled", "fullRequests"} {
 		value, ok := debug[key]
 		if !ok {
-			t.Fatalf("config.example.json 缺少 debug.%s", key)
+			t.Fatalf("config.example.json is missing debug.%s", key)
 		}
 		if string(value) != "false" {
-			t.Fatalf("默认占位必须是 false: debug.%s=%s", key, value)
+			t.Fatalf("default placeholder must be false: debug.%s=%s", key, value)
 		}
 	}
 }

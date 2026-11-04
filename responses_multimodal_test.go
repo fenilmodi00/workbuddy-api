@@ -10,13 +10,13 @@ import (
 func TestResponsesToolOutputKeepsTextAndPromotesImages(t *testing.T) {
 	url := "data:image/png;base64," + strings.Repeat("A", 4096)
 	output := []any{
-		map[string]any{"type": "input_text", "text": "完整工具说明"},
+		map[string]any{"type": "input_text", "text": "full tool notes"},
 		map[string]any{"type": "input_image", "image_url": url, "detail": "high"},
-		map[string]any{"type": "input_text", "text": "图片之后的说明"},
+		map[string]any{"type": "input_text", "text": "notes after the image"},
 	}
 	before, _ := json.Marshal(output)
 	text, images := convertResponsesToolOutput(output)
-	if text != "完整工具说明\n图片之后的说明" || len(images) != 1 {
+	if text != "full tool notes\nnotes after the image" || len(images) != 1 {
 		t.Fatalf("text/vision conversion wrong: text=%q images=%d", text, len(images))
 	}
 	image := images[0].(map[string]any)["image_url"].(map[string]any)
@@ -40,12 +40,12 @@ func TestResponsesToolOutputPreservesLegacyAndUnknownData(t *testing.T) {
 		}
 	}
 	output := []any{
-		map[string]any{"type": "text", "text": "原文"},
+		map[string]any{"type": "text", "text": "original text"},
 		map[string]any{"type": "unknown", "value": 42},
 		map[string]any{"type": "input_image", "image_url": ""},
 	}
 	text, images := convertResponsesToolOutput(output)
-	if !strings.Contains(text, "原文") || !strings.Contains(text, `"value":42`) ||
+	if !strings.Contains(text, "original text") || !strings.Contains(text, `"value":42`) ||
 		!strings.Contains(text, `"image_url":""`) || len(images) != 0 {
 		t.Fatal("unknown or malformed blocks were silently dropped")
 	}
@@ -59,7 +59,7 @@ func TestResponsesImageOnlyToolResultHasNonemptyText(t *testing.T) {
 		messages := convertResponsesInputItem(map[string]any{
 			"type": "function_call_output", "call_id": "call_a", "output": []any{image},
 		})
-		if len(messages) != 2 || messages[0].(map[string]any)["content"] != "[图片]" ||
+		if len(messages) != 2 || messages[0].(map[string]any)["content"] != "[image]" ||
 			messages[0].(map[string]any)["tool_call_id"] != "call_a" ||
 			messages[1].(map[string]any)["role"] != "user" {
 			t.Fatalf("image-only output conversion wrong: %#v", messages)
@@ -69,26 +69,26 @@ func TestResponsesImageOnlyToolResultHasNonemptyText(t *testing.T) {
 
 func TestResponsesEndpointKeepsParallelImageResultsPaired(t *testing.T) {
 	withSystemPrompts(t, "", "")
-	body := `{"model":"deepseek-v4.1-flash","stream":true,"instructions":"完整操作手册",
+	body := `{"model":"deepseek-v4.1-flash","stream":true,"instructions":"full operations manual",
 	"input":[
-		{"role":"user","content":"请比较截图"},
+		{"role":"user","content":"please compare the screenshots"},
 		{"type":"function_call","call_id":"call_a","name":"capture","arguments":"{}"},
 		{"type":"function_call","call_id":"call_b","name":"capture","arguments":"{}"},
 		{"type":"function_call_output","call_id":"call_a","output":[
-			{"type":"input_text","text":"第一张截图说明"},
+			{"type":"input_text","text":"first screenshot notes"},
 			{"type":"input_image","image_url":"data:image/png;base64,AAA","detail":"high"}]},
 		{"type":"function_call_output","call_id":"call_b","output":[
 			{"type":"input_image","image_url":"data:image/png;base64,BBB"}]},
-		{"role":"user","content":"保留后续用户指令"}]}`
+		{"role":"user","content":"keep the following user instruction"}]}`
 	messages := captureUpstreamMessages(t, "/v1/responses", body)
 	wantRoles := []string{"system", "user", "assistant", "tool", "tool", "user", "user", "user"}
 	if !reflect.DeepEqual(rolesOf(map[string]any{"messages": messages}), wantRoles) {
 		t.Fatalf("parallel results were interrupted by images: %#v", rolesOf(map[string]any{"messages": messages}))
 	}
-	if messages[0].(map[string]any)["content"] != "完整操作手册" ||
-		messages[3].(map[string]any)["content"] != "第一张截图说明" ||
-		messages[4].(map[string]any)["content"] != "[图片]" ||
-		messages[7].(map[string]any)["content"] != "保留后续用户指令" {
+	if messages[0].(map[string]any)["content"] != "full operations manual" ||
+		messages[3].(map[string]any)["content"] != "first screenshot notes" ||
+		messages[4].(map[string]any)["content"] != "[image]" ||
+		messages[7].(map[string]any)["content"] != "keep the following user instruction" {
 		t.Fatal("manual, tool text, or later user content changed")
 	}
 	for i, wantURL := range []string{"data:image/png;base64,AAA", "data:image/png;base64,BBB"} {
@@ -102,7 +102,7 @@ func TestResponsesEndpointKeepsParallelImageResultsPaired(t *testing.T) {
 func TestResponsesEndpointSingleToolImageKeepsOrder(t *testing.T) {
 	withSystemPrompts(t, "", "")
 	body := `{"model":"m","stream":true,"input":[
-		{"role":"user","content":"检查图片"},
+		{"role":"user","content":"check the image"},
 		{"type":"function_call","call_id":"call_a","name":"capture","arguments":"{}"},
 		{"type":"function_call_output","call_id":"call_a","output":[
 			{"type":"input_image","image_url":"data:image/png;base64,AAA"}]}]}`

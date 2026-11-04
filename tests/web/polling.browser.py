@@ -54,9 +54,9 @@ with sync_playwright() as pw:
           document.getElementById('tabs').classList.remove('hidden');
           review.state.apiKey='synthetic-admin-key';
           window.accounts=[
-            {path:'synthetic-a.json',nickname:'测试甲',edition:'cn',state:'active',
+            {path:'synthetic-a.json',nickname:'Test A',edition:'cn',state:'active',
               schedulingEnabled:true,quotaKnown:true,quotaTotal:100,quotaUsed:1,quotaRemaining:99},
-            {path:'synthetic-b.json',nickname:'测试乙',edition:'intl',state:'active',
+            {path:'synthetic-b.json',nickname:'Test B',edition:'intl',state:'active',
               schedulingEnabled:true,quotaKnown:true,quotaTotal:200,quotaUsed:2,quotaRemaining:198}];
           review.renderAccounts(accounts);
           const start=1793000000000;
@@ -64,9 +64,9 @@ with sync_playwright() as pw:
             ttftMetric:'first_token_v2',summary:{requests:2,success:2,failed:0,tokens:300,
               inputTokens:200,outputTokens:100,cachedTokens:0,tokenSamples:2,
               credits:1,creditSamples:2,avgLatencyMs:1200,avgTtftMs:300,ttftSamples:2},
-            buckets:[{start,label:'已到时间',requests:2,tokens:300,tokenSamples:2,
+            buckets:[{start,label:'elapsed bucket',requests:2,tokens:300,tokenSamples:2,
               credits:1,creditSamples:2,avgLatencyMs:1200,avgTtftMs:300},
-              {start:start+3600000,label:'未来时间',requests:0}],
+              {start:start+3600000,label:'future bucket',requests:0}],
             models:[],modelLatency:[],accounts:[],storage:{mode:'file'}};
           review.renderStats(stats);
           window.fetch=async()=>({ok:true,status:200,json:async()=>({})});
@@ -74,13 +74,13 @@ with sync_playwright() as pw:
         results = page.evaluate("""async()=>{
           const top=()=>document.getElementById('dashboard').getBoundingClientRect().top;
           review.hideAlert(); const before=top();
-          review.showAlert('合成账号启停成功',true);
+          review.showAlert('Synthetic account toggle succeeded',true);
           const style=getComputedStyle(document.getElementById('alert'));
           const color=style.color.match(/\\d+/g).map(Number);
           const shift=top()-before;
           await review.api('/admin/api/status');
           const successLost=document.getElementById('alert').classList.contains('hidden');
-          review.showAlert('合成开关失败',false,'/admin/api/account-toggle');
+          review.showAlert('Synthetic toggle failed',false,'/admin/api/account-toggle');
           await review.api('/admin/api/status');
           const errorLost=document.getElementById('alert').classList.contains('hidden');
           review.hideAlert();
@@ -119,7 +119,7 @@ with sync_playwright() as pw:
                 calls.push({path,event:path==='/admin/api/client-events'?
                   JSON.parse(options.body).event:undefined});
                 if(path==='/admin/api/account-toggle'){
-                  if(fail)return {ok:false,status:409,json:async()=>({error:'合成冲突，请重试'})};
+                  if(fail)return {ok:false,status:409,json:async()=>({error:'Synthetic conflict, please retry'})};
                   accounts[0].schedulingEnabled=JSON.parse(options.body).enabled;
                   return {ok:true,status:200,json:async()=>({saved:true})};
                 }
@@ -157,10 +157,10 @@ with sync_playwright() as pw:
               const detailButton=modelRow.querySelector('.rate-info');
               const panel=modelRow.querySelector('.rate-detail');
               detailButton.setAttribute('aria-expanded','true');panel.classList.remove('hidden');
-              panel.textContent='合成展开内容';review.state.openRateKeys['cn|null']=true;
+              panel.textContent='synthetic expanded content';review.state.openRateKeys['cn|null']=true;
               modelData.models[0].requests=3;review.renderModels(modelData);
               const detailPreserved=panel===mt.rows[0].querySelector('.rate-detail')&&
-                panel.textContent==='合成展开内容';
+                panel.textContent==='synthetic expanded content';
               review.renderModels({models:modelData.models.slice().reverse()});
               const reordered=mt.rows[0]===modelOther&&mt.rows[1]===modelRow;
               review.renderModels({models:[modelData.models[0]]});
@@ -179,10 +179,10 @@ with sync_playwright() as pw:
               const results=[];
               for(const theme of ['light','dark']){
                 document.documentElement.setAttribute('data-theme',theme);
-                review.showAlert('合成成功提示',true);
+                review.showAlert('Synthetic success notice',true);
                 let color=getComputedStyle(document.getElementById('alert')).color.match(/\\d+/g).map(Number);
                 results.push(color[1]>color[0]);
-                review.showAlert('合成错误提示',false);
+                review.showAlert('Synthetic error notice',false);
                 color=getComputedStyle(document.getElementById('alert')).color.match(/\\d+/g).map(Number);
                 results.push(color[0]>color[1]);
               }
@@ -192,7 +192,7 @@ with sync_playwright() as pw:
             page.set_viewport_size({"width": 390, "height": 900})
             mobile = page.evaluate("""()=>{
               const top=document.getElementById('dashboard').getBoundingClientRect().top;
-              review.showAlert('合成成功提示'.repeat(50),true);
+              review.showAlert('Synthetic success notice'.repeat(50),true);
               const r=document.getElementById('alert').getBoundingClientRect();
               return r.left>=0 && r.right<=innerWidth &&
                 document.getElementById('dashboard').getBoundingClientRect().top===top;

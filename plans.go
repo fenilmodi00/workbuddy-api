@@ -14,31 +14,35 @@ import (
 	"unicode"
 )
 
-const planUnknown = "待确认"
+const planUnknown = "Unconfirmed"
 
-// planEnterprise 只表示「这是企业成员分配额度」，不是个人套餐编码。
-// 企业号查不到个人资源包，不能把查不到误写成免费或试用。
-const planEnterprise = "企业版"
+// planEnterprise only means "this is enterprise-member allocated quota";
+// it is not a personal plan code. Enterprise accounts have no personal
+// resource packages, so a failed lookup must not be reported as free or trial.
+const planEnterprise = "Enterprise"
 
-// 这些编码只用于旧套餐的短名称，不用于请求过滤。新编码仍会被查询，
-// 并优先显示上游 PackageName，避免官网增加套餐后悄悄退回“免费”。
+// These codes are short names for legacy plans only, not request filters.
+// New codes are still queried and the upstream PackageName is shown with
+// priority, so newly added official plans do not silently fall back to "Free".
 var legacyPlanNames = map[string]string{
-	"TCACA_code_001_PqouKr6QWV": "免费",
-	"TCACA_code_035_ArVxJcGDsm": "免费",
-	"TCACA_code_008_cfWoLwvjU4": "免费",
+	"TCACA_code_001_PqouKr6QWV": "Free",
+	"TCACA_code_035_ArVxJcGDsm": "Free",
+	"TCACA_code_008_cfWoLwvjU4": "Free",
 	"TCACA_code_002_AkiJS3ZHF5": "pro",
 	"TCACA_code_003_FAnt7lcmRT": "pro",
-	"TCACA_code_039_KRcQj7wUat": "Pro试用",
-	"TCACA_code_040_mi9rCYg46x": "Pro试用",
+	"TCACA_code_039_KRcQj7wUat": "Pro trial",
+	"TCACA_code_040_mi9rCYg46x": "Pro trial",
 }
 
-// 国内站同一 Pro 编码在官网展示为“标准版”，不能套用国际站名称。
-// 此表仅规范已知四档的显示，不用于过滤查询结果；新编码仍显示官方名称。
+// The same Pro code is shown as "Standard" on the CN official site and must
+// not reuse the international name. This table only normalizes the display of
+// the four known tiers and is not used to filter query results; new codes
+// still show their official names.
 var cnPlanNames = map[string]string{
-	"TCACA_code_008_cfWoLwvjU4": "体验版",
-	"TCACA_code_002_AkiJS3ZHF5": "标准版",
-	"TCACA_code_026_BaESVICNoi": "高级版",
-	"TCACA_code_027_0FCGVA6vSa": "旗舰版",
+	"TCACA_code_008_cfWoLwvjU4": "Trial",
+	"TCACA_code_002_AkiJS3ZHF5": "Standard",
+	"TCACA_code_026_BaESVICNoi": "Premium",
+	"TCACA_code_027_0FCGVA6vSa": "Flagship",
 }
 
 func knownPlanName(site, code string) string {
@@ -50,9 +54,9 @@ func knownPlanName(site, code string) string {
 
 func freePlanName(site string) string {
 	if site == "cn" {
-		return "体验版"
+		return "Trial"
 	}
-	return "免费"
+	return "Free"
 }
 
 var nonPlanCodes = map[string]bool{
@@ -64,7 +68,7 @@ var nonPlanCodes = map[string]bool{
 }
 
 type planResource struct {
-	AccountID          json.RawMessage `json:"AccountId"` // 官网可返回数字或字符串。
+	AccountID          json.RawMessage `json:"AccountId"` // official site may return a number or a string.
 	ResourceID         string          `json:"ResourceId"`
 	PackageCode        string          `json:"PackageCode"`
 	PackageName        string          `json:"PackageName"`
@@ -80,7 +84,7 @@ func planInteger(raw json.RawMessage) (int64, error) {
 	s := strings.Trim(strings.TrimSpace(string(raw)), `"`)
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("数值字段缺失或格式发生变化")
+		return 0, fmt.Errorf("numeric field missing or its format changed")
 	}
 	return n, nil
 }
@@ -92,7 +96,7 @@ func planTimestamp(raw json.RawMessage) (time.Time, bool, error) {
 	}
 	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
 		if n <= 0 {
-			return time.Time{}, false, fmt.Errorf("权益时间无效")
+			return time.Time{}, false, fmt.Errorf("invalid entitlement time")
 		}
 		if n > 1e12 {
 			return time.UnixMilli(n), true, nil
@@ -102,11 +106,12 @@ func planTimestamp(raw json.RawMessage) (time.Time, bool, error) {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t, true, nil
 	}
-	// 用户中心无时区时间与官网展示使用 UTC+8，不依赖部署机时区。
+	// The user center has no timezone; timestamps and official-site display use UTC+8,
+	// independent of the deployment machine's timezone.
 	if t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.FixedZone("UTC+8", 8*3600)); err == nil {
 		return t, true, nil
 	}
-	return time.Time{}, false, fmt.Errorf("无法识别权益时间格式")
+	return time.Time{}, false, fmt.Errorf("unrecognized entitlement time format")
 }
 
 func activePlanResource(r planResource, now time.Time) (bool, error) {
@@ -115,11 +120,11 @@ func activePlanResource(r planResource, now time.Time) (bool, error) {
 		return false, err
 	}
 	switch status {
-	case 1, 2: // 退款、过期；积分用尽(3)不等于套餐过期。
+	case 1, 2: // refunded, expired; points exhausted (3) is not plan expiry.
 		return false, nil
 	case 0, 3:
 	default:
-		return false, fmt.Errorf("未知权益状态 %d", status)
+		return false, fmt.Errorf("unknown entitlement status %d", status)
 	}
 	start, present, err := planTimestamp(r.DeductionStartTime)
 	if err != nil {
@@ -128,7 +133,8 @@ func activePlanResource(r planResource, now time.Time) (bool, error) {
 	if present && now.Before(start) {
 		return false, nil
 	}
-	// 与官网相同的权益截止字段优先级；月度额度周期不是年付套餐到期。
+	// Same entitlement deadline field priority as the official site; the monthly
+	// quota cycle is not the annual plan's expiry.
 	for _, raw := range []json.RawMessage{r.DeductionEndTime, r.ExpiredTime, r.CycleEndTime} {
 		end, present, err := planTimestamp(raw)
 		if err != nil {
@@ -138,13 +144,13 @@ func activePlanResource(r planResource, now time.Time) (bool, error) {
 			return now.Before(end), nil
 		}
 	}
-	return true, nil // Status有效且无截止时间的长期权益。
+	return true, nil // Status valid and no deadline: long-term entitlement.
 }
 
 func safePlanName(name string) string {
 	name = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return -1 // 上游名称不得注入终端转义、换行或方向控制符。
+			return -1 // Upstream names must not inject terminal escapes, newlines, or directional controls.
 		}
 		return r
 	}, name)
@@ -161,25 +167,25 @@ func resourcePlanName(site string, r planResource) string {
 			return label
 		}
 		label := safePlanName(r.PackageName)
-		for _, tier := range []string{"体验版", "标准版", "高级版", "旗舰版"} {
+		for _, tier := range []string{"Trial", "Standard", "Premium", "Flagship"} {
 			switch label {
-			case tier, "个人" + tier, "CodeBuddy个人" + tier:
+			case tier, "Personal " + tier, "CodeBuddy Personal " + tier:
 				return tier
 			}
 		}
 		if label != "" {
-			return label // 新套餐及历史青春版等不强行归入当前四档。
+			return label // New plans and historical junior tiers are not forced into the current four tiers.
 		}
-		return "未识别订阅"
+		return "Unrecognized subscription"
 	}
 	if label := safePlanName(r.PackageName); label != "" {
 		switch strings.ToLower(label) {
 		case "free plan subscription", "free plan":
-			return "免费"
+			return "Free"
 		case "pro plan monthly subscription", "pro plan annual subscription":
 			return "pro"
 		case "pro plan trial subscription":
-			return "Pro试用"
+			return "Pro trial"
 		default:
 			return label
 		}
@@ -187,7 +193,7 @@ func resourcePlanName(site string, r planResource) string {
 	if label := legacyPlanNames[r.PackageCode]; label != "" {
 		return label
 	}
-	return "未识别订阅"
+	return "Unrecognized subscription"
 }
 
 func identifyPlan(site string, summary quotaSummaryData, resources []planResource, now time.Time) (string, error) {
@@ -206,22 +212,24 @@ func identifyPlan(site string, summary quotaSummaryData, resources []planResourc
 			continue
 		}
 		if r.PackageCode == "" {
-			return "", fmt.Errorf("有效权益缺少套餐编码")
+			return "", fmt.Errorf("active entitlement missing plan code")
 		}
-		// 新套餐沿用 IDE 子产品，或 summary 明确指定的当前订阅，都可识别。
+		// New plans reusing the IDE sub-product, or the current subscription
+		// explicitly named in summary, are both recognizable.
 		if r.SubProductCode == "sp_tcaca_codebuddy_ide" || knownPlanName(site, r.PackageCode) != "" ||
 			r.PackageCode == summary.SubscriptionPackageCode {
 			plans = append(plans, r)
 		} else {
-			ambiguous = true // 新子产品不能静默忽略后假称免费。
+			ambiguous = true // New sub-products must not be silently ignored and then claimed as free.
 		}
 	}
-	// 官网试用已转付费(2)且试用仍有效时，仍展示试用，付费套餐待生效。
+	// When the official trial has converted to paid (2) and the trial is still
+	// active, the trial is still shown; the paid plan awaits activation.
 	trialStatus, _ := planInteger(json.RawMessage(fmt.Sprint(summary.ProTrialStatus)))
 	if site == "intl" && trialStatus == 2 {
 		for _, r := range plans {
-			if legacyPlanNames[r.PackageCode] == "Pro试用" {
-				return "Pro试用", nil
+			if legacyPlanNames[r.PackageCode] == "Pro trial" {
+				return "Pro trial", nil
 			}
 		}
 	}
@@ -231,9 +239,10 @@ func identifyPlan(site string, summary quotaSummaryData, resources []planResourc
 				return resourcePlanName(site, r), nil
 			}
 		}
-		return "", fmt.Errorf("订阅摘要与有效权益不一致")
+		return "", fmt.Errorf("subscription summary and active entitlements disagree")
 	}
-	// 没有摘要指定套餐时，保留所有有效身份包名称；不靠未知套餐的名字猜等级。
+	// Without a summary-named plan, keep all valid identity package names;
+	// never guess the tier from an unknown plan's name.
 	labels := map[string]bool{}
 	hasFree := false
 	for _, r := range plans {
@@ -245,11 +254,11 @@ func identifyPlan(site string, summary quotaSummaryData, resources []planResourc
 		}
 	}
 	if ambiguous {
-		return "", fmt.Errorf("发现未知子产品，无法完整确认套餐")
+		return "", fmt.Errorf("unknown sub-product found; plan cannot be fully confirmed")
 	}
 	if len(labels) > 0 {
 		if site == "intl" && len(labels) > 1 {
-			delete(labels, "Pro试用") // 已有有效正式订阅时普通试用不覆盖订阅。
+			delete(labels, "Pro trial") // With an active real subscription, an ordinary trial does not override it.
 		}
 		names := make([]string, 0, len(labels))
 		for name := range labels {
@@ -259,13 +268,14 @@ func identifyPlan(site string, summary quotaSummaryData, resources []planResourc
 		return strings.Join(names, " / "), nil
 	}
 	if summary.IsPaidUser {
-		return "", fmt.Errorf("付费标记存在但没有有效订阅权益")
+		return "", fmt.Errorf("paid flag present but no active subscription entitlement")
 	}
 	if hasFree || len(plans) == 0 {
-		// 已成功完整查询，只有过期包/赠送包/空列表，且没有付费订阅声明。
+		// Complete query succeeded: only expired/bonus packages or an empty list,
+		// and no paid-subscription claim.
 		return freePlanName(site), nil
 	}
-	return "", fmt.Errorf("套餐无法确认")
+	return "", fmt.Errorf("plan could not be confirmed")
 }
 
 func parsePlanPage(data []byte) ([]planResource, int64, error) {
@@ -275,30 +285,31 @@ func parsePlanPage(data []byte) ([]planResource, int64, error) {
 		}
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Response == nil {
-		return nil, 0, fmt.Errorf("套餐接口缺少 Response")
+		return nil, 0, fmt.Errorf("plan API response missing Response")
 	}
 	var page struct {
 		Accounts   json.RawMessage
 		TotalCount json.RawMessage
 	}
 	if err := json.Unmarshal(envelope.Response.Data, &page); err != nil {
-		return nil, 0, fmt.Errorf("套餐接口 Data 格式无效")
+		return nil, 0, fmt.Errorf("plan API Data format invalid")
 	}
 	total, err := planInteger(page.TotalCount)
 	if err != nil || total < 0 {
-		return nil, 0, fmt.Errorf("套餐接口 TotalCount 缺失或无效")
+		return nil, 0, fmt.Errorf("plan API TotalCount missing or invalid")
 	}
 	if len(bytes.TrimSpace(page.Accounts)) == 0 || bytes.TrimSpace(page.Accounts)[0] != '[' {
-		return nil, 0, fmt.Errorf("套餐接口 Accounts 不是数组")
+		return nil, 0, fmt.Errorf("plan API Accounts is not an array")
 	}
 	var rows []planResource
 	if err := json.Unmarshal(page.Accounts, &rows); err != nil {
-		return nil, 0, fmt.Errorf("套餐接口 Accounts 格式无效")
+		return nil, 0, fmt.Errorf("plan API Accounts format invalid")
 	}
 	return rows, total, nil
 }
 
-// fetchPlanResources 查询完整资源，不过滤 PackageCodes，不执行购买/续订/模型请求。
+// fetchPlanResources queries complete resources without filtering PackageCodes
+// and never performs purchase/renewal/model requests.
 func fetchPlanResources(ctx context.Context, prof *upstreamProfile, headers func(*http.Request), traceID, account string, now time.Time) ([]planResource, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -313,24 +324,25 @@ func fetchPlanResources(ctx context.Context, prof *upstreamProfile, headers func
 			"SlicePeriodStartTime": local.Format("2006-01-02") + " 00:00:00",
 			"SlicePeriodEndTime":   local.Format("2006-01-02") + " 23:59:59",
 		})
-		log.Printf("[套餐查询] traceId=%s 账号=%s 阶段=只读资源请求 页=%d 结果=开始 说明=不限定套餐编码，不请求模型", traceID, account, page)
+		log.Printf("[Plan query] traceId=%s account=%s stage=read-only resource request page=%d result=started note=no plan-code filter; no model requests", traceID, account, page)
 		data, status, err := doJSONContext(ctx, cfg.HttpClient, http.MethodPost,
 			prof.Origin+"/billing/meter/get-user-resource", headers, bytes.NewReader(payload))
 		if err != nil {
-			// 不把上游错误正文写入日志：可能包含用户标识或令牌。
-			log.Printf("[套餐查询] traceId=%s 账号=%s 页=%d HTTP=%d 结果=失败 业务影响=本轮套餐无法确认", traceID, account, page, status)
-			return nil, fmt.Errorf("套餐只读接口失败 HTTP=%d", status)
+			// Do not log the upstream error body: it may contain user identifiers or tokens.
+			log.Printf("[Plan query] traceId=%s account=%s page=%d HTTP=%d result=failed business impact=plan cannot be confirmed this round", traceID, account, page, status)
+			return nil, fmt.Errorf("plan read-only API failed HTTP=%d", status)
 		}
 		rows, total, err := parsePlanPage(data)
 		if err != nil {
 			return nil, err
 		}
 		if lastTotal >= 0 && total != lastTotal {
-			return nil, fmt.Errorf("查询期间套餐总数变化，等待下一轮")
+			return nil, fmt.Errorf("plan total changed during query; waiting for the next round")
 		}
 		lastTotal = total
 		for _, row := range rows {
-			// 一个订阅资源可有多个计量账户，优先按 AccountId 去重。
+			// One subscription resource may have multiple metering accounts;
+			// deduplicate by AccountId first.
 			key := strings.Trim(strings.TrimSpace(string(row.AccountID)), `"`)
 			if key == "" || key == "null" {
 				key = ""
@@ -342,21 +354,21 @@ func fetchPlanResources(ctx context.Context, prof *upstreamProfile, headers func
 			}
 			if key != "" {
 				if seen[key] {
-					return nil, fmt.Errorf("套餐分页重复，拒绝使用不完整结果")
+					return nil, fmt.Errorf("duplicate plan pages; refusing to use incomplete results")
 				}
 				seen[key] = true
 			}
 		}
 		resources = append(resources, rows...)
-		log.Printf("[套餐查询] traceId=%s 账号=%s 页=%d HTTP=%d 本页=%d 累计=%d 总数=%d 结果=已解析", traceID, account, page, status, len(rows), len(resources), total)
+		log.Printf("[Plan query] traceId=%s account=%s page=%d HTTP=%d this page=%d cumulative=%d total=%d result=parsed", traceID, account, page, status, len(rows), len(resources), total)
 		if int64(len(resources)) == total {
 			return resources, nil
 		}
 		if len(rows) == 0 || int64(len(resources)) > total {
-			return nil, fmt.Errorf("套餐分页不完整")
+			return nil, fmt.Errorf("plan pagination incomplete")
 		}
 	}
-	return nil, fmt.Errorf("套餐分页超过安全上限，未使用部分结果")
+	return nil, fmt.Errorf("plan pagination exceeded the safety limit; partial results not used")
 }
 
 func planDisplayLabel(label string, stale bool) string {

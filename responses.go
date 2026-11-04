@@ -17,20 +17,22 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// OpenAI Responses API (/v1/responses) -> 上游 Chat Completions 转译
+// OpenAI Responses API (/v1/responses) -> upstream Chat Completions translation
 //
-// 网关只与上游 /v2/chat/completions 通信，此处负责双向协议转换：
-//   - 请求：input / instructions / tools(扁平) / tool_choice / max_output_tokens /
-//     reasoning.effort  ->  chat messages / tools(嵌套 function) / max_tokens / reasoning_effort
-//   - 非流式响应：chat.completion -> response{object:"response", output:[...]}
-//   - 流式响应：上游 SSE 增量 -> Responses 语义事件（response.output_text.delta、
-//     response.function_call_arguments.delta、response.completed ...）
+// The gateway only talks to the upstream /v2/chat/completions endpoint and is
+// responsible for bidirectional protocol conversion:
+//   - Requests: input / instructions / tools(flat) / tool_choice / max_output_tokens /
+//     reasoning.effort  ->  chat messages / tools(nested function) / max_tokens / reasoning_effort
+//   - Non-streaming responses: chat.completion -> response{object:"response", output:[...]}
+//   - Streaming responses: upstream SSE deltas -> Responses semantic events
+//     (response.output_text.delta, response.function_call_arguments.delta,
+//     response.completed ...)
 // -----------------------------------------------------------------------------
 
-// handleResponses 处理 POST /v1/responses。
+// handleResponses handles POST /v1/responses.
 func handleResponses(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeOpenAIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST 请求")
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST requests are supported")
 		return
 	}
 
@@ -42,7 +44,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	readDuration := debugElapsedSince(readStarted)
 	if err != nil {
 		debugBodyReadFailed(r, bodyBytes, readStarted, err)
-		writeOpenAIError(w, http.StatusBadRequest, "read_error", "读取请求体失败")
+		writeOpenAIError(w, http.StatusBadRequest, "read_error", "Failed to read request body")
 		return
 	}
 	defer r.Body.Close()
@@ -53,7 +55,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	decodeDuration := time.Since(decodeStarted)
 	if decodeErr != nil {
 		debugBodyReadCompleted(r, bodyBytes, readDuration, decodeDuration, false, decodeErr)
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_json", "无效的 JSON 请求体")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON request body")
 		return
 	}
 
@@ -66,14 +68,15 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	debugBodyReadCompleted(r, bodyBytes, readDuration, decodeDuration, true, nil)
 	prepareConversationContext(r, respReq)
 
-	// 模型黑白名单拦截：命中即拒绝，不消耗任何上游账号额度。
+	// Model allowlist/blocklist interception: reject on hit without consuming
+	// any upstream account quota.
 	if disabled, reason := modelDisabled(modelName); disabled {
-		log.Printf("[请求被拒绝] traceId=%s requestId=%d 拦截层=模型黑白名单 模型=%s 结果=拒绝 原因=%s 返回状态码=403 业务影响=请求未进入上游调用",
+		log.Printf("[Request rejected] traceId=%s requestId=%d interception=Model allowlist/blocklist model=%s result=Rejected reason=%s response_status_code=403 business_impact=Request did not reach the upstream call",
 			w.Header().Get("X-Trace-ID"), reqID, modelName, reason)
 		debugEvent(r, "warn", "model_blocked_by_config", map[string]any{
 			"status_code":     http.StatusForbidden,
 			"reason":          reason,
-			"business_impact": "模型被网关配置禁用，请求未进入上游调用",
+			"business_impact": "Model disabled by gateway config; request did not reach the upstream call",
 		})
 		writeOpenAIError(w, http.StatusForbidden, "model_disabled", reason)
 		return
@@ -84,8 +87,9 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	chatReq["stream"] = true // 上游强制流式，非流式由网关本地聚合
-	// 下游 Responses 恢复原始 namespace/custom 形状；Chat 上游只认识扁平的 function 名。
+	chatReq["stream"] = true // Upstream forces streaming; non-streaming is aggregated locally by the gateway
+	// The downstream Responses restores the original namespace/custom shapes;
+	// the Chat upstream only understands flat function names.
 	r = withResponsesToolMap(r, toolMap)
 
 	prepareUpstreamChatRequest(chatReq, r, reqID, modelName)
@@ -93,7 +97,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	upstreamBytes, err := json.Marshal(chatReq)
 	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "encode_error", "序列化请求失败")
+		writeOpenAIError(w, http.StatusInternalServerError, "encode_error", "Failed to serialize request")
 		return
 	}
 
@@ -110,14 +114,16 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// responsesToChatRequest 保留旧的测试/调用接口；主链路使用带工具映射的详细版本。
+// responsesToChatRequest keeps the legacy test/call interface; the main path
+// uses the detailed version with tool mapping.
 func responsesToChatRequest(respReq map[string]any, modelName string) (map[string]any, error) {
 	chat, _, err := responsesToChatRequestDetailed(respReq, modelName)
 	return chat, err
 }
 
-// responsesToChatRequestDetailed 将 Responses 请求体转换为上游 Chat Completions
-// 请求体，并返回上游 function 名到客户端工具身份的反向映射。
+// responsesToChatRequestDetailed converts a Responses request body into the
+// upstream Chat Completions request body and returns a reverse mapping from
+// upstream function names to client tool identities.
 func responsesToChatRequestDetailed(respReq map[string]any, modelName string) (map[string]any, map[string]responsesToolMeta, error) {
 	chat := map[string]any{"model": modelName}
 
@@ -132,10 +138,12 @@ func responsesToChatRequestDetailed(respReq map[string]any, modelName string) (m
 			messages = append(messages, map[string]any{"role": "user", "content": input})
 		}
 	case []any:
-		// DSH 将一次模型回复拆成 reasoning、message、function_call 等独立项；
-		// Chat 上游却要求同一次回复是一条 assistant 消息。连续的助手项在
-		// user/tool 结果处结束，遇到新的 reasoning 项也代表下一次助手回复。
-		// 即使一次输出没有 reasoning，也必须将正文与工具调用合在一起。
+		// DSH splits one model reply into separate reasoning, message,
+		// function_call, etc. items, but the Chat upstream requires the same
+		// reply to be a single assistant message. Consecutive assistant items
+		// end at a user/tool result; a new reasoning item also means the next
+		// assistant reply. Even an output without reasoning must merge the
+		// body and the tool calls together.
 		var pendingReasoning string
 		var pendingAssistant map[string]any
 		flushAssistant := func() {
@@ -154,7 +162,7 @@ func responsesToChatRequestDetailed(respReq map[string]any, modelName string) (m
 				typ, _ := item["type"].(string)
 				if typ == "reasoning" {
 					if pendingAssistant != nil {
-						flushAssistant() // 新 reasoning 项代表下一次助手回复
+						flushAssistant() // A new reasoning item means the next assistant reply
 					}
 					if text := reasoningReplayText(item); text != "" {
 						if pendingReasoning != "" {
@@ -165,7 +173,7 @@ func responsesToChatRequestDetailed(respReq map[string]any, modelName string) (m
 					continue
 				}
 				if typ == "web_search_call" {
-					continue // 不把历史搜索项误转成会打断工具调用的消息
+					continue // Do not mistakenly turn historical search items into messages that would break tool calls
 				}
 				for _, msgAny := range convertResponsesInputItem(item) {
 					msg, ok := msgAny.(map[string]any)
@@ -185,7 +193,7 @@ func responsesToChatRequestDetailed(respReq map[string]any, modelName string) (m
 						}
 						continue
 					}
-					flushAssistant() // user/tool 边界，不把旧推理带到下一轮
+					flushAssistant() // user/tool boundary; do not carry old reasoning into the next round
 					messages = append(messages, msg)
 				}
 			}
@@ -194,7 +202,7 @@ func responsesToChatRequestDetailed(respReq map[string]any, modelName string) (m
 	}
 
 	if len(messages) == 0 {
-		return nil, nil, fmt.Errorf("input 为空：Responses 请求必须提供 input 或 instructions")
+		return nil, nil, fmt.Errorf("input is empty: Responses requests must provide input or instructions")
 	}
 	chat["messages"] = messages
 
@@ -232,7 +240,7 @@ func responsesToChatRequestDetailed(respReq map[string]any, modelName string) (m
 				}
 			}
 			if len(filtered) == 0 {
-				return nil, nil, fmt.Errorf("tool_choice 指定的工具未在 tools 中定义")
+				return nil, nil, fmt.Errorf("tool specified by tool_choice is not defined in tools")
 			}
 			chat["tools"] = filtered
 		}
@@ -248,9 +256,11 @@ func responsesToChatRequestDetailed(respReq map[string]any, modelName string) (m
 	return chat, toolMap, nil
 }
 
-// reasoningReplayText 取出 DSH 回放的 reasoning 项里的推理正文。
-// 网关自己发出去的项把全文放在 summary；官方 Responses 也可能把全文放在 content。
-// 有 content 时用 content，否则用 summary。encrypted_content 不是明文，不能当成 reasoning_content。
+// reasoningReplayText extracts the reasoning body from a DSH replayed reasoning
+// item. Items the gateway sent itself put the full text in summary; official
+// Responses may also put it in content. Use content when present, else summary.
+// encrypted_content is not plaintext and must not be treated as
+// reasoning_content.
 func reasoningReplayText(item map[string]any) string {
 	if text := joinReasoningParts(item["content"]); text != "" {
 		return text
@@ -281,8 +291,10 @@ func joinReasoningParts(raw any) string {
 	return b.String()
 }
 
-// mergeResponsesAssistantItem 将一个 Responses 回复的正文与工具调用合成同一条 Chat assistant。
-// reasoning_content 已在第一项上，后续项只补充正文和工具列表，不复制推理。
+// mergeResponsesAssistantItem merges the body and tool calls of one Responses
+// reply into the same Chat assistant message. reasoning_content already sits on
+// the first item; later items only append body and tool lists, without copying
+// the reasoning.
 func mergeResponsesAssistantItem(dst, item map[string]any) {
 	if assistantMessageHasPayload(item) {
 		if !assistantMessageHasPayload(dst) {
@@ -330,7 +342,8 @@ func reasoningPassthroughStats(chat map[string]any) (attached int, chars int, mi
 	return attached, chars, missing
 }
 
-// convertResponsesInputItem 将单个 Responses input item 转换为 0..1 条 chat 消息。
+// convertResponsesInputItem converts a single Responses input item into 0..1
+// chat messages.
 func convertResponsesInputItem(item map[string]any) []any {
 	switch typ, _ := item["type"].(string); typ {
 	case "function_call":
@@ -377,16 +390,20 @@ func convertResponsesInputItem(item map[string]any) []any {
 			"content":      text,
 		}}
 		if len(images) > 0 {
-			// 与 Anthropic tool_result 的图片处理一致：tool 保留文本，
-			// 图片提升成 user 多模态内容，不能把 Base64 当普通文本回放。
-			// handleResponses 随后的工具序列修复会将并行批次的图片消息
-			// 移至全部 tool 结果之后，避免打断调用/结果配对（11148）。
+			// Same image handling as Anthropic tool_result: the tool message
+			// keeps the text and images are hoisted into user multimodal
+			// content; Base64 must not be replayed as plain text. The tool
+			// sequence repair in handleResponses then moves parallel batches'
+			// image messages after all tool results, avoiding breaking
+			// call/result pairing (11148).
 			messages = append(messages, map[string]any{"role": "user", "content": images})
 		}
 		return messages
 	case "reasoning", "web_search_call":
-		// reasoning 的正文在 responsesToChatRequest 里挂到助手消息的 reasoning_content。
-		// web_search_call 不能转成消息：插在并行 function_call 与 output 之间会触发 11148。
+		// reasoning body is attached to the assistant message's
+		// reasoning_content inside responsesToChatRequest.
+		// web_search_call must not become a message: inserting it between a
+		// parallel function_call and its output triggers 11148.
 		return nil
 	}
 
@@ -396,8 +413,9 @@ func convertResponsesInputItem(item map[string]any) []any {
 	}
 	message := map[string]any{"role": role, "content": convertResponsesContent(item["content"])}
 	if role == "assistant" {
-		// 有些客户端直接在助手历史消息上携带 Chat 风格的推理字段；
-		// 不要在 Responses 转 Chat 的过程中再次丢弃它。
+		// Some clients carry Chat-style reasoning fields directly on
+		// assistant history messages; do not drop them again during the
+		// Responses-to-Chat conversion.
 		if reasoning, ok := item["reasoning_content"].(string); ok {
 			message["reasoning_content"] = reasoning
 		}
@@ -405,7 +423,8 @@ func convertResponsesInputItem(item map[string]any) []any {
 	return []any{message}
 }
 
-// convertResponsesContent 将 Responses content（string 或 parts 数组）转换为 chat content。
+// convertResponsesContent converts Responses content (string or parts array)
+// into chat content.
 func convertResponsesContent(content any) any {
 	switch c := content.(type) {
 	case nil:
@@ -447,9 +466,11 @@ func convertResponsesContent(content any) any {
 	}
 }
 
-// convertResponsesToolOutput 处理 Responses 的字符串或多模态工具结果。
-// 普通 JSON 对象/数组维持旧序列化行为；明确的文本块提取原文，图片块作为
-// 多模态内容返回。未知块仍作为 JSON 文本保留，不静默丢弃工具数据。
+// convertResponsesToolOutput handles Responses string or multimodal tool
+// results. Plain JSON objects/arrays keep the old serialization behavior;
+// explicit text blocks are extracted verbatim and image blocks are returned as
+// multimodal content. Unknown blocks remain JSON text; tool data is never
+// silently dropped.
 func convertResponsesToolOutput(output any) (string, []any) {
 	blocks, ok := output.([]any)
 	if !ok {
@@ -500,13 +521,14 @@ func convertResponsesToolOutput(output any) (string, []any) {
 	}
 	text := strings.Join(texts, "\n")
 	if text == "" && len(images) > 0 {
-		text = "[图片]"
+		text = "[image]"
 	}
 	return text, images
 }
 
-// logResponsesToolOutputConversion 只记录块数、位置与长度；图片 URL、
-// Base64、工具正文及提示词不进入日志，沿用请求的 TraceID 和文件日志。
+// logResponsesToolOutputConversion logs only block counts, positions, and
+// lengths; image URLs, Base64, tool bodies, and prompts never enter the logs,
+// reusing the request's TraceID and file logging.
 func logResponsesToolOutputConversion(r *http.Request, reqID uint64, request map[string]any) {
 	input, _ := request["input"].([]any)
 	outputs, textChars, imageCount := 0, 0, 0
@@ -520,16 +542,17 @@ func logResponsesToolOutputConversion(r *http.Request, reqID uint64, request map
 		textChars += utf8.RuneCountInString(text)
 		imageCount += len(images)
 	}
-	log.Printf("[Responses工具结果转换] traceId=%s requestId=%d 工具结果=%d 文本字符数=%d 图片块=%d 图片位置=工具结果之后的user多模态消息 结果=图片不再作为Base64文本计入上下文，原工具文本保留且不记录正文",
+	log.Printf("[Responses tool output conversion] traceId=%s requestId=%d tool_outputs=%d text_chars=%d image_blocks=%d image_position=user multimodal message after tool results result=Images are no longer counted as Base64 text in context; original tool text preserved and bodies not logged",
 		debugTraceID(r), reqID, outputs, textChars, imageCount)
 	debugEvent(r, "debug", "responses_tool_output_converted", map[string]any{
 		"tool_outputs": outputs, "text_chars": textChars, "image_blocks": imageCount,
 		"image_position":  "user_after_tool_results",
-		"business_impact": "保留工具文本与图片；避免Base64被当文本计费或撑满上下文；不记录正文",
+		"business_impact": "Tool text and images preserved; avoids Base64 being billed as text or filling up context; bodies not logged",
 	})
 }
 
-// stringifyToolOutput 将 function_call_output 的 output 统一转为字符串。
+// stringifyToolOutput converts the function_call_output output uniformly to a
+// string.
 func stringifyToolOutput(output any) string {
 	switch o := output.(type) {
 	case nil:
@@ -544,15 +567,17 @@ func stringifyToolOutput(output any) string {
 	}
 }
 
-// convertResponsesToolChoice 将 Responses tool_choice 转换为 chat tool_choice。
+// convertResponsesToolChoice converts a Responses tool_choice to a chat
+// tool_choice.
 func convertResponsesToolChoice(tc any) any {
 	choice, _ := convertResponsesToolChoiceWithMap(tc, nil)
 	return choice
 }
 
-// convertResponsesToolChoiceWithMap 只返回上游接受的字符串枚举；命名工具
-// 同时返回扁平工具名，调用方会据此裁剪 tools。腾讯上游不接受 OpenAI 的
-// function 对象形式。
+// convertResponsesToolChoiceWithMap only returns the string enums the upstream
+// accepts; for named tools it also returns the flat tool name, which the
+// caller uses to trim tools. The Tencent upstream does not accept OpenAI's
+// function object form.
 func convertResponsesToolChoiceWithMap(tc any, tools map[string]responsesToolMeta) (any, string) {
 	switch v := tc.(type) {
 	case string:
@@ -583,7 +608,8 @@ func convertResponsesToolChoiceWithMap(tc any, tools map[string]responsesToolMet
 	return nil, ""
 }
 
-// writeResponsesAggregate 聚合上游 SSE 后转换为 Responses 非流式响应。
+// writeResponsesAggregate aggregates the upstream SSE and converts it into a
+// non-streaming Responses response.
 func writeResponsesAggregate(w http.ResponseWriter, r *http.Request, resp *http.Response, modelName string, reqID uint64, acc *Account, prof *upstreamProfile, startTime time.Time) {
 	defer resp.Body.Close()
 	body := newTTFTReader(resp.Body, startTime)
@@ -595,7 +621,7 @@ func writeResponsesAggregate(w http.ResponseWriter, r *http.Request, resp *http.
 			"error":      safeDebugError(err),
 		})
 		logAggregateFailure(r, reqID, err)
-		writeOpenAIError(w, http.StatusInternalServerError, "aggregate_error", "聚合上游流式响应失败: "+err.Error())
+		writeOpenAIError(w, http.StatusInternalServerError, "aggregate_error", "Failed to aggregate upstream streaming response: "+err.Error())
 		return
 	}
 	usage := usageFromCompletion(completionJSON)
@@ -609,8 +635,8 @@ func writeResponsesAggregate(w http.ResponseWriter, r *http.Request, resp *http.
 			"error_type": debugErrorType(err),
 			"error":      safeDebugError(err),
 		})
-		log.Printf("[#%d] Responses 转换失败: %v", reqID, err)
-		writeOpenAIError(w, http.StatusInternalServerError, "translate_error", "转换 Responses 响应失败: "+err.Error())
+		log.Printf("[#%d] Responses conversion failed: %v", reqID, err)
+		writeOpenAIError(w, http.StatusInternalServerError, "translate_error", "Failed to convert Responses response: "+err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -620,15 +646,17 @@ func writeResponsesAggregate(w http.ResponseWriter, r *http.Request, resp *http.
 		"status_code":    http.StatusOK,
 		"response_bytes": len(out),
 	})
-	log.Printf("[#%d] Responses 非流式响应完成 (账号 %s [%s], 耗时 %v)", reqID, acc.Path, prof.Label, time.Since(startTime))
+	log.Printf("[#%d] Responses non-streaming response completed (account %s [%s], duration %v)", reqID, acc.Path, prof.Label, time.Since(startTime))
 }
 
-// chatCompletionToResponses 保留旧接口；主链路使用带工具映射的版本。
+// chatCompletionToResponses keeps the legacy interface; the main path uses the
+// version with tool mapping.
 func chatCompletionToResponses(chatJSON []byte, modelName string) ([]byte, error) {
 	return chatCompletionToResponsesWithTools(chatJSON, modelName, nil)
 }
 
-// chatCompletionToResponsesWithTools 将 chat.completion JSON 转换为 Responses 响应对象。
+// chatCompletionToResponsesWithTools converts chat.completion JSON into a
+// Responses response object.
 func chatCompletionToResponsesWithTools(chatJSON []byte, modelName string, toolMap map[string]responsesToolMeta) ([]byte, error) {
 	var chat map[string]any
 	if err := json.Unmarshal(chatJSON, &chat); err != nil {
@@ -703,7 +731,8 @@ func chatCompletionToResponsesWithTools(chatJSON []byte, modelName string, toolM
 	return json.Marshal(result)
 }
 
-// buildResponsesEnvelope 构造 Responses 响应骨架（含规范要求的常见字段）。
+// buildResponsesEnvelope constructs the Responses response skeleton (including
+// common fields required by the spec).
 func buildResponsesEnvelope(id, model string, createdAt int64) map[string]any {
 	return map[string]any{
 		"id":                   id,
@@ -732,7 +761,7 @@ func buildResponsesEnvelope(id, model string, createdAt int64) map[string]any {
 	}
 }
 
-// toResponsesUsage 将 chat usage 转换为 Responses usage 结构。
+// toResponsesUsage converts chat usage into the Responses usage structure.
 func toResponsesUsage(u map[string]any) map[string]any {
 	in := numOr0(u["prompt_tokens"])
 	out := numOr0(u["completion_tokens"])
@@ -763,7 +792,8 @@ func numOr0(v any) float64 {
 	return 0
 }
 
-// streamResponsesResponse 将上游 Chat Completions SSE 实时转译为 Responses 语义事件流。
+// streamResponsesResponse translates the upstream Chat Completions SSE into a
+// Responses semantic event stream in real time.
 func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.Response, modelName string, reqID uint64, acc *Account, prof *upstreamProfile, startTime time.Time) {
 	defer resp.Body.Close()
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -773,7 +803,7 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeOpenAIError(w, http.StatusInternalServerError, "streaming_unsupported", "服务器不支持流式响应 Flush")
+		writeOpenAIError(w, http.StatusInternalServerError, "streaming_unsupported", "Server does not support streaming Flush")
 		return
 	}
 
@@ -799,19 +829,19 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 	nextIndex := 0
 	idxToItem := map[int]map[string]any{}
 
-	// reasoning item 状态
+	// reasoning item state
 	reasoningOpen := false
 	reasoningIndex := -1
 	reasoningItemID := ""
 	var reasoningSB strings.Builder
 
-	// message item 状态
+	// message item state
 	msgOpen := false
 	msgIndex := -1
 	msgItemID := ""
 	var msgSB strings.Builder
 
-	// function_call item 状态
+	// function_call item state
 	toolCalls := map[int]*mergedToolCall{}
 	var toolOrder []int
 	tcItemID := map[int]string{}
@@ -905,7 +935,8 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 				})
 			}
 			if tcs, ok := delta["tool_calls"].([]any); ok && len(tcs) > 0 {
-				// 先提取本次参数增量，供合并后补发 delta 事件
+				// Extract this round's argument deltas first, to emit delta
+				// events after merging
 				type argDelta struct {
 					idx int
 					arg string
@@ -963,7 +994,7 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 				}
 				for _, ad := range argDeltas {
 					if tcMeta[ad.idx].Kind == responsesToolCustom {
-						continue // 自定义工具的 JSON 参数在收尾时还原为原始 input
+						continue // The custom tool's JSON arguments are restored to the original input at finalization
 					}
 					emit("response.function_call_arguments.delta", map[string]any{
 						"item_id": tcItemID[ad.idx], "output_index": tcIndex[ad.idx], "delta": ad.arg,
@@ -980,24 +1011,28 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 			"error_type": debugErrorType(scanErr),
 			"error":      safeDebugError(scanErr),
 		})
-		// 上游流中断时不能伪造 response.completed 与 [DONE]：那会让下游把残缺输出
-		// 当成完整结果。改为下发一个 failed 事件并直接返回，明确告知本次响应不完整。
-		reason := "上游流式响应中断，本次回复不完整"
+		// On upstream stream interruption we must not fake response.completed
+		// and [DONE]: that would let the downstream treat partial output as a
+		// complete result. Instead emit a failed event and return directly,
+		// making the incompleteness explicit.
+		reason := "Upstream streaming response interrupted; this reply is incomplete"
 		if errors.Is(scanErr, context.DeadlineExceeded) {
-			reason = fmt.Sprintf("上游超过 %v 无数据，判定连接卡死并中断，本次回复不完整", upstreamIdleTimeout)
+			reason = fmt.Sprintf("Upstream sent no data for over %v; connection judged stuck and interrupted, this reply is incomplete", upstreamIdleTimeout)
 		}
 		failed := buildResponsesEnvelope(respID, modelName, created)
 		failed["status"] = "failed"
 		failed["error"] = map[string]any{"code": "stream_interrupted", "message": reason}
 		emit("response.failed", map[string]any{"response": failed})
-		log.Printf("[异常] traceId=%s requestId=%d 发生阶段=上游流式读取 账号=%s 异常=%v 业务影响=本次响应不完整，已下发 response.failed 而非伪造完成", debugTraceID(r), reqID, acc.Path, scanErr)
+		log.Printf("[Exception] traceId=%s requestId=%d stage=Upstream streaming read account=%s exception=%v business_impact=This response is incomplete; response.failed was sent instead of faking completion", debugTraceID(r), reqID, acc.Path, scanErr)
 		recordModelLatency(modelName, time.Since(startTime))
 		return
 	}
 	if finishReason == "" {
-		// 干净 EOF：读错误是空的，但没有非空 finish_reason。
-		// 不能把已经收到的推理再塞进 output_item.done / response.completed，
-		// 那会让客户端把残缺输出当成完整结果；只发一个小的 response.failed。
+		// Clean EOF: the read error is empty, but there is no non-empty
+		// finish_reason. Already-received reasoning must not be stuffed into
+		// output_item.done / response.completed — that would let the client
+		// treat partial output as a complete result; only a small
+		// response.failed is sent.
 		debugEvent(r, "error", "stream_closed_without_finish", map[string]any{
 			"error_type":      "stream_closed_without_finish",
 			"finish_reason":   "",
@@ -1005,7 +1040,7 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 			"reasoning_chars": reasoningSB.Len(),
 			"message_chars":   msgSB.Len(),
 			"tool_call_count": len(toolOrder),
-			"business_impact": "上游干净结束但没有 finish_reason，已拒绝 response.completed，改为小的 response.failed",
+			"business_impact": "Upstream ended cleanly but without finish_reason; response.completed was rejected in favor of a small response.failed",
 		})
 		failed := buildResponsesEnvelope(respID, modelName, created)
 		failed["status"] = "failed"
@@ -1014,18 +1049,19 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 			"message": errStreamClosedWithoutFinish.Error(),
 		}
 		emit("response.failed", map[string]any{"response": failed})
-		log.Printf("[异常] traceId=%s requestId=%d 发生阶段=Responses收尾 账号=%s 结果=拒绝当成成功 原因=上游干净结束但没有 finish_reason 是否看到DONE=%t 已收到推理字符数=%d 已收到正文字符数=%d 工具调用数=%d 业务影响=不下发 output_item.done 和 response.completed，客户端收到 response.failed 是否已处理=是",
+		log.Printf("[Exception] traceId=%s requestId=%d stage=Responses finalize account=%s result=Refused to treat as success reason=Upstream ended cleanly but without finish_reason saw_DONE=%t reasoning_chars_received=%d body_chars_received=%d tool_call_count=%d business_impact=output_item.done and response.completed are not sent; the client receives response.failed handled=yes",
 			debugTraceID(r), reqID, acc.Path, sawDone, reasoningSB.Len(), msgSB.Len(), len(toolOrder))
 		recordModelLatency(modelName, time.Since(startTime))
 		return
 	}
 
-	// 若无任何输出，补一个空 message，保证 output 非空且事件序列完整
+	// If there is no output at all, add an empty message so output is non-empty
+	// and the event sequence is complete
 	if !reasoningOpen && !msgOpen && len(toolOrder) == 0 {
 		openMessage()
 	}
 
-	// 收尾：reasoning
+	// Finalize: reasoning
 	if reasoningOpen {
 		text := reasoningSB.String()
 		emit("response.reasoning_summary_text.done", map[string]any{"item_id": reasoningItemID, "output_index": reasoningIndex, "summary_index": 0, "text": text})
@@ -1035,7 +1071,7 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 		idxToItem[reasoningIndex] = item
 	}
 
-	// 收尾：message
+	// Finalize: message
 	if msgOpen {
 		text := msgSB.String()
 		emit("response.output_text.done", map[string]any{"item_id": msgItemID, "output_index": msgIndex, "content_index": 0, "text": text})
@@ -1045,7 +1081,7 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 		idxToItem[msgIndex] = item
 	}
 
-	// 收尾：function calls
+	// Finalize: function calls
 	for _, idx := range toolOrder {
 		st := toolCalls[idx]
 		args := st.Args.String()
@@ -1104,10 +1140,10 @@ func streamResponsesResponse(w http.ResponseWriter, r *http.Request, resp *http.
 		debugEvent(r, "info", "stream_response_completed", map[string]any{"status_code": http.StatusOK})
 	}
 	recordModelLatency(modelName, time.Since(startTime))
-	log.Printf("[#%d] Responses 流式输出完成 (账号 %s [%s], 耗时 %v, 首Token(v2) %s)", reqID, acc.Path, prof.Label, time.Since(startTime), body.text())
+	log.Printf("[#%d] Responses streaming output completed (account %s [%s], duration %v, first_token(v2) %s)", reqID, acc.Path, prof.Label, time.Since(startTime), body.text())
 }
 
-// compactUUID 返回去掉连字符的随机 UUID。
+// compactUUID returns a random UUID without hyphens.
 func compactUUID() string {
 	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }

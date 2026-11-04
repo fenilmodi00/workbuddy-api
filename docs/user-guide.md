@@ -1,8 +1,8 @@
 # WorkBuddy Local Gateway
 
-> 返回[项目首页](../README.md) · [目录与命名约定](project-layout.md) · [测试说明](../tests/README.md)
+> Back to [Project Home](../README.md) · [Directory & Naming Conventions](project-layout.md) · [Testing Notes](../tests/README.md)
 >
-> 本文是完整使用手册。以下源码构建和测试命令均在项目根目录执行，而不是在 `docs/` 内执行。
+> This is the complete user manual. All source build and test commands below run from the project root, not from inside `docs/`.
 
 <img width="2836" height="1858" alt="image" src="https://github.com/user-attachments/assets/ed6a66cf-9e3d-47f9-bfe8-ec4895a10a07" />
 
@@ -10,139 +10,139 @@
 <img width="917" height="754" alt="image" src="https://github.com/user-attachments/assets/7dcfc461-1357-4991-9565-279047687898" />
 
 
-基于腾讯 **CodeBuddy** 协议开发的**纯 Go、零 CGO 依赖、跨平台单二进制**本地 AI 代理网关。默认无 Web UI，全部通过命令行（CLI）完成登录、凭据续期与服务控制；可选开启网页管理台（`-webui`，见下文）。
+A local AI proxy gateway built on the Tencent **CodeBuddy** protocol: **pure Go, zero CGO dependencies, cross-platform single binary**. The Web UI is off by default; login, credential renewal, and service control are all done via the command line (CLI). An optional web console can be enabled (`-webui`, see below).
 
-**v1.14.0**：新增配置热生效、全局账号与模型网页开关、凭据 JSON 编辑、端口设置及日志保留/清理。旧配置缺省日志保留天数时不自动删除。请先升级二进制，再添加新增配置字段。
+**v1.14.0**: Adds config hot reload, global account and model web toggles, credential JSON editing, port settings, and log retention/cleanup. Old configs without a default log retention value are not auto-deleted. Upgrade the binary first, then add the new config fields.
 
-**v1.14.1**：网页凭据页已移除，新增只读定时任务时间页；执行记录来自现有后端日志，无新增调度模块。高频任务日志按分钟汇总，状态变化即时记录。
+**v1.14.1**: The web credentials page has been removed; a new read-only scheduled tasks time page is added; execution records come from the existing backend logs, with no new scheduling module. High-frequency task logs are aggregated per minute, and status changes are recorded immediately.
 
-**v1.14.38**：网页运行状态与告警行紧凑展示，完整告警改为悬浮/触摸详情；日志最新行置顶，标签栏等分且在超 4K 屏幕封顶。CLI 账号表按内容收紧列宽。API/Web 端口支持热切换，保留已有连接与流；端口绑定或调试日志准备失败时保留旧运行状态，并修复状态查询与端口更新之间的数据竞态。
+**v1.14.38**: The web run status and alert rows are displayed compactly, with full alerts moved to hover/touch details; the newest log lines are pinned to the top, tabs are evenly split and capped on screens over 4K. The CLI account table tightens column widths to fit content. API/Web ports support hot switching while preserving existing connections and streams; the previous run state is retained when port binding or debug-log preparation fails, and a data race between status queries and port updates is fixed.
 
-**v1.14.39**：网页轮询按稳定键复用账号/模型行，仅更新变化的单元格；相同统计数据复用图表。操作结果改为不挤动页面的浮层，修复深色主题成功提示变红及提示被无关轮询立即清除的问题。
+**v1.14.39**: Web polling reuses account/model rows by stable keys and only updates changed cells; identical statistics reuse charts. Operation results are now shown in an overlay that does not shift the page, fixing dark-theme success toasts turning red and toasts being cleared immediately by unrelated polling.
 
-**v1.14.40**：`identity` 默认映射补齐 `workspace root → workspace base` 与 `are paths the user → are paths that the user`。新装生成完整默认配置；旧配置升级只补缺失规则，不覆盖已有自定义值，也不重新启用已关闭的 `identity`。
+**v1.14.40**: The default `identity` mapping now includes `workspace root → workspace base` and `are paths the user → are paths that the user`. New installs generate a complete default config; upgrading old configs only fills in missing rules and never overwrites existing custom values or re-enables a disabled `identity`.
 
-**v1.14.41**：移除重复的 `promptCompatibility` 替换模块，文本替换统一使用 `identity.replacements`，七条默认规则和热加载保持不变。旧配置若仍有该字段，仅兼容读取并提示已忽略，不会阻止启动或继续执行旧规则。
+**v1.14.41**: Removes the duplicate `promptCompatibility` replacement module; text replacement now uniformly uses `identity.replacements`, with the seven default rules and hot reload unchanged. If an old config still has that field, it is read for compatibility and reported as ignored — it will not block startup or keep executing the old rules.
 
-**v1.14.42**：移除 Grok Build 对 `You are <任意标签> released by xAI.` 的通用自动身份改写；文本替换恢复为仅按 `identity.replacements` 明确词条执行。保留 Grok 静态默认规则、Chat 流式工具字段修复和 Messages thinking 起始字段修复。
+**v1.14.42**: Removes Grok Build's generic automatic identity rewrite of `You are <any tag> released by xAI.`; text replacement is restored to execute only the explicit entries in `identity.replacements`. Grok static default rules, the Chat streaming tool field fix, and the Messages thinking leading-field fix are retained.
 
-**v1.14.43**：把旧 DSH 身份句、GUI 环境句及两条固定模板改写统一迁入 `identity.replacements`，不再存在独立文字改写旁路。默认配置新增 `"You are(.*)released by xAI": "You are WorkBuddy"`，新装生成、旧配置升级启动自动补齐缺失项，已有自定义值及 `enabled:false` 保留。通配仅一个、首尾固定文本不能为空、不跨行、动态部分最多 256 个 Unicode 字符。`identity.enabled:false` 关闭全部这些文字替换；不影响消息角色等协议结构处理。
+**v1.14.43**: The old DSH identity sentence, GUI environment sentence, and two fixed template rewrites are unified into `identity.replacements`; there is no longer a separate text-rewrite bypass. The default config adds `"You are(.*)released by xAI": "You are WorkBuddy"`; new installs generate it and upgrades auto-fill missing entries at startup, while existing custom values and `enabled:false` are preserved. Only one wildcard is allowed, leading/trailing fixed text cannot be empty, no cross-line matching, and the dynamic part is limited to 256 Unicode characters. `identity.enabled:false` turns off all of these text replacements; protocol structure handling such as message roles is unaffected.
 
-**Grok Build 兼容**：`identity` 可按明确配置替换 Grok Build、Grok 及完整模型标签词条；请求 `model` 保持原样。
+**Grok Build compatibility**: `identity` can replace Grok Build, Grok, and full model-tag entries per explicit configuration; the request `model` is kept as-is.
 
-**v1.14.24**：Chat 流式响应增加首字节前 SSE 心跳与最多一次安全重放；DSH 身份句和 GUI 环境说明扩展覆盖 assistant 历史、后续文本块及配置注入提示词。默认开启，可通过 `upstream` 配置关闭重放。
+**v1.14.24**: Chat streaming responses gain an SSE heartbeat before the first byte and at most one safe replay; the DSH identity sentence and GUI environment note now also cover assistant history, subsequent text blocks, and config-injected prompts. Enabled by default; replay can be disabled via the `upstream` config.
 
-**v1.14.25**：Responses 的 namespace 子工具、custom 工具（如 `apply_patch`）和 web_search 不再被静默丢弃；恢复 `custom_tool_call` 与 namespace 输出形状。出站头补齐已采集的 WorkBuddy 桌面静态身份；system/developer/assistant 中的 Codex、DeepSeek Harness、Claude Code、ZCode 展示名统一为 `Assistant`。实测 `/v2/responses` 返回 404，上游路径仍为 `/v2/chat/completions`。
+**v1.14.25**: Responses namespace subtools, custom tools (such as `apply_patch`), and web_search are no longer silently dropped; the `custom_tool_call` and namespace output shapes are restored. Outbound headers now include the collected WorkBuddy desktop static identity; Codex, DeepSeek Harness, Claude Code, and ZCode display names in system/developer/assistant are unified to `Assistant`. Tested `/v2/responses` returns 404, so the upstream path remains `/v2/chat/completions`.
 
-**v1.14.26**：命名 `tool_choice` 改为上游接受的 `required` 字符串并只保留被选中的工具；修复 namespace/custom 强制工具调用被上游 11101 拒绝的问题。
+**v1.14.26**: A named `tool_choice` is now sent as the `required` string accepted by upstream and only the selected tool is kept; this fixes namespace/custom forced tool calls being rejected by upstream with 11101.
 
-**v1.14.27**：国内模型请求改用 `https://www.workbuddy.cn/v2/chat/completions`；认证、刷新和额度仍走原 `copilot.tencent.com` / `codebuddy.cn`，不受 ChatBase 影响。国际站保持 `www.workbuddy.ai`；实测国际 Token 请求 `copilot.tencent.com` 返回 401。
+**v1.14.27**: Domestic model requests now use `https://www.workbuddy.cn/v2/chat/completions`; authentication, refresh, and quota still go through the original `copilot.tencent.com` / `codebuddy.cn`, unaffected by ChatBase. The international site keeps `www.workbuddy.ai`; in testing, international token requests to `copilot.tencent.com` returned 401.
 
-**v1.14.28**：展示身份替换支持 `config.json` 的 `identity.enabled`、`identity.target` 和自定义 `identity.replacements`。
+**v1.14.28**: Display identity replacement supports `config.json`'s `identity.enabled`, `identity.target`, and custom `identity.replacements`.
 
-**v1.14.29**：新用户首次启动自动生成包含完整 identity 映射的 `config.json`；旧配置缺少 identity 时自动补充并保留其他字段；identity 为空、字段省略或 target 为空时使用默认 WorkBuddy，不阻断启动。`replacements` 支持任意用户自定义词，例如 `"kimi": "WorkBuddy"`。
+**v1.14.29**: On first startup, new users automatically get a `config.json` containing the full identity mapping; old configs missing identity are auto-supplemented with other fields preserved. When identity is empty, the field is omitted, or target is empty, the default WorkBuddy is used without blocking startup. `replacements` supports any user-defined words, e.g. `"kimi": "WorkBuddy"`.
 
-**v1.14.38**：`gateway.apiPort` / `gateway.webPort` 也纳入热加载：全部新监听绑定成功后才切换，已有连接与流式响应继续完成。网页总览压缩运行状态高度、告警正文改为悬浮详情，移除统计落盘徽标和摘要卡装饰；运行日志最新行置顶，选项卡在 4K 及以下居中占屏宽 5/6，4K 以上宽度封顶。CLI 状态表按实际内容收紧列宽，超长账号与文件名仍会截断并保持对齐。
+**v1.14.38**: `gateway.apiPort` / `gateway.webPort` are also hot-reloaded: switching happens only after all new listeners bind successfully, and existing connections and streaming responses finish normally. The web overview compresses run-status height and turns alert bodies into hover details; stats badges and summary card decorations are removed; the newest run-log line is pinned to the top; tabs are centered at 5/6 of the screen width at 4K and below and capped above 4K. The CLI status table tightens column widths to actual content; overly long account and file names are still truncated and stay aligned.
 
-**同时支持两个上游站点**（同一套 `/v2/plugin/*` 协议，凭据按站点隔离，账号池可混挂轮询）：
+**Both upstream sites are supported** (the same `/v2/plugin/*` protocol; credentials are isolated per site, and account pools can mix both):
 
-| 站点 | 上游 | 登录方式 | 登录命令 |
+| Site | Upstream | Login method | Login command |
 |---|---|---|---|
-| 国内站 | `copilot.tencent.com` / `www.codebuddy.cn` | 微信 / 企业微信扫码 | `login` |
-| 国际站 | `www.workbuddy.ai` | 浏览器内登录（邮箱 / 验证码 / SSO） | `login -intl` |
+| Domestic site | `copilot.tencent.com` / `www.codebuddy.cn` | WeChat / WeCom QR scan | `login` |
+| International site | `www.workbuddy.ai` | In-browser login (email / verification code / SSO) | `login -intl` |
 
 ---
 
-## 目录
+## Table of Contents
 
-- [核心特性](#核心特性)
-- [命令总览](#命令总览)
+- [Core Features](#core-features)
+- [Command Overview](#command-overview)
 - [serve](#serve)
 - [login](#login)
 - [status](#status)
 - [refresh](#refresh)
 - [monitor](#monitor)
-- [webui（网页控制台）](#webui网页控制台)
+- [webui (Web Console)](#webui-web-console)
 - [probe](#probe)
 - [reset](#reset)
 - [version / help](#version--help)
-- [多账号池](#多账号池)
-- [模型列表与倍率](#模型列表与倍率)
-- [客户端接入](#客户端接入)
-- [各平台部署](#各平台部署)
-- [安全提示](#安全提示)
-- [从源码构建](#从源码构建)
+- [Multi-Account Pool](#multi-account-pool)
+- [Model List and Multipliers](#model-list-and-multipliers)
+- [Client Integration](#client-integration)
+- [Platform Deployment](#platform-deployment)
+- [Security Notes](#security-notes)
+- [Building from Source](#building-from-source)
 
 ---
 
-## 核心特性
+## Core Features
 
-- **国内 / 国际双站反代**：两个站点走同一套协议，凭据通过 `edition` 字段区分，刷新与对话自动路由到各自上游。
-- **模型完全透传**：客户端传什么 `model` 就原样中继到上游，无白名单限制。`/v1/models` 仅用于客户端自动补全，不影响实际转发。
-- **模型列表双来源合并**：实时接口 + npm 静态目录，按 ID 去重、接口优先；失败用本地缓存，两边都失败且无缓存时该站点本轮不展示模型（不影响调用）。
-- **模型倍率与价格探测**：促销生效时展示 `credits` × factor；默认不主动探测，正常模型请求仍会学习免费 / 收费状态。仅显式传入 `-allow-price-probes` 才开启后台实测，真实生成请求可能消耗积分。
-- **多账号池 + 轮询负载均衡**：`-auth` 逗号分隔或 `-auth-dir` 目录，请求按 round-robin 分发；国内站与国际站账号可混挂。
-- **模型级隔离**：`6004` 只冷却触发它的账号 + 模型，`14018` 只阻断该账号的当前收费模型，不再因为一个模型拖垮整个账号。
-- **免费站点优先**：同一模型若「一个站点免费、另一个站点收费」，优先使用免费站点账号直至其受限；两个站点都收费（仅倍率不同）时不做倾斜，正常轮询。
-- **免费/收费学习**：按「账号 + 模型」从响应 `usage.credit` 学习；`credit=0` 且样本足够（`total_tokens ≥ 100`）才判定免费，避免小样本误判。
-- **国内站每日自动签到**：正常运行时每个国内个人账号每天在北京时间 `08:00–09:30` 独立随机签到；`08:00` 后启动或重启时，今天仍待签且未尝试的账号立即开始依次补签，前一请求完成后至少间隔 1 分钟。失败账号仍只在 `09:30–10:00` 重试一次；凭据热加载不直接触发补签，国际站及企业账号跳过。
-- **凭据热加载（免重启）**：默认每 5 秒扫描凭据来源，新增 / 更新 / 删除凭据免重启生效。
-- **授权失效自动禁用**：401/403 / `invalid token` / 登录过期时禁止调度、删除凭据文件并写入失效标记，重新 `login` 后自动恢复。
-- **后台自动续期**：每 5 分钟检查 Token，距过期不足 15 分钟自动刷新并写回凭据文件；另可按 `-keepalive-hours` 在固定时刻主动刷新全部账号（默认每天 22:00），避免长期空闲账号静默失效。
-- **流式分片规范化**：把上游每个分片携带的 `finish_reason:""` 归一化为 `null`，避免 Anthropic 翻译层误判 `stop_reason` 导致工具不执行。
-- **工具调用序列自愈**：出站前按 `tool_call_id` 修复并行调用中夹入 message 的历史结构，合并 Responses API 拆散的并行调用，并删除无配对调用、孤儿或重复结果，避免国际站返回 `11148 tool_call_sequence_broken`。
-- **OpenAI 兼容协议**：`/v1/chat/completions`（SSE 流式 + 非流式聚合）、`/v1/responses`（Responses API）、`/v1/models`、`/health`。
-- **Anthropic 协议原生入口**：`/v1/messages`（SSE 流式 + 非流式聚合）与 `/v1/messages/count_tokens`，Claude Code 等 Anthropic 客户端免外部翻译层直连，鉴权兼容 `x-api-key` 头。
-- **可选官方出站兼容**：`upstream.requestProfile="official"` 让三个协议入口共用参数、指令结构和出站逻辑；国内模型请求使用已采集桌面版本的静态头及 gzip。旧配置缺省为 `legacy`，不提升 user 角色、不强改思考档位、不替换原工具。详见[出站兼容说明](outbound-compatibility.md)。
+- **Dual-site domestic/international reverse proxy**: both sites use the same protocol; credentials are distinguished by the `edition` field, and refresh and chat requests are routed to their own upstream automatically.
+- **Full model passthrough**: whatever `model` the client sends is relayed to upstream unchanged, with no whitelist. `/v1/models` is only for client auto-completion and does not affect actual forwarding.
+- **Model list merged from two sources**: live API + static npm catalog, deduplicated by ID with the API taking priority; falls back to the local cache on failure. If both fail and there is no cache, that site shows no models this round (calls are unaffected).
+- **Model multiplier and price probing**: when a promo is active, `credits` × factor is shown; probing is off by default, and normal model requests still learn free/paid status. Only passing `-allow-price-probes` explicitly enables background probing; real generation requests may consume credits.
+- **Multi-account pool + round-robin load balancing**: comma-separated `-auth` or a `-auth-dir` directory; requests are dispatched round-robin. Domestic and international accounts can be mixed.
+- **Model-level isolation**: `6004` only cools down the account + model that triggered it; `14018` only blocks that account's current paid model — one model no longer drags down an entire account.
+- **Free-site priority**: if a model is "free on one site, paid on the other", accounts on the free site are preferred until they are restricted; when both sites are paid (only multipliers differ), no bias is applied and normal round-robin continues.
+- **Free/paid learning**: learned per "account + model" from the response's `usage.credit`; a model is only judged free when `credit=0` and the sample is large enough (`total_tokens ≥ 100`), avoiding false verdicts from small samples.
+- **Automatic daily checkin for the domestic site**: during normal operation, every domestic personal account independently checks in at a random time between `08:00–09:30` Beijing time each day. If started or restarted after `08:00`, accounts still pending checkin today that have not yet attempted start immediately, one after another, with at least a 1-minute gap after each preceding request. Failed accounts still retry only once during `09:30–10:00`; credential hot reload does not directly trigger makeup checkins, and international and enterprise accounts are skipped.
+- **Credential hot reload (no restart)**: credential sources are scanned every 5 seconds by default; added / updated / deleted credentials take effect without restarting.
+- **Auto-disable on authorization failure**: on 401/403 / `invalid token` / expired login, scheduling is suspended, the credential file is deleted, and a disabled marker is written; the account recovers automatically after a new `login`.
+- **Background auto-renewal**: tokens are checked every 5 minutes; when expiration is within 15 minutes, they are refreshed automatically and written back to the credential file. Additionally, `-keepalive-hours` can refresh all accounts proactively at a fixed time (default 22:00 daily), preventing long-idle accounts from silently expiring.
+- **Stream chunk normalization**: each upstream chunk's `finish_reason:""` is normalized to `null`, preventing the Anthropic translation layer from misjudging `stop_reason` and skipping tool execution.
+- **Tool-call sequence self-healing**: before sending out, history structures with interleaved messages in parallel calls are repaired by `tool_call_id`, parallel calls split apart by the Responses API are merged, and unpaired calls, orphans, or duplicate results are removed, preventing the international site from returning `11148 tool_call_sequence_broken`.
+- **OpenAI-compatible protocol**: `/v1/chat/completions` (SSE streaming + non-streaming aggregation), `/v1/responses` (Responses API), `/v1/models`, `/health`.
+- **Native Anthropic protocol entry**: `/v1/messages` (SSE streaming + non-streaming aggregation) and `/v1/messages/count_tokens`; Anthropic clients such as Claude Code connect directly without an external translation layer, and auth is compatible with the `x-api-key` header.
+- **Optional official outbound compatibility**: `upstream.requestProfile="official"` lets the three protocol entries share parameters, instruction structure, and outbound logic; domestic model requests use the collected static headers and gzip of a captured desktop build. Old configs default to `legacy`: no user-role promotion, no thinking-level overrides, and no tool replacement. See [outbound compatibility notes](outbound-compatibility.md) for details.
 
 ---
 
-## 命令总览
+## Command Overview
 
 ```text
 workbuddy-gateway [command] [options]
 
-命令:
-  serve     启动本地网关（默认命令，不带子命令时等同 serve）
-  login     登录并获取 / 更新凭据
-  status    查看账号池状态
-  refresh   手动刷新所有账号访问令牌
-  monitor   前台实时监控：账号表格 + 模型统计附表 + 最近日志
-  probe     主动探测账号对指定模型的免费 / 收费属性（需 serve 运行中）
-  reset     清空除登录凭据外的全部本地数据，并重新拉取模型与倍率
-  version   查看版本信息
-  help      查看帮助
+Commands:
+  serve     Start the local gateway (default command; without a subcommand this is the same as serve)
+  login     Log in and fetch / update credentials
+  status    Show account pool status
+  refresh   Manually refresh access tokens for all accounts
+  monitor   Foreground live monitoring: account table + model stats table + recent logs
+  probe     Actively probe whether accounts get a model for free or paid (requires serve to be running)
+  reset     Clear all local data except login credentials, and re-fetch models and multipliers
+  version   Show version info
+  help      Show help
 ```
 
-全局选项（对所有命令可用）：
+Global options (available for all commands):
 
-| 选项 | 默认 | 说明 |
+| Option | Default | Description |
 |---|---|---|
-| `-addr <ip>` | `127.0.0.1` | 网关监听地址 |
-| `-port <port>` | `8317` | API 监听端口；显式传入时覆盖 `config.json` 的 `gateway.apiPort` |
-| `-auth <path>` | 自动发现 | 凭据文件路径，支持逗号分隔多个 |
-| `-auth-dir <dir>` | 空 | 凭据目录，自动加载目录内所有 `workbuddy*.json` |
-| `-proxy <url>` | 空 | 上游请求代理，如 `http://127.0.0.1:7890`、`socks5://...` |
-| `-verbose` | `false` | 输出详细调试日志 |
-| `-intl` | `false` | 仅 `login` 生效：登录国际站 |
-| `-reload-interval <sec>` | `5` | 凭据热加载扫描间隔，`0` 关闭 |
-| `-models-refresh <min>` | `60` | 模型目录刷新间隔，`0` 关闭 |
-| `-allow-price-probes` | `false` | 允许后台自动价格探测；会发起真实模型生成请求，可能消耗积分。默认关闭，不影响正常请求学习、目录刷新及显式 `probe` 命令 |
-| `-webui` | `false` | 启用独立网页控制台（默认 `http://127.0.0.1:8316/ui/`）；管理 Key 与模型 API 鉴权由 `config.json` 配置 |
+| `-addr <ip>` | `127.0.0.1` | Gateway listen address |
+| `-port <port>` | `8317` | API listen port; when passed explicitly it overrides `config.json`'s `gateway.apiPort` |
+| `-auth <path>` | Auto-discovery | Credential file path(s); supports a comma-separated list |
+| `-auth-dir <dir>` | Empty | Credential directory; automatically loads all `workbuddy*.json` inside |
+| `-proxy <url>` | Empty | Upstream request proxy, e.g. `http://127.0.0.1:7890`, `socks5://...` |
+| `-verbose` | `false` | Output verbose debug logs |
+| `-intl` | `false` | Only effective for `login`: log in to the international site |
+| `-reload-interval <sec>` | `5` | Credential hot-reload scan interval; `0` disables |
+| `-models-refresh <min>` | `60` | Model catalog refresh interval; `0` disables |
+| `-allow-price-probes` | `false` | Allow background automatic price probing; sends real model generation requests that may consume credits. Off by default and does not affect normal request learning, catalog refresh, or the explicit `probe` command |
+| `-webui` | `false` | Enable the standalone web console (default `http://127.0.0.1:8316/ui/`); the admin key and model API auth are configured in `config.json` |
 
-**价格探测默认关闭（含旧版本升级）**：只有显式指定 `-allow-price-probes` 或 `-allow-price-probes=true` 才开启后台价格探测。旧启动脚本中的 `-disable-price-probes` 仍可使用；两个参数同时传入且旧禁用参数为 `true` 时，禁用优先，与参数顺序无关。仅传入 `-disable-price-probes=false` 不会开启探测。此开关是启动参数，修改后需重启服务。
+**Price probing is off by default (including upgrades from old versions)**: background price probing only starts when `-allow-price-probes` or `-allow-price-probes=true` is passed explicitly. `-disable-price-probes` from old startup scripts still works; when both flags are passed and the old disable flag is `true`, disabling wins regardless of order. Passing only `-disable-price-probes=false` does not enable probing. This switch is a startup flag; changing it requires a service restart.
 
 ```bash
-# 默认不主动生成价格探测请求；正常客户端请求仍自动学习计费状态
+# Default: no proactive price probe requests; normal client requests still learn billing status automatically
 workbuddy-gateway serve -webui
 
-# 明确允许主动探测；可能产生额外积分消耗
+# Explicitly allow proactive probing; may cause extra credit consumption
 workbuddy-gateway serve -webui -allow-price-probes
 ```
 
-### 配置网页控制台与模型 API 鉴权
+### Configuring the Web Console and Model API Auth
 
-工作目录 `config.json` 的 `gateway` 段控制监听端口、网页控制台管理 Key 和模型 API 鉴权，全部为明文配置（`config.json` 已被 Git 忽略，请自行限制文件权限）：
+The `gateway` section of the working directory's `config.json` controls listen ports, the web console admin key, and model API auth. All values are stored in plaintext (`config.json` is Git-ignored; restrict its file permissions yourself):
 
 ```json
 {
@@ -156,21 +156,21 @@ workbuddy-gateway serve -webui -allow-price-probes
 }
 ```
 
-| 配置 | 默认 | 说明 |
+| Config | Default | Description |
 |---|---|---|
-| `apiPort` | `8317` | 模型 API 监听端口，省略或 `0` 使用默认值；也可用 `-port` 临时覆盖 |
-| `webPort` | `8316` | 网页控制台监听端口，省略或 `0` 使用默认值；仅在显式 `-webui` 时监听 |
-| `adminKey` | `""` | 网页控制台管理 Key，有两种设置方式：**① 页面一键生成**——为空时在服务器本机（或 SSH 本地端口转发）打开网页，生成 32 字符随机 Key 写入本文件，并在弹窗中**仅展示一次**；**② 手动编辑本文件**——直接把本字段改成任意随机字符串（建议 32 位），保存后约 1 秒热生效。设置完成后可从其他设备用该 Key 登录 |
-| `apiKeyEnabled` | `false` | 模型 API 是否校验 Key。关闭时不带 Key 或任意 Key 均可调用模型；开启时必须匹配 `apiKey` |
-| `apiKey` | `""` | 模型 API Key。开启校验时必须非空；关闭时保留原值，重新开启即可继续使用 |
+| `apiPort` | `8317` | Model API listen port; omitted or `0` uses the default; can also be temporarily overridden with `-port` |
+| `webPort` | `8316` | Web console listen port; omitted or `0` uses the default; only listens when `-webui` is passed explicitly |
+| `adminKey` | `""` | Web console admin key, settable two ways: **① One-click generation on the page** — when empty, open the page on the server itself (or via SSH local port forwarding); a random 32-character key is generated, written to this file, and shown **only once** in a dialog. **② Edit this file manually** — set the field directly to any random string (32 characters recommended); it takes effect hot in about 1 second after saving. Once set, other devices can log in with this key |
+| `apiKeyEnabled` | `false` | Whether the model API validates a key. When off, calls work with no key or any key; when on, the key must match `apiKey` |
+| `apiKey` | `""` | Model API key. Must be non-empty when validation is on; when off, the existing value is preserved and reused once you re-enable |
 
-网页控制台也可在「访问设置」页切换 `apiKeyEnabled` 并设置 `apiKey`，保存后立即生效并写回本文件。`gateway.apiPort` / `gateway.webPort` 也支持热切换：先校验并绑定新端口，再关闭旧监听；已有连接和正在输出的流不主动中断。管理 Key 与模型 API Key **相互独立**：关闭模型 API 鉴权不会关闭管理鉴权，模型 API Key 也不能登录网页控制台。为避免他人抢先生成，**页面一键生成**管理 Key 只允许本机访问；**手动编辑 `config.json` 设置 `gateway.adminKey`** 不受此限制，效果与一键生成完全相同。
+The web console can also toggle `apiKeyEnabled` and set `apiKey` on the "Access Settings" page; saving takes effect immediately and is written back to this file. `gateway.apiPort` / `gateway.webPort` also support hot switching: the new port is validated and bound first, then the old listener closes; existing connections and in-flight streams are not interrupted. The admin key and model API key are **independent**: disabling model API auth does not disable admin auth, and the model API key cannot log into the web console. To prevent someone else generating the key first, **one-click generation** of the admin key only works from the local machine; **manually editing `config.json` to set `gateway.adminKey`** has no such restriction and is exactly equivalent to one-click generation.
 
-> **升级顺序（重要）**：新版本能读取不含 `gateway` 段的旧配置，但**旧版本二进制遇到含 `gateway` 段的新配置会启动失败**（`json: unknown field "gateway"`）。请**先替换二进制、再添加 `gateway` 配置**。
+> **Upgrade order (important)**: the new version can read old configs without a `gateway` section, but **old binaries fail to start on new configs containing a `gateway` section** (`json: unknown field "gateway"`). **Replace the binary first, then add the `gateway` config.**
 
-### JSON 调试日志
+### JSON Debug Logs
 
-工作目录中的 `config.json` 控制结构化调试日志，默认关闭。修改后约 1 秒热生效，无需重启：
+`config.json` in the working directory controls structured debug logging, off by default. Changes take effect hot in about 1 second, no restart needed:
 
 ```json
 {
@@ -181,13 +181,13 @@ workbuddy-gateway serve -webui -allow-price-probes
 }
 ```
 
-`config.example.json` 和首次部署的默认配置都会显式写出 `enabled: false`、`fullRequests: false` 作为占位。
-缺少 `debug` 段、`debug` 为 `null`/空对象/空字符串、或两个值缺失/为空时均按 `false` 处理，
-不会阻断程序启动；`0/1` 和 `"true"/"false"` 也会被容错解析，未知的 debug 子字段会被忽略。
+`config.example.json` and the default config generated on first deployment explicitly write `enabled: false` and `fullRequests: false` as placeholders.
+A missing `debug` section, a `debug` that is `null`/empty object/empty string, or missing/empty values are all treated as `false`,
+and never block startup; `0/1` and `"true"/"false"` are also parsed tolerantly, and unknown debug subfields are ignored.
 
-开启后，网关把单行 JSON 写入 `logs/debug-YYYY-MM-DD.jsonl`；普通运行日志仍写入原来的 `logs/gateway-YYYY-MM-DD.log`，两者互不替代。可复制 `config.example.json` 作为起点。
+When enabled, the gateway writes single-line JSON to `logs/debug-YYYY-MM-DD.jsonl`; normal run logs still go to the original `logs/gateway-YYYY-MM-DD.log` — neither replaces the other. Copy `config.example.json` as a starting point.
 
-### 日志保留与清理
+### Log Retention and Cleanup
 
 ```json
 {
@@ -197,15 +197,15 @@ workbuddy-gateway serve -webui -allow-price-probes
 }
 ```
 
-- `retentionDays` 范围为 `0～36500`：`0` 或省略表示保留全部，兼容旧配置；`7` 表示按服务器本地日期保留今天及此前 6 天。**设为正数后会自动删除过期日志，删除不可撤销。**
-- 配置热加载后应用新规则；启动/规则变化时扫描，此后每小时自动扫描。网页「日志」页可以保存保留天数，也可以立即按已保存规则清理。
-- 只删除 `logs/` 内日期合法的 `gateway-*.log`、`debug-*.jsonl`、`deployment-*.jsonl`、`frontend-*.log`；不跟随符号链接，不删除目录、凭据、配置、报告或其他文件，不删除正在写入的日志。
-- 普通日志和调试日志在跨午夜后的下一次写入切换到新日期文件。尚未切换的旧日志保持保护，关闭后在后续扫描清理。
-- 请先替换新二进制，再添加 `logs` 段；旧二进制可能因未知配置字段拒绝启动。
+- `retentionDays` ranges from `0–36500`: `0` or omitted keeps everything, compatible with old configs; `7` keeps today and the previous 6 days by the server's local date. **Once set to a positive number, expired logs are deleted automatically, and deletion is irreversible.**
+- New rules apply after config hot reload; a scan runs at startup/on rule change, then automatically every hour. The web "Logs" page can save the retention days and also trigger cleanup under the saved rules immediately.
+- Only `gateway-*.log`, `debug-*.jsonl`, `deployment-*.jsonl`, and `frontend-*.log` files with valid dates inside `logs/` are deleted; symlinks are not followed, and directories, credentials, configs, reports, or other files are never deleted, nor logs currently being written.
+- Normal and debug logs switch to the new date's file on the first write after midnight. Old logs not yet switched remain protected and are cleaned up in later scans after retention is enabled.
+- Replace the binary first, then add the `logs` section; old binaries may refuse to start over the unknown config field.
 
-### 配置系统提示词
+### Configuring the System Prompt
 
-工作目录 `config.json` 的 `systemPrompt` 段有两个独立选项（修改后约 1 秒热生效）：
+The `systemPrompt` section of the working directory's `config.json` has two independent options (hot-effective in about 1 second after changes):
 
 ```json
 {
@@ -216,14 +216,14 @@ workbuddy-gateway serve -webui -allow-price-probes
 }
 ```
 
-| 配置 | 空值的默认行为 | 非空时的行为 |
+| Config | Behavior when empty | Behavior when non-empty |
 |---|---|---|
-| `fallback` | 继续使用 `You are a helpful assistant.` | **仅在客户端没有任何 system 时**，替换网关注入的保底提示词；已有 system 不变 |
-| `force` | 不启用；请求提示词完全按原规则处理 | **实验功能**：在 Chat、Responses、Anthropic Messages 三个入口的首条 system 内容**末尾追加**配置文本（后置），使其成为位置最靠后、紧贴用户消息的指令；原 system 内容仍完整保留 |
+| `fallback` | Continue using `You are a helpful assistant.` | **Only when the client sends no system content**, replaces the gateway's built-in fallback prompt; existing system content is unchanged |
+| `force` | Disabled; the request prompt is processed entirely by the normal rules | **Experimental feature**: **appends** the configured text (post-positioned) to the **end of the first system content** in the Chat, Responses, and Anthropic Messages entries, making it the last, closest-to-user-message instruction; the original system content is fully preserved |
 
-例如 `{"systemPrompt":{"fallback":"你是一个助手。","force":"请用中文回答。"}}`：客户端没有 system 时，发往上游的是 `你是一个助手。\n\n请用中文回答。`；客户端自带 system 时，发往上游的是 `<客户端原 system>\n\n请用中文回答。`。配置值仅支持 JSON 字符串；空串或全空白视为未配置。不会写出或替换客户端的 user、assistant、tool 消息，也不改变账号选择。普通日志和普通 JSON 调试模式只记录规则分支、位置与字符数；显式开启 `debug.fullRequests` 后，完整请求事件会包含处理前后的提示词正文。
+For example `{"systemPrompt":{"fallback":"You are an assistant.","force":"Answer in Chinese."}}`: when the client has no system, what goes upstream is `You are an assistant.\n\nAnswer in Chinese.`; when the client brings its own system, what goes upstream is `<client's original system>\n\nAnswer in Chinese.`. Config values only support JSON strings; empty or all-whitespace strings count as unset. Client user, assistant, and tool messages are never written out or replaced, and account selection is unaffected. Normal logs and normal JSON debug mode only record the rule branch, position, and character counts; with `debug.fullRequests` explicitly on, full request events include the prompt bodies before and after processing.
 
-**展示身份替换**（热生效）：
+**Display identity replacement** (hot-effective):
 
 ```json
 {
@@ -251,24 +251,24 @@ workbuddy-gateway serve -webui -allow-price-probes
 }
 ```
 
-- 省略 `identity` 时默认把已知 Harness 名称替换成 `WorkBuddy`，并补齐 `workspace root → workspace base`、`are paths the user → are paths that the user` 两条等义兼容替换。
-- Grok Build 和其他模型标签均按 `identity.replacements` 中的配置处理；默认首位通配处理 `You are … released by xAI`，不由独立客户端识别代码猜测身份。模型选择及请求 `model` 保持原样。
-- 如需不同的改写结果，可修改完整词条或下述受限首位通配规则。启动时补充缺失默认词条，热加载使用配置中的映射。真实上游接受情况尚未验证。
-- `target` 可选 `Assistant` 或 `WorkBuddy`；想更接近官方文案可用 `WorkBuddy`。
-- `enabled:false` 关闭替换。
-- 需要逐词控制时加 `replacements`，例如：
+- When `identity` is omitted, known Harness names are replaced with `WorkBuddy` by default, plus the two equivalent compatibility replacements `workspace root → workspace base` and `are paths the user → are paths that the user`.
+- Grok Build and other model tags are handled per the configuration in `identity.replacements`; the default leading wildcard handles `You are … released by xAI` rather than guessing identity from client detection code. Model selection and the request `model` stay unchanged.
+- For different rewrite results, edit the full entries or the restricted leading wildcard rule below. Missing default entries are added at startup, and hot reload uses the configured mapping. Real upstream acceptance has not been verified.
+- `target` can be `Assistant` or `WorkBuddy`; use `WorkBuddy` to stay closer to the official wording.
+- `enabled:false` turns off replacement.
+- For word-by-word control, add `replacements`, e.g.:
   ```json
   {"identity":{"enabled":true,"target":"WorkBuddy","replacements":{"Codex":"WorkBuddy","DeepSeek Harness":"WorkBuddy"}}}
   ```
-- 只处理 system/developer/assistant 文本；user、tool、reasoning 和工具参数不改。官方版不经过网关，原文不会被改写。
+- Only system/developer/assistant text is processed; user, tool, reasoning, and tool arguments are untouched. The official version bypasses the gateway, so its text is never rewritten.
 
-#### 配置文字替换与受限首位通配
+#### Configuring Text Replacement and the Restricted Leading Wildcard
 
-当前完整默认配置见 `config.example.json`，共 **15 条规则：14 条普通字面规则及 1 条受限首位通配**。旧 DSH 身份长句、GUI 的已知完整两句开头、Claude CLI 模板及 Main branch 模板都已成为可编辑的普通词条；匹配引擎不再识别特定客户端或写死这些句子。新用户首次启动生成全部规则；旧配置升级启动时补齐缺失项，已有自定义值、通配映射及关闭开关保留，不覆盖其他配置。
+The current complete default config is in `config.example.json`, with **15 rules total: 14 plain literal rules and 1 restricted leading wildcard**. The old DSH identity long sentence, the GUI's known full two-sentence opening, the Claude CLI template, and the Main-branch template are all ordinary editable entries now; the matching engine no longer recognizes specific clients or hard-codes these sentences. First-time users get all rules generated; upgrades fill in missing entries at startup, and existing custom values, wildcard mappings, and the enable switch are preserved — no other config is overwritten.
 
-普通词条仍区分大小写、按原文全局字面匹配，包括 system/assistant 正文及其中的代码示例；旧 DSH 专用的大小写忽略、偏移零检查和 GUI 代码区域判定不再作为特殊旁路存在。若只允许开头匹配，使用下面的显式通配规则。用户消息和工具数据始终不参与。
+Plain entries are still case-sensitive, matched globally as literals against the original text, including system/assistant bodies and code examples within them; the old DSH-specific case-insensitive matching, offset-zero checks, and GUI code-region detection no longer exist as special bypasses. To allow only leading matches, use the explicit wildcard rule below. User messages and tool data are always excluded.
 
-本版默认生成并为升级用户自动补齐下面这一项。也可以在现有 `identity.replacements` 中调整它；不要用片段覆盖自己的完整配置或 Key：
+This version generates the following entry by default and auto-fills it for upgraded users. You can also adjust it in your existing `identity.replacements`; do not overwrite your full config or keys with a fragment:
 
 ```json
 {
@@ -276,110 +276,110 @@ workbuddy-gateway serve -webui -allow-price-probes
 }
 ```
 
-例如 `You are Gemini 2.5 Pro released by xAI. Keep tools.` 变为 `You are WorkBuddy. Keep tools.`。匹配后面的句号、换行、正文逐字保留。该规则不判断客户端来源或句子语义：本版默认启用后，任何允许角色中符合句式的文字都可能命中，包括某些正常任务说明。若要更精确地区分句号与域名后缀，可把固定后缀写成 `released by xAI.`，并相应在替换值中保留句号。
+For example, `You are Gemini 2.5 Pro released by xAI. Keep tools.` becomes `You are WorkBuddy. Keep tools.`. The trailing period, newlines, and body after the match are preserved verbatim. This rule does not judge client origin or sentence semantics: once enabled by default in this version, any text matching the pattern in allowed roles may hit, including some normal task instructions. To better distinguish a period from a domain suffix, you can set the fixed suffix to `released by xAI.` and keep the period in the replacement value accordingly.
 
-安全边界：
+Safety boundaries:
 
-- 只有精确的 `(.*)` 具有通配含义，其余字符全部按字面处理，不支持完整正则、捕获引用或 `$1` 展开。
-- 一条键中最多一个 `(.*)`；前后固定文本必须各自包含非空白字符，键本身不能跨行。裸 `(.*)`、`(.*)后缀`、`前缀(.*)` 和多个通配符会被忽略并告警，不影响其他有效规则。
-- 只从每个标准文本块的第一个字符匹配，不自动跳过空白，也不搜索中间或第二行；前后缀区分大小写。
-- 动态部分不跨 CR/LF，最多 256 个 Unicode 字符；匹配第一个固定后缀即结束，不向后贪婪吞掉后续段落。显式前后缀覆盖整个短文本时仍会替换该段，这是规则本身要求的结果。
-- 按固定文本长度从长到短执行，同长度字面规则优先；每轮对一个文本块最多命中一条通配规则。普通词条仍可能继续处理前面规则产生的文本。
-- 保存配置后支持热加载；非法规则会记录数量与原因，不把规则或提示词正文写入普通日志。
+- Only the exact `(.*)` has wildcard meaning; every other character is treated literally. Full regex, capture references, and `$1` expansion are not supported.
+- At most one `(.*)` per key; the fixed text before and after must each contain non-whitespace characters, and the key itself cannot span lines. Bare `(.*)`, `(.*)suffix`, `prefix(.*)`, and multiple wildcards are ignored with a warning, leaving other valid rules unaffected.
+- Matching starts only from the first character of each standard text block; whitespace is not skipped automatically, and no middle-of-text or second-line searching. Prefix and suffix are case-sensitive.
+- The dynamic part cannot span CR/LF and is capped at 256 Unicode characters; matching ends at the first fixed suffix, without greedily swallowing later paragraphs. When explicit prefix and suffix cover the entire short text, that text is still replaced — a consequence the rule requires.
+- Rules execute from longest to shortest fixed text, with same-length literal rules first; at most one wildcard rule may hit per text block per round. Plain entries may still process text produced by earlier rules.
+- Hot reload is supported after saving the config; invalid rules are logged with counts and reasons, and rule or prompt bodies are never written to normal logs.
 
-省略或清空 `replacements` 仍按原配置设计使用默认规则；若要完全不做文字替换，请用 `identity.enabled:false`。运行中删除词条会在热加载后移除该规则，但启动迁移仍会补回缺失的内置词条；要跨重启停用某条内置规则，可将它映射为自身（包括通配键，匹配到的原始文本会保留，不会插入字面的 `(.*)`），并检查其他较短词条是否也能命中同一文本。
+Omitting or emptying `replacements` still uses the default rules as originally designed; to disable text replacement entirely, use `identity.enabled:false`. Deleting an entry while running removes the rule after hot reload, but startup migration still restores missing built-in entries; to disable a built-in rule across restarts, map it to itself (including wildcard keys — the matched original text is preserved and the literal `(.*)` is never inserted), and check whether other shorter entries could also match the same text.
 
-`systemPrompt.fallback/force` 仍是独立的显式配置功能；`developer → system`、缺少 system 时补保底、official 模式合并连续 system 等是协议结构兼容，不属于词条替换，也不会随 identity 开关关闭。
+`systemPrompt.fallback/force` remain independent explicit config features; `developer → system`, filling the fallback when system is missing, and merging consecutive systems in official mode are protocol-structure compatibility behaviors — not entry replacement — and are not turned off by the identity switch.
 
-> **实验功能风险自负：** `force` 后置于 system 末尾（紧贴用户消息），因此比客户端自带指令更"新近"，冲突时通常更有影响力——这正是人设类、风格类指令希望达到的效果，但也可能与客户端的 system 指令冲突、改变模型行为、增加 token 消耗，或触发上游内容/参数校验。需要回退时将 `force` 改回 `""` 并保存；建议先在测试会话验证，切勿在配置中写入密码、密钥或个人隐私。`config.json` 已被 Git 忽略，不要将真实配置提交到仓库。
+> **Experimental feature, use at your own risk:** `force` is appended to the end of system (right next to the user message), making it "more recent" than the client's own instructions and usually more influential on conflict — exactly the effect persona- and style-type instructions want, but it may also conflict with the client's system instructions, change model behavior, increase token usage, or trigger upstream content/parameter validation. To roll back, set `force` back to `""` and save; validate in a test session first, and never put passwords, keys, or personal privacy into the config. `config.json` is Git-ignored; do not commit your real config to the repository.
 
-`/v1/messages/count_tokens` 仅对客户端提供的内容做本地近似估算，不调用上游，也不计入网关随后注入的 `fallback` / `force` 文本；最终消耗以模型返回的 usage 为准。
+`/v1/messages/count_tokens` performs only a local approximation over client-provided content; it does not call upstream and does not count the `fallback` / `force` text the gateway injects afterward; final consumption is governed by the usage the model returns.
 
-### 套餐识别与官网一致性
+### Plan Recognition and Official-Site Consistency
 
-从 v1.13.9 起，账号套餐不再仅凭 `ProTrialStatus=1` 判定为“Pro试用”。每轮额度刷新会额外调用官网的只读通用资源接口，根据有效状态、权益起止时间及当前订阅信息确认套餐：
+Since v1.13.9, an account plan is no longer judged "Pro trial" merely from `ProTrialStatus=1`. Each quota refresh also calls the official site's read-only general resource endpoint, confirming the plan from active status, entitlement start/end times, and current subscription info:
 
-- 查询不限定 `PackageCodes`，支持分页；官网新增套餐编码不会被固定名单漏掉。
-- 名称按站点区分：国内站四档规范显示为 **体验版 / 标准版 / 高级版 / 旗舰版**；国际站保留 **免费 / pro / Pro试用**。国内标准版不会误标为国际站 pro。
-- 新套餐优先显示接口返回的 `PackageName`，历史套餐也不会强行归入四档。新编码没有名称时显示“未识别订阅”，不猜成 Free 或 Pro。
-- 赠送积分包、加量包不当成订阅；额度用尽但权益未到期的套餐仍保留套餐身份。
-- 已过期、退款、尚未生效的权益不当成当前套餐。试用标记仍为 `1`，但已无有效试用且只有 Free 权益时，显示“免费”。
-- 查询失败或遇到无法解释的字段/子产品时，已有核验结果标 `*`（待刷新），无核验结果显示“待确认”。额度查询成功时仍正常更新额度，不因套餐识别失败丢弃额度。
-- 快照增加 `planCheckedAt`、`planStale` 字段。旧版本未核验的套餐标签不会作为可信结果沿用；新版本启动后会重新校验。
+- Queries are not limited to `PackageCodes` and support pagination; new plan codes from the official site will not be missed by a fixed list.
+- Names are per-site: the four domestic tiers display canonically as **Experience / Standard / Advanced / Flagship**; the international site keeps **Free / pro / Pro trial**. The domestic Standard tier is no longer mislabeled as the international pro.
+- New plans preferentially show the `PackageName` returned by the API, and historical plans are never forced into the four tiers. New codes without names show "Unrecognized subscription" instead of being guessed as Free or Pro.
+- Bonus credit packs and top-up packs are not treated as subscriptions; a plan whose quota is exhausted but whose entitlement has not expired keeps its plan identity.
+- Expired, refunded, or not-yet-active entitlements are not treated as the current plan. The trial flag is still `1`, but when there is no active trial and only Free entitlements, "Free" is shown.
+- When the query fails or hits unexplainable fields/sub-products, an existing verified result is marked `*` (pending refresh), and an unverified result shows "Unconfirmed". Quota queries still update normally on success; quota is not dropped because plan recognition failed.
+- Snapshots gain `planCheckedAt` and `planStale` fields. Unverified plan labels from old versions are not carried forward as trusted results; the new version re-verifies after startup.
 
-兼容边界：同一产品和资源字段结构下新增套餐通常可直接展示官方名称；若官网改变产品编码、接口、状态枚举或权益规则，仍可能需要更新程序。这不是对未来任意接口变更的保证。此过程只查询会员/额度信息，不领取试用、不购买/续费，也不请求模型。
+Compatibility boundary: with the same product and resource field structures, newly added plans usually display the official name directly; if the official site changes product codes, APIs, status enums, or entitlement rules, a program update may still be needed. This is not a guarantee against any future API change. This process only queries membership/quota info — it never claims trials, purchases/renewals, or requests models.
 
-### 企业成员账号
+### Enterprise Member Accounts
 
-凭据中的 `account.enterpriseId` 非空时，额度查询改用只读接口
-`POST /v2/billing/meter/get-enterprise-user-usage`，不再把个人资源包为空误判成企业额度耗尽。
+When `account.enterpriseId` in the credentials is non-empty, quota queries use the read-only endpoint
+`POST /v2/billing/meter/get-enterprise-user-usage`, and an empty personal resource pack is no longer misjudged as enterprise quota exhaustion.
 
-- `limitNum` 是分配给这个成员的额度，`credit` 是本周期已用；剩余为 `max(0, limitNum - credit)`，保留小数。兼容 `limit_num`、`used_num`、`usedNum`。
-- `limitNum = -1` 表示不限量，总额度与剩余额度显示「不限」；它不是余额为零，也不是查询未知。
-- 显示「企业版」只表示账号类型，不推断个人套餐等级、企业管理员身份或企业池总额度。成员额度与企业池余额是两回事。
-- 企业号跳过个人签到，令牌续期与额度扫描继续执行。企业额度恢复后自动清除模型额度阻断，但保留账号/模型限流冷却；真实模型请求若返回 `14018`，仍会阻断，不能用「不限量」绕过上游拒绝。
-- 企业接口超时、失败、缺少额度/已用字段、字段冲突或数值无效时，保留上次额度并标记待刷新，不把失败当成 0，也不自动切回个人接口。
-- 以上分支已由本地模拟上游、三个 API 入口集成测试及网页测试覆盖；没有企业凭据的环境不能据此声称已完成真实企业账号联调。
+- `limitNum` is the quota assigned to this member and `credit` is what has been used this period; remaining is `max(0, limitNum - credit)`, keeping decimals. Compatible with `limit_num`, `used_num`, `usedNum`.
+- `limitNum = -1` means unlimited; total and remaining quota display "Unlimited". It is not a zero balance nor an unknown query.
+- Showing "Enterprise" only indicates the account type; it does not infer personal plan level, enterprise admin status, or the enterprise pool's total quota. Member quota and enterprise pool balance are two different things.
+- Enterprise accounts skip personal checkins; token renewal and quota scans continue. Once enterprise quota recovers, model quota blocks are cleared automatically, but account/model rate-limit cooldowns are preserved; if a real model request returns `14018`, it is still blocked — "unlimited" cannot bypass an upstream rejection.
+- On enterprise API timeout, failure, missing quota/used fields, field conflicts, or invalid values, the last quota is kept and marked pending refresh; failure is not treated as 0, and it does not auto-switch back to the personal endpoint.
+- These branches are covered by local upstream mocks, integration tests across the three API entries, and web tests; environments without enterprise credentials cannot claim real enterprise account integration has been completed.
 
-### 登录凭据自动续期（保活）
+### Automatic Login Credential Renewal (Keepalive)
 
-登录凭据分两种令牌：**访问令牌**用于请求模型和查询额度；**刷新令牌**用于换取新的访问令牌。刷新令牌本身也有有效期，一旦它到期或被上游判定失效，就必须重新 `login`，程序无法绕过。
+Login credentials involve two tokens: the **access token** is used to request models and query quota; the **refresh token** is used to obtain new access tokens. The refresh token itself also expires — once it does, or upstream rejects it, you must `login` again; the program cannot bypass this.
 
-从 v1.13.11 起，网关同时使用两条触发路径续期：
+Since v1.13.11, the gateway renews through two trigger paths:
 
-| 触发方式 | 时机 | 说明 |
+| Trigger | Timing | Description |
 |---|---|---|
-| 临近过期续期 | 后台每 5 分钟检查，访问令牌剩余不足 15 分钟时刷新 | 保证请求不会用到过期令牌 |
-| **主动定时续期** | `-keepalive-hours` 指定的本地时刻（默认 `22`，即每天 22:00） | 不等访问令牌临近过期就刷新全部账号，避免长期空闲账号静默失效 |
+| Near-expiry renewal | background check every 5 minutes; refreshes when the access token has less than 15 minutes left | Ensures requests never use an expired token |
+| **Proactive scheduled renewal** | local time given by `-keepalive-hours` (default `22`, i.e. 22:00 daily) | Refreshes all accounts before the access token nears expiry, preventing long-idle accounts from silently expiring |
 
 ```bash
-# 默认每天 22:00 主动续期
+# Default: proactive renewal daily at 22:00
 workbuddy-gateway serve
 
-# 每天 10:00 和 22:00 各一次
+# Daily at 10:00 and 22:00
 workbuddy-gateway serve -keepalive-hours 10,22
 
-# 关闭主动续期，只保留临近过期时的按需刷新
+# Disable proactive renewal; keep only on-demand refresh near expiry
 workbuddy-gateway serve -keepalive-hours ""
 ```
 
-实现要点：
+Implementation notes:
 
-- **只调刷新接口**，不请求模型、不消耗额度、不产生对话记录。
-- **串行 + 节流**：账号之间间隔 1 秒逐个刷新，避免批量并发刷新形成机器特征。
-- **启动补跑**：距上次成功续期超过 20 小时的账号，在服务启动 90 秒后补做一轮，避免重启错过时刻。
-- **失败不轻易删号**：单次失败只累计计数并保留原凭据；连续失败 3 次才判定登录态失效并停止调度。上游明确返回会话失效（如 `12153` / `invalid_grant`）时首次即告警，但仍保留凭据等待阈值。
-- **记录续期元数据**：刷新成功后把 `refreshExpiresAt`、`lastRefreshTime` 写回凭据文件，`status` 与 `monitor` 会显示刷新令牌到期时间，并在剩余不足 7 天或已过期时给出重新登录提醒。
-- **不掩盖问题**：刷新成功但访问令牌期限没有顺延时会单独告警，提示该账号可能已接近上游的登录态上限。
+- **Only calls the refresh endpoint**; no model requests, no quota consumption, no chat records.
+- **Serial + throttled**: accounts are refreshed one by one with a 1-second gap to avoid the machine-like signature of bulk concurrent refreshes.
+- **Startup catch-up**: accounts whose last successful renewal was over 20 hours ago get one catch-up round 90 seconds after service start, avoiding restarts that miss the scheduled time.
+- **No hasty account deletion**: a single failure only increments a counter and keeps the original credentials; only 3 consecutive failures mark the login state invalid and stop scheduling. When upstream explicitly reports session invalidation (e.g. `12153` / `invalid_grant`), an alert fires on the first occurrence, but credentials are still kept until the threshold.
+- **Renewal metadata is recorded**: after a successful refresh, `refreshExpiresAt` and `lastRefreshTime` are written back to the credential file; `status` and `monitor` show the refresh token's expiry and prompt re-login when it is within 7 days or already expired.
+- **No problem masking**: if a refresh succeeds but the access token's lifetime is not extended, a separate alert notes the account may be approaching upstream's login-state limit.
 
-> **注意刷新令牌是独占的。** 每次续期上游通常会下发新的刷新令牌并让旧的失效。如果同一个账号的凭据还被其他工具（脚本、其他网关、桌面客户端）同时使用，双方会互相把对方的刷新令牌作废。请确保一个账号只由一处负责续期。`-keepalive-hours` 留空即可关闭本功能。
+> **Note that refresh tokens are exclusive.** Each renewal usually makes upstream issue a new refresh token and invalidate the old one. If the same account's credentials are used by other tools (scripts, other gateways, desktop clients) at the same time, both sides will invalidate each other's refresh tokens. Make sure one account is renewed from one place only. Leave `-keepalive-hours` empty to disable this feature.
 
-#### 凭据覆盖与删除前的校验
+#### Credential Overwrite and Pre-Deletion Verification
 
-凭据文件是登录态的唯一副本，删掉就只能重新登录。因此「覆盖」和「删除」这两个不可逆动作之前都会先做只读校验。
+The credential file is the only copy of the login state; once deleted, you must log in again. So both irreversible actions — "overwrite" and "delete" — perform read-only verification first.
 
-**续期成功、准备覆盖旧凭据之前：**
+**After successful renewal, before overwriting the old credentials:**
 
-| 检查 | 目的 | 不通过时 |
+| Check | Purpose | When it fails |
 |---|---|---|
-| 新旧凭据账号标识一致（访问令牌 `sub`） | 防止上游串号或响应错配，把凭据写到别的账号上 | 拒绝覆盖，保留旧凭据并告警 |
-| 新旧凭据站点一致（`iss` realm） | 防止国内站/国际站凭据互相覆盖 | 同上 |
-| 新访问令牌能取到账号数据 | 防止「接口返回 200 但实际不可用」的凭据覆盖掉还能用的旧凭据 | 同上 |
+| Old and new credential account identities match (access token `sub`) | Prevents upstream account mix-ups or mismatched responses writing credentials to another account | Overwrite rejected; old credentials kept and an alert raised |
+| Old and new credential sites match (`iss` realm) | Prevents domestic/international credentials overwriting each other | Same as above |
+| New access token can fetch account data | Prevents a "returned 200 but actually unusable" credential from overwriting old credentials that still work | Same as above |
 
-校验接口自身不可用时按通过处理，不会因为校验抖动而拒绝有效的新凭据。校验失败**不计入**「判定失效」的计数，因此不会把还能用的账号停掉。
+When the verification endpoint itself is unavailable, the check passes — a flaky verification will not reject valid new credentials. Verification failures do **not** count toward the "judged invalid" counter, so working accounts are never stopped because of it.
 
-**判定失效、准备删除凭据之前：**
+**After judging invalidation, before deleting credentials:**
 
-1. 先停止调度并写入失效标记；
-2. 再用只读接口确认该凭据确实取不到账号数据，**才**删除文件；
-3. 凭据仍能取到数据 → 保留文件；
-4. 无法判定（网络故障、上游 5xx）→ 保守保留文件。
+1. Stop scheduling and write the disabled marker first;
+2. Then use a read-only endpoint to confirm the credential really cannot fetch account data — **only then** delete the file;
+3. If the credential can still fetch data → keep the file;
+4. If it cannot be determined (network failure, upstream 5xx) → conservatively keep the file.
 
-凭据文件被保留时，失效标记在重启后依然生效，账号不会被重新调度。如果你重新 `login` 或手动续期了该凭据，凭据文件会比标记更新，网关会自动清除过期标记并恢复该账号。
+When the credential file is kept, the disabled marker remains effective across restarts and the account is not rescheduled. If you `login` again or manually renew that credential, the credential file becomes newer than the marker and the gateway automatically clears the stale marker and restores the account.
 
-### 模型黑白名单
+### Model Blocklist and Allowlist
 
-`config.json` 的 `models` 段可按模型名启用黑白名单（大小写与首尾空白不敏感）：
+The `models` section of `config.json` enables a per-model blocklist/allowlist (case and surrounding-whitespace insensitive):
 
 ```json
 {
@@ -389,35 +389,35 @@ workbuddy-gateway serve -keepalive-hours ""
 }
 ```
 
-- 文本替换统一使用 `identity.replacements`，支持任意自定义词条并可热加载。v1.14.40 曾提供的重复字段 `promptCompatibility` 已移除；旧配置仍含该字段时仅兼容读取并提示已忽略，不执行其中规则，不影响启动。需要保留的旧规则请放入 `identity.replacements`，确认后可删除旧字段。
+- Text replacement uniformly uses `identity.replacements`, supporting any custom entries with hot reload. The duplicate `promptCompatibility` field once provided in v1.14.40 has been removed; old configs still containing it are read for compatibility and reported as ignored — its rules are not executed and startup is unaffected. Move any rules you want to keep into `identity.replacements`, then delete the old field after confirming.
 
-| 字段 | 说明 |
+| Field | Description |
 |---|---|
-| `blocklist` | 黑名单，命中即禁用 |
-| `allowlist` | 白名单，**非空时**只放行列表内模型，其余一律禁用 |
+| `blocklist` | Blocklist; any match disables the model |
+| `allowlist` | Allowlist; **when non-empty**, only listed models are allowed and all others are disabled |
 
-规则：
+Rules:
 
-- 模型黑名单与白名单**选择一种**。非空 `allowlist` 和非空 `blocklist` 同时存在会校验失败，避免配置歧义；旧示例同时包含两个空数组、或其中一个为空时仍可读取。
-- 两个列表都为空或省略时不做任何限制（默认行为不变）。
-- 被禁用的模型会从 `/v1/models`、`/health` 的 `model_count` 和 `monitor` 的模型统计附表中**直接隐藏**。
-- 请求被禁用模型时返回 `403` 与中文提示，**不会消耗任何上游账号额度**：
+- Choose **one** of a model blocklist or allowlist. A non-empty `allowlist` and a non-empty `blocklist` together fail validation to avoid config ambiguity; old examples with two empty arrays or one empty list still parse.
+- When both lists are empty or omitted, no restriction applies (default behavior unchanged).
+- Disabled models are **hidden outright** from `/v1/models`, the `model_count` in `/health`, and the model stats table in `monitor`.
+- Requests for a disabled model return `403` with a message, **without consuming any upstream account quota**:
 
 ```json
 {
   "error": {
-    "message": "模型 deepseek-v4-pro 已被网关禁用（命中黑名单），请联系管理员调整 config.json",
+    "message": "Model deepseek-v4-pro has been disabled by the gateway (matched the blocklist); contact the admin to adjust config.json",
     "type": "model_disabled",
     "code": 403
   }
 }
 ```
 
-`serve` 启动横幅会打印当前名单状态，例如 `模型黑白名单: 已启用 (黑名单 1 个 / 白名单 0 个...)`。
+The `serve` startup banner prints the current list status, e.g. `Model allow/block list: enabled (blocked 1 / allowed 0...)`.
 
-### 按模型限制账号文件
+### Per-Model Account File Restrictions
 
-`models.accounts` 是凭据 JSON 文件黑白名单：保留键 **`all`** 控制所有模型的全局账号调度，其余键控制对应模型。未配置 `all` 或全局列表为空时与旧版本相同。全局规则和模型专属规则**都通过**才允许调度，模型专属白名单不能绕过全局停用。与上面的 `models.allowlist` / `models.blocklist`（控制模型是否可调用）互不替代：
+`models.accounts` is a blocklist/allowlist over credential JSON files: the reserved key **`all`** controls global account scheduling for all models, and other keys control the corresponding model. Without `all`, or with an empty global list, behavior matches old versions. Both the global rule and the model-specific rule must **pass** for scheduling to be allowed; a model-specific allowlist cannot bypass a global disable. This does not replace `models.allowlist` / `models.blocklist` above (which control whether a model is callable at all):
 
 ```json
 {
@@ -440,53 +440,53 @@ workbuddy-gateway serve -keepalive-hours ""
 }
 ```
 
-- 同一模型内黑名单优先；账号白名单为空表示不限制，黑名单为空表示不排除。上述示例中 `deepseek-v4.1-flash` 最终只允许 `intl-a.json`，`hy3` 仅排除 `old-account.json`。
-- `all.blocklist` 中的账号不再参与任何模型的请求调度、失败换号和模型生成探测。账号仍显示在管理台，凭据、额度账本和历史统计保留；后台凭据保活/额度查询不属于模型生成，保持原有行为。
-- 全局账号白名单非空时，账号池开关反映白名单规则。首次网页账号操作会删除 `all.allowlist`（包括空数组或 `null`），将**当前账号池**的全局启停状态转换为 `all.blocklist`，再应用本次操作；其他当前账号状态和模型专属规则保留，之后新增账号默认开启（黑名单语义）。
-- 只接受凭据**文件名**（如 `intl-a.json`），不接受路径或通配符；同名凭据位于多个目录时会拒绝匹配，避免误用。模型名忽略大小写，文件名必须与实际凭据文件一致。
-- 请求调度与失败换号都不会绕过账号名单；后台价格探测与本机 `/admin/probe` 也会跳过不允许的账号。若没有匹配的账号，请求返回 `403 model_account_disabled` 中文提示，且不会调用上游。
-- 实时运行日志 `logs/gateway-YYYY-MM-DD.log` 在有账号被排除时记录汇总一行（模型、候选账号数、排除明细）；开启调试时 `logs/debug-YYYY-MM-DD.jsonl` 记录每个账号的 `model_account_policy_checked`。`monitor` 模型统计表的“可用账号”列已按名单过滤，只统计符合规则的账号。
-- 修改 `config.json` 约 1 秒热生效；示例中的文件名均为占位值。没有配置 `models.accounts` 时原行为不变。
+- Within one model, the blocklist wins; an empty account allowlist means no restriction, and an empty blocklist excludes nothing. In the example above, `deepseek-v4.1-flash` ultimately allows only `intl-a.json`, and `hy3` merely excludes `old-account.json`.
+- Accounts in `all.blocklist` no longer participate in request scheduling, failure failover, or model generation probing for any model. Accounts still appear in the console; credentials, quota ledgers, and historical stats are retained. Background credential keepalive/quota queries are not model generation and keep their original behavior.
+- When the global account allowlist is non-empty, the account pool toggle reflects the allowlist rule. The first web account operation deletes `all.allowlist` (including empty arrays or `null`), converts the **current account pool's** global enable/disable state into `all.blocklist`, then applies the operation; other current account states and model-specific rules are preserved, and accounts added afterwards default to enabled (blocklist semantics).
+- Only credential **file names** (e.g. `intl-a.json`) are accepted — not paths or wildcards; when same-named credentials exist in multiple directories, matching is refused to avoid mistakes. Model names are case-insensitive; file names must exactly match the actual credential files.
+- Neither request scheduling nor failure failover bypasses the account lists; background price probes and local `/admin/probe` also skip disallowed accounts. If no matching account exists, the request returns `403 model_account_disabled` with a message and upstream is never called.
+- The live run log `logs/gateway-YYYY-MM-DD.log` records one summary line when accounts are excluded (model, candidate count, exclusion details); with debug on, `logs/debug-YYYY-MM-DD.jsonl` records `model_account_policy_checked` per account. The "Available accounts" column of the `monitor` model stats table is already filtered by the lists, counting only rule-compliant accounts.
+- Changes to `config.json` take effect hot in about 1 second; file names in the example are placeholders. Without `models.accounts`, behavior is unchanged.
 
-### config.json 热生效与旧版本升级
+### config.json Hot Reload and Upgrades from Old Versions
 
-`serve` 独立每 1 秒按文件内容检测配置变化，不受 `-reload-interval 0`（只关闭凭据扫描）影响。网页开关先写入配置文件、再立即应用；外部编辑器修改则在下一次扫描应用。
+`serve` independently checks config changes by file content every 1 second, unaffected by `-reload-interval 0` (which only disables the credential scan). Web toggles write the config file first, then apply immediately; edits from external editors apply on the next scan.
 
-| 配置 | 生效方式 |
+| Config | How it applies |
 |---|---|
-| 模型名单、`models.accounts`（含 `all`） | 热生效，控制后续调度 |
-| `gateway.adminKey` / `apiKeyEnabled` / `apiKey` | 热生效；管理 Key 改变后需使用新 Key 登录 |
-| `concurrent.MaxAcc` / `MaxGlobal` | 热生效；新请求立即按新并发上限排队，已有请求不中断 |
-| `systemPrompt` / `identity` / `debug.enabled` / `debug.fullRequests` | 热生效；仅影响后续请求 |
-| `logs.retentionDays` | 热生效；下一次清理调度立即使用新保留天数 |
-| `upstream` 超时、网络重试次数 | 后续上游请求使用新值；已有流式响应保持原空闲超时 |
-| `gateway.apiPort` / `webPort` | **立即热切换**监听；新端口全部绑定成功后才关闭旧监听，已有连接与流继续完成 |
+| Model lists, `models.accounts` (including `all`) | Hot-effective; controls subsequent scheduling |
+| `gateway.adminKey` / `apiKeyEnabled` / `apiKey` | Hot-effective; after the admin key changes, log in again with the new key |
+| `concurrent.MaxAcc` / `MaxGlobal` | Hot-effective; new requests queue immediately under the new concurrency limits, and in-flight requests are not interrupted |
+| `systemPrompt` / `identity` / `debug.enabled` / `debug.fullRequests` | Hot-effective; affects only subsequent requests |
+| `logs.retentionDays` | Hot-effective; the next cleanup run uses the new retention immediately |
+| `upstream` timeouts, network retry counts | Subsequent upstream requests use the new values; in-flight streams keep the original idle timeout |
+| `gateway.apiPort` / `webPort` | **Immediate hot switch** of listeners; the old listener closes only after all new ports bind successfully, and existing connections and streams finish normally |
 
-- 配置先整体解析、校验，再应用。运行时遇到半写 JSON、空文件、文件短暂缺失、错误类型或非法账号路径时，**保留上一份有效配置**，错误原因写入 `logs/gateway-YYYY-MM-DD.log`。修正并保存后自动重试；不会把配置读取失败误当作“全部开启”。
-- 新端口被占用或调试日志文件无法打开时，整次热更新被拒绝；原监听、鉴权及调试开关保持原状。网页保存失败会尝试恢复旧配置文件；直接编辑文件失败则保留原运行状态，等待文件修正。API / Web 两个现有端口不能直接互换，需先借用第三个空闲端口。
-- 热加载范围是 `config.json` 支持的字段，不包括命令行启动参数（如 `-addr`、`-webui`、`-reload-interval`、`-models-refresh`、`-keepalive-hours`）。显式 `-port` 优先级仍高于 `gateway.apiPort`；修改 Web 端口后请使用新端口重新打开控制台。
-- 要恢复默认规则，请保存有效的 `{}` 或将对应列表设为 `[]`，而不是删除运行中的配置文件。
-- 上一版本省略 `all`、`accounts`、`models` 或 `gateway` 的配置仍可读取；`accounts: {}`、`accounts: null`、`all: {}` 和空名单均表示无全局限制。默认示例包含空的 `models.accounts.all.allowlist/blocklist`。
-- 首次启动且没有 `config.json` 时，程序会按内置示例生成完整默认配置。旧配置缺少 `identity` 段时，启动阶段补充完整默认段；已有 `identity` 缺少 `replacements` 时补完整默认映射，已有自定义映射会逐项补齐缺失的默认替换，包括 `workspace root → workspace base` 和 `are paths the user → are paths that the user`，并保留用户自定义键和值。已有 `enabled:false` 不会被改成开启。`target` 为空或 `replacements` 为空时按默认 WorkBuddy 规则运行，不会阻断启动。用户自定义的 `replacements` 键不限于内置词。
-- 如旧配置同时填写了**两种非空模型名单**，请在升级前选择并保留一种；新版本不再接受相互冲突的模型黑白名单。运行中错误配置会保留上次生效状态，启动时则给出明确错误。
-- 旧配置中只有白名单生效时，管理页开关反映白名单；首次网页模型操作会删除 `models.allowlist`，将**当前已知模型**的启停状态转换为 `models.blocklist`。其他已知模型状态不变，之后新增的模型默认开启（黑名单语义）。模型账号规则保持独立。
-- 新版本中的 `all` 是保留键；不要把它当作真实模型 ID。**先升级二进制，再添加 `all`**；旧二进制不识别全局语义，会把它当作名为 `all` 的模型专属规则。
+- The config is parsed and validated as a whole before being applied. When runtime encounters half-written JSON, empty files, a briefly missing file, wrong types, or invalid account paths, it **keeps the previous valid config** and logs the reason to `logs/gateway-YYYY-MM-DD.log`. It retries automatically after you fix and save; a config read failure is never misread as "everything enabled".
+- When a new port is occupied or the debug log file cannot be opened, the entire hot update is rejected; the original listener, auth, and debug switches stay as they were. A failed web save attempts to restore the old config file; a failed direct file edit keeps the original run state and waits for the file to be fixed. The two existing API/Web ports cannot be swapped directly — borrow a third free port first.
+- Hot reload covers the fields `config.json` supports, not command-line startup flags (like `-addr`, `-webui`, `-reload-interval`, `-models-refresh`, `-keepalive-hours`). An explicit `-port` still takes priority over `gateway.apiPort`; after changing the web port, reopen the console on the new port.
+- To restore default rules, save a valid `{}` or set the relevant lists to `[]` — do not delete the config file while running.
+- Configs from the previous version that omit `all`, `accounts`, `models`, or `gateway` still parse; `accounts: {}`, `accounts: null`, `all: {}`, and empty lists all mean no global restriction. The default example includes empty `models.accounts.all.allowlist/blocklist`.
+- On first startup without `config.json`, the program generates the complete default config from the built-in example. If an old config lacks the `identity` section, startup fills in the complete default section; if an existing `identity` lacks `replacements`, the complete default mapping is added, and existing custom mappings get each missing default replacement filled in individually — including `workspace root → workspace base` and `are paths the user → are paths that the user` — with user keys and values preserved. An existing `enabled:false` is never changed to on. When `target` is empty or `replacements` is empty, the default WorkBuddy rules run and startup is not blocked. User-defined `replacements` keys are not limited to built-in words.
+- If an old config has **both kinds of non-empty model lists**, pick and keep one before upgrading; the new version no longer accepts conflicting model block/allowlists. A bad config while running keeps the last effective state, and startup reports a clear error.
+- When an old config only had an allowlist, the console toggle reflects the allowlist; the first web model operation deletes `models.allowlist`, converting the **current known models'** enable/disable states into `models.blocklist`. Other known model states are unchanged, and models added afterwards default to enabled (blocklist semantics). Model account rules stay independent.
+- In the new version, `all` is a reserved key; do not treat it as a real model ID. **Upgrade the binary first, then add `all`**; old binaries do not understand the global semantics and would treat it as a model-specific rule for a model named `all`.
 
-每条 JSON 调试日志都包含时间、级别、稳定事件名、`trace_id`、`request_id`、服务/实例/版本、路由、方法、模型、账号、流式标记和累计耗时，并记录客户端地址、代理头、协议、TLS、Content-Type、Content-Length、deadline 等请求元数据。客户端传入的 `X-Trace-ID` 会优先复用并透传到上游。
+Each JSON debug log includes time, level, stable event name, `trace_id`, `request_id`, service/instance/version, route, method, model, account, streaming flag, and cumulative duration, plus request metadata like client address, proxy headers, protocol, TLS, Content-Type, Content-Length, and deadline. A client-supplied `X-Trace-ID` is reused with priority and forwarded to upstream.
 
-请求体只记录以下安全摘要，不记录正文：
+Request bodies are only recorded as these safe summaries, never as full bodies:
 
-- `declared_body_bytes`、`actual_body_bytes`、`body_read_ms`
-- `body_sha256_prefix`（SHA-256 前 12 位）
-- `json_valid`、`json_decode_ms`
-- `body_limit_bytes`、`body_limit_exceeded`（当前未设置请求体限制，因此分别为 `0`、`false`）
-- `read_error_type`、脱敏截断后的 `read_error`
+- `declared_body_bytes`, `actual_body_bytes`, `body_read_ms`
+- `body_sha256_prefix` (first 12 hex chars of the SHA-256)
+- `json_valid`, `json_decode_ms`
+- `body_limit_bytes`, `body_limit_exceeded` (no request body limit is currently set, so these are `0` and `false`)
+- `read_error_type`, and the sanitized, truncated `read_error`
 
-普通调试模式（`debug.fullRequests` 缺省或为 `false`）不记录完整请求体，也不记录明文 `Authorization`、Cookie、API Key、Access Token、Refresh Token。
+Normal debug mode (`debug.fullRequests` absent or `false`) records neither full request bodies nor plaintext `Authorization`, Cookie, API Key, Access Token, or Refresh Token.
 
-#### 完整请求对比日志（显式开启）
+#### Full Request Comparison Logs (explicit opt-in)
 
-排查不同客户端或协议转译差异时，合并以下设置到现有配置；不要用此片段覆盖整份配置：
+When troubleshooting differences between clients or protocol translations, merge the following settings into your existing config; do not overwrite the whole config with this fragment:
 
 ```json
 {
@@ -497,123 +497,120 @@ workbuddy-gateway serve -keepalive-hours ""
 }
 ```
 
-两个开关都开启才生效，约 1 秒热加载，无须重启。关闭 `fullRequests` 即恢复普通调试日志；
-关闭 `enabled` 则关闭全部 JSON 调试日志。正式功能没有临时采集的 30 分钟或 200 次限制。
+Both switches must be on to take effect; hot reload takes about 1 second, no restart needed. Turning `fullRequests` off restores normal debug logs;
+turning `enabled` off disables all JSON debug logs. As a production feature there are no temporary 30-minute or 200-request collection limits.
 
-记录仍写入 `logs/debug-YYYY-MM-DD.jsonl`，按 `trace_id` 串联：
+Records still go to `logs/debug-YYYY-MM-DD.jsonl`, chained by `trace_id`:
 
-| 事件 | 内容 |
+| Event | Content |
 |---|---|
-| `full_request_inbound_headers` | 模型 API 入站方法、URL、请求头；此时未读取正文 |
-| `full_request_inbound` | 鉴权通过后读取的完整客户端 JSON 请求体，位于 `body` |
-| `full_request_upstream` | 协议转换、系统提示词规则及历史修复后的完整上游 JSON；包含实际构造的出站请求头 |
-| `full_request_upstream_result` | 每次发送的 HTTP 状态、响应头、请求头/请求体是否写出、网络错误类型 |
-| `full_request_upstream_error` | 已读取的上游错误 JSON，例如 `11128`；不预读成功响应流 |
+| `full_request_inbound_headers` | Model API inbound method, URL, and headers; the body has not been read at this point |
+| `full_request_inbound` | The complete client JSON request body read after auth passes, under `body` |
+| `full_request_upstream` | The complete upstream JSON after protocol translation, system prompt rules, and history repair; includes the actual outbound request headers |
+| `full_request_upstream_result` | Per send: HTTP status, response headers, whether request headers/body were written out, and network error type |
+| `full_request_upstream_error` | The upstream error JSON already read, e.g. `11128`; successful response streams are not pre-read |
 
-同一请求的换号通过 `acc` 区分，网络重试通过 `attempt` 区分，
-具体发送通过 `upstream_request_id` 关联。`user_agent` 顶层字段始终是客户端 UA，
-实际出站 UA 看 `full_request_upstream.request.headers`，不要混淆两者。
+Account failover within the same request is distinguished by `acc`, network retries by `attempt`,
+and each actual send is correlated by `upstream_request_id`. The top-level `user_agent` field is always the client UA;
+the actual outbound UA is in `full_request_upstream.request.headers` — do not confuse the two.
 
-完整 JSON **不截断**，包括所有消息、工具定义和图片数据；JSON 空白/转义可能重新序列化，
-不是逐字节原始抓包。凭据字段、Cookie、已知密钥及 URL 中的凭据参数会脱敏；
-请求头敏感字段另有进程内随机密钥生成的 HMAC 摘要，用于同一进程内判断是否相同，
-重启后不能跨进程比较。不合法或读取不完整的 JSON 明确标记 `body_capture` 为省略，
-避免损坏 JSON 的凭据泄露，不伪装为完整采集。
+The full JSON is **never truncated**, including all messages, tool definitions, and image data; JSON whitespace/escapes may be re-serialized,
+so it is not a byte-for-byte raw capture. Credential fields, cookies, known secrets, and credential parameters in URLs are redacted;
+sensitive request header fields get an HMAC digest generated with a per-process random key, usable to judge equality only within the same process
+and not comparable across restarts. Invalid or incompletely read JSON is explicitly marked with `body_capture` as omitted,
+avoiding credential leakage from broken JSON while never pretending to be a complete capture.
 
-鉴权/CORS/方法拦截不会为了日志而额外读取正文；相关拒绝原因仍由原有中间件事件记录。
-管理配置、账号登录及凭据接口不属于完整正文采集范围。
+Auth/CORS/method interception does not read the body extra just for logging; the related rejection reasons are still recorded by the existing middleware events.
+Admin config, account login, and credential endpoints are outside full body capture.
 
-**隐私与磁盘提示：** 完整请求包含真实对话、源代码、工具输入和图片，即使凭据脱敏也仍属敏感日志。
-无法保证识别正文内所有任意格式的秘密。文件按 `0600` 创建（Windows 还应检查目录 ACL），
-不要上传或公开分享原始日志。多兆请求会迅速增加磁盘占用和日志写入耗时，建议仅排障期间开启；
-沿用 `logs.retentionDays` 的既有日志清理策略。网页日志查看器有读取大小限制，完整比对应读取服务器文件。
+**Privacy and disk note:** full requests contain real conversations, source code, tool inputs, and images — sensitive logs even with credentials redacted.
+There is no guarantee every arbitrarily formatted secret inside the body is detected. Files are created with `0600` (on Windows also check the directory ACL);
+do not upload or publicly share raw logs. Multi-megabyte requests grow disk usage and log write time quickly, so enable this only while troubleshooting;
+the existing `logs.retentionDays` cleanup policy still applies. The web log viewer has a read size limit; for full comparison, read the file on the server.
 
 ---
 
 ## serve
 
-启动本地网关，默认命令。
+Starts the local gateway; the default command.
 
 ```bash
-# 默认监听 127.0.0.1:8317，自动加载当前目录下所有 workbuddy*.json
+# Default listens on 127.0.0.1:8317, auto-loads all workbuddy*.json in the current directory
 workbuddy-gateway serve
 
-# 自定义端口与监听地址
+# Custom port and listen address
 workbuddy-gateway serve -port 9000 -addr 0.0.0.0
 
-# 显式指定多个凭据文件（逗号分隔，轮询）
+# Explicitly specify multiple credential files (comma-separated, round-robin)
 workbuddy-gateway serve -auth workbuddy.json,workbuddy2.json
 
-# 目录模式：加载目录内所有 workbuddy*.json
+# Directory mode: load all workbuddy*.json in the directory
 workbuddy-gateway serve -auth-dir ./auths
 
-# 上游走代理 + 详细日志（客户端鉴权在 config.json 的 gateway 段配置）
+# Upstream via proxy + verbose logs (client auth is configured in the gateway section of config.json)
 workbuddy-gateway serve -proxy http://127.0.0.1:7890 -verbose
 
-# 关闭凭据热加载
+# Disable credential hot reload
 workbuddy-gateway serve -reload-interval 0
 
-# 关闭模型目录自动刷新
+# Disable automatic model catalog refresh
 workbuddy-gateway serve -models-refresh 0
 ```
 
-启动后提供的端点：
+Endpoints served after startup:
 
-| 方法 | 路径 | 说明 |
+| Method | Path | Description |
 |---|---|---|
-| POST | `/v1/chat/completions`、`/chat/completions` | Chat Completions，支持 SSE 流式与非流式 |
-| POST | `/v1/responses`、`/responses` | OpenAI Responses API |
-| POST | `/v1/messages` | Anthropic Messages API（Claude Code 直连，内部转 Chat 走同一条上游管线） |
-| POST | `/v1/messages/count_tokens` | Anthropic 令牌计数（本地估算，CJK 1 token/字、ASCII 4 字符/token） |
-| GET | `/v1/models`、`/models` | 模型列表，响应头 `X-Model-Source` 标注来源 |
-| GET | `/health`、`/ping` | 健康检查，返回 `version`、`model_count`、`model_source` |
-| POST | `/admin/probe` | 供 `probe` 命令调用，**仅接受回环来源** |
-| GET | `/ui/` | 网页控制台静态页面（独立端口，仅 `-webui` 启用时存在） |
-| GET | `/admin/api/*` | 网页控制台数据接口（独立端口，仅 `-webui` 启用时存在，需管理 Key） |
-| GET | `/` | 简单文本说明 |
+| POST | `/v1/chat/completions`, `/chat/completions` | Chat Completions, SSE streaming and non-streaming |
+| POST | `/v1/responses`, `/responses` | OpenAI Responses API |
+| POST | `/v1/messages` | Anthropic Messages API (direct Claude Code connection; internally translated to Chat on the same upstream pipeline) |
+| POST | `/v1/messages/count_tokens` | Anthropic token counting (local estimate; CJK 1 token/char, ASCII 4 chars/token) |
+| GET | `/v1/models`, `/models` | Model list; the `X-Model-Source` response header marks the source |
+| GET | `/health`, `/ping` | Health check returning `version`, `model_count`, `model_source` |
+| POST | `/admin/probe` | Called by the `probe` command; **accepts loopback origins only** |
+| GET | `/ui/` | Web console static page (separate port; exists only when `-webui` is enabled) |
+| GET | `/admin/api/*` | Web console data APIs (separate port; exists only when `-webui` is enabled; requires the admin key) |
+| GET | `/` | Simple text description |
 
-从 v1.13.15 起，Responses `function_call_output.output` 支持文本和图片内容块数组：
-文本原样保留在 `tool` 结果中，`input_image` 图片提升为全部配对工具结果之后的
-`user` 多模态消息，图片 URL 和数据不变。图片不再被序列化成 Base64 文本混入
-上下文，避免截图会话异常消耗大量 token，最终触发 `11133 model_param_invalid`。
-并行工具调用的结果仍连续排列，不会因插入图片而破坏配对。普通字符串和 JSON
-工具结果保持原行为；网关不截断操作手册或会话历史。`11133` 本身是上游通用参数
-错误码，不仅限于图片或上下文长度问题；排障仍需结合模型、TraceID 与日志。
+Since v1.13.15, the Responses `function_call_output.output` supports text and image content block arrays:
+text is preserved as-is in the `tool` result, and `input_image` images are promoted into a
+`user` multimodal message placed after all paired tool results, with image URLs and data unchanged. Images are no longer serialized
+as Base64 text into the context, preventing screenshot sessions from consuming tokens abnormally and eventually triggering `11133 model_param_invalid`.
+Results of parallel tool calls remain in sequence and pairing is not broken by the inserted image. Plain string and JSON
+tool results keep their original behavior; the gateway does not truncate operation manuals or session history. `11133` itself is a generic upstream parameter
+error code, not limited to image or context-length issues; troubleshooting still needs the model, TraceID, and logs together.
 
-从 v1.13.17 起，网关在客户端未声明输出预算（`max_tokens` 与 `max_completion_tokens`
-都不带有效值）时，按模型目录声明的输出上限补一个 `max_tokens`。上游按「输入 token +
-输出预算」判断是否超出模型窗口，而请求不带该字段时上游会为输出默认预留 384000：
-标称 1048576 窗口的 `deepseek-v4.1-flash` 实际只剩约 664576 可用输入，长会话会在远未
-到窗口上限时被 `11133 model_param_invalid` 拒绝，表现为「聊着聊着就 400」。实测
-678912 输入不带预算返回 `400/11133`，带 `max_tokens=128000` 返回 `200`。客户端显式
-传入的值一律不覆盖；目录未收录的模型保持原行为，网关不做猜测。注意可用输入与输出上限
-共用同一窗口（可用输入 = 窗口 − 声明的输出预算），需要更长输入时应让客户端声明更小的
-输出预算，而不是更大。
+Since v1.13.17, when the client declares no output budget (neither `max_tokens` nor `max_completion_tokens` carries a valid value), the gateway adds a `max_tokens` based on the output cap declared in the model catalog. Upstream judges window overflow by "input tokens + output budget", and without that field upstream reserves 384000 for output by default:
+`deepseek-v4.1-flash` with a nominal 1048576 window would actually have only about 664576 input available, and long sessions get rejected with `11133 model_param_invalid` long before the window cap — appearing as "suddenly a 400 mid-chat". In testing,
+678912 input tokens without a budget returned `400/11133`, while with `max_tokens=128000` it returned `200`. Values explicitly
+passed by the client are never overridden; models missing from the catalog keep the original behavior and the gateway does not guess. Note that available input and the output cap
+share the same window (available input = window − declared output budget); for longer input, have the client declare a smaller
+output budget, not a larger one.
 
-后台任务（`serve` 启动后按启用条件运行）：
+Background tasks (run after `serve` starts, per their enable conditions):
 
-| 任务 | 周期 | 说明 |
+| Task | Cadence | Description |
 |---|---|---|
-| Token 续期检查 | 5 分钟 | 距过期不足 15 分钟自动刷新 |
-| 额度扫描 | 5 分钟 | 每凭据 10 秒超时，超时保留旧值；`剩余=0` 标记付费耗尽 |
-| 模型目录刷新 | 60 分钟 | 实时接口 + npm 目录，合并去重后写缓存 |
-| 模型价格探测 | 默认关闭；开启后首轮约 20 秒，随后 2 或 30 分钟；同站点同模型至少间隔 12 小时 | 仅 `-allow-price-probes` 开启；无探测记录时单轮最多 30 个，之后最多 5 个；真实生成请求可能消耗积分 |
-| 每日签到 | 正常 `08:00–09:30` 随机；`08:00` 后启动待签账号依次补签，间隔至少 1 分钟；失败仅在 `09:30–10:00` 重试一次 | 仅国内个人账号；热加载事件不直接补签 |
-| 状态快照 | 3 秒 | 写 `workbuddy-status.json` 供 `monitor` 读取 |
-| 凭据热加载 | 5 秒 | 扫描凭据新增 / 更新 / 删除 |
+| Token renewal check | 5 minutes | Auto-refresh when expiration is within 15 minutes |
+| Quota scan | 5 minutes | 10-second timeout per credential; the old value is kept on timeout; `remaining=0` marks paid exhausted |
+| Model catalog refresh | 60 minutes | Live API + npm catalog, merged, deduplicated, and written to cache |
+| Model price probing | Off by default; when on, first round in ~20s, then every 2 or 30 minutes; at least 12 hours between same site+model probes | Only with `-allow-price-probes`; up to 30 per round without existing probe records, then at most 5; real generation requests may consume credits |
+| Daily checkin | Random during normal `08:00–09:30`; after `08:00`, pending accounts catch up sequentially on startup with at least a 1-minute gap; failures retry only once during `09:30–10:00` | Domestic personal accounts only; hot reload events do not trigger makeup checkins directly |
+| Status snapshot | 3 seconds | Writes `workbuddy-status.json` for `monitor` to read |
+| Credential hot reload | 5 seconds | Scans for credential additions / updates / deletions |
 
-**上游超时策略**
+**Upstream Timeout Policy**
 
-网关不再对上游请求设置「整条流的总超时」，避免长时间但持续有输出的流被中途掐断（会丢失 usage、返回残缺内容，并被上游代理判为故障触发 503）：
+The gateway no longer imposes a "total timeout for the entire stream" on upstream requests, avoiding long-running but steadily producing streams being cut off mid-flight (which loses usage, returns partial content, and gets flagged as a fault by upstream proxies, triggering 503):
 
-| 阶段 | 策略 |
+| Stage | Policy |
 |---|---|
-| 连接与响应头 | `ResponseHeaderTimeout` 默认 300 秒。上游对 3MB+ 大请求排队+预处理可能接近 1 分钟（实测 2.3MB 请求曾需 50.8s 才回响应头），因此默认放宽到 5 分钟兜底 |
-| 流式响应体 | 空闲读超时默认 120 秒：持续有数据就永不超时，只有 120 秒无任何新数据才判定卡死并中断 |
-| 控制类短请求 | 令牌刷新 / 额度查询 / 模型目录等 60 秒超时 |
-| 服务端写响应 | 不设总时长上限（原 300 秒），长流不会被服务端截断 |
+| Connection and response headers | `ResponseHeaderTimeout` defaults to 300 seconds. Upstream queueing + preprocessing for 3MB+ requests can approach 1 minute (a 2.3MB request once took 50.8s to return headers), so the default is relaxed to 5 minutes as a fallback |
+| Streaming response body | Idle read timeout defaults to 120 seconds: as long as data keeps arriving it never times out; only 120 seconds with no new data is it judged stuck and interrupted |
+| Control short requests | Token refresh / quota queries / model catalog etc. use a 60-second timeout |
+| Server response writing | No total duration cap (previously 300 seconds); long streams are never truncated by the server |
 
-两个上游超时可在工作目录 `config.json` 的 `upstream` 段覆盖（单位秒，省略或非正数则用默认值）：
+Both upstream timeouts can be overridden in the `upstream` section of the working directory's `config.json` (in seconds; omitted or non-positive values use defaults):
 
 ```json
 {
@@ -628,367 +625,365 @@ workbuddy-gateway serve -models-refresh 0
 }
 ```
 
-**流式心跳与首字节前重放（v1.14.24）**
+**Streaming Heartbeat and Pre-First-Byte Replay (v1.14.24)**
 
-腾讯边缘节点可能在响应头已经返回、但首个有效 token 尚未到达时重置 SSE 连接。
-此时客户端还没有收到任何模型内容。Chat 流式入口提供两层缓解：
+Tencent edge nodes may reset the SSE connection after the response headers were sent but before the first valid token arrives.
+At that moment the client has received no model content yet. The Chat streaming entry provides two layers of mitigation:
 
-| 项 | 默认 | 说明 |
+| Item | Default | Description |
 |---|---|---|
-| SSE 心跳 | 15 秒 | `upstream.streamKeepaliveSeconds` 可覆盖；省略或非正数使用默认值。等待首个有效 data 期间发送 `: keepalive` 注释，首个有效 data 后停止 |
-| 首字节前重放 | 开启 | `upstream.enableFirstByteRetry` 可显式设为 `false` 关闭。仅在客户端未收到任何有效 data、错误属于瞬时网络故障或上游空闲超时、且重放预算未用尽时，重新走账号池发一次 |
-| 重放上限 | 1 次 | 已下发任何有效 data、客户端主动取消、扫描器错误或非网络错误一律不重放 |
+| SSE heartbeat | 15 seconds | Overridable via `upstream.streamKeepaliveSeconds`; omitted or non-positive values use the default. While waiting for the first valid data, `: keepalive` comments are sent, stopping after the first valid data |
+| Pre-first-byte replay | On | Can be explicitly disabled with `upstream.enableFirstByteRetry: false`. Replays once through the account pool only when the client received no valid data, the error is a transient network fault or upstream idle timeout, and the replay budget is unused |
+| Replay cap | 1 | No replay once any valid data was sent, on client cancellation, scanner errors, or non-network errors |
 
-心跳是标准 SSE 注释，不会产生伪 token。重放可能额外消耗一次上游额度，但不会向客户端
-重复输出已生成的内容。重放与心跳都会写入现有 TraceID 日志；重放失败时沿用已建立的
-SSE 响应，以流内错误事件结束，不伪造 `[DONE]`。
+The heartbeat is a standard SSE comment and produces no fake tokens. A replay may consume one extra upstream credit call but never repeats already-generated content to the client. Replays and heartbeats are both logged with the existing TraceID; on replay failure the already-established SSE response is kept, ending with an in-stream error event and never faking `[DONE]`.
 
-**瞬时网络错误重试**
+**Transient Network Error Retry**
 
-网关与上游 CDN 边缘节点之间的单条 TCP 连接可能被对端重置（`connection reset by peer`）、被关闭（`use of closed network connection`），或命中已被回收的 keep-alive 连接。这类错误属于瞬时故障，与请求体大小无关（实测 >5MB 请求 95% 成功，而 0.5MB 请求也会偶发失败）。
+A single TCP connection between the gateway and the upstream CDN edge may be reset by the peer (`connection reset by peer`), closed (`use of closed network connection`), or hit a recycled keep-alive connection. These are transient faults unrelated to request size (in testing, >5MB requests succeeded 95% of the time, while even 0.5MB requests occasionally failed).
 
-只有**请求头尚未写出**时，才能确认上游不可能处理本次 POST，网关才对瞬时连接错误重试。`Do` 返回 EOF、RST 或超时但请求头已写出时，上游可能已经收到并处理请求；即使尚未收到响应头，也不会自动重放，以免重复生成。
+Only when the **request headers have not been written out** can the gateway be sure upstream could not have processed the POST; only then does it retry transient connection errors. If `Do` returns EOF, RST, or a timeout but the request headers were written, upstream may have already received and processed the request; even without a response header yet, it will not auto-replay, to avoid duplicate generation.
 
-| 项 | 默认 | 说明 |
+| Item | Default | Description |
 |---|---|---|
-| 重试次数 | 2 | `upstream.transientRetries` 可覆盖；显式设为 `0` 可禁用 |
-| 重试间隔 | 300ms | 给上游边缘节点留出恢复时间 |
-| 重试范围 | 请求头未写出时的瞬时错误 | 包括建连阶段 EOF、RST、`broken pipe`、`connection refused` 等 |
-| 不重试 | — | 请求头已写出的 EOF/RST/超时（执行结果不确定）、客户端取消、上游 HTTP 错误响应 |
-| 连接处理 | 新连接 | 重试时设置 `Connection: close` 并 `CloseIdleConnections()`，避免复用坏连接 |
+| Retry count | 2 | Overridable via `upstream.transientRetries`; set `0` explicitly to disable |
+| Retry interval | 300ms | Gives the upstream edge time to recover |
+| Retry scope | Transient errors when request headers were not written | Including connection-establishment EOF, RST, `broken pipe`, `connection refused`, etc. |
+| No retry | — | EOF/RST/timeout after headers were written (outcome uncertain), client cancellation, upstream HTTP error responses |
+| Connection handling | New connection | Retries set `Connection: close` and call `CloseIdleConnections()`, avoiding reuse of a bad connection |
 
-重试会在日志中留下明确记录：
+Retries leave a clear record in the logs:
 
 ```text
-[网络重试] traceId=... requestId=389 账号=example.json 第 1/2 次重试，上一尝试请求头未写出，已重建连接
+[Network retry] traceId=... requestId=389 account=example.json retry 1/2, previous attempt's request headers were not written out, connection rebuilt
 ```
 
-启动横幅会打印生效值，便于确认。流被中断时不会伪造 `[DONE]`（chat）或 `response.completed`（Responses），而是下发明确的 `upstream_stream_interrupted` / `response.failed` 错误事件，避免下游把残缺输出当成完整结果。
+The startup banner prints the effective values for confirmation. When a stream is interrupted, no fake `[DONE]` (chat) or `response.completed` (Responses) is emitted; instead a clear `upstream_stream_interrupted` / `response.failed` error event is sent, so downstream never mistakes partial output for a complete result.
 
 ---
 
 ## login
 
-登录并保存凭据。国内站输出终端 ASCII 二维码；国际站在浏览器内完成。
+Logs in and saves credentials. The domestic site prints a terminal ASCII QR code; the international site completes login in the browser.
 
 ```bash
-# 国内站（微信 / 企业微信扫码）
+# Domestic site (WeChat / WeCom QR scan)
 workbuddy-gateway login
 
-# 保存到指定文件（多账号推荐）
+# Save to a specific file (recommended for multiple accounts)
 workbuddy-gateway login -auth workbuddy2.json
 
-# 国际站（浏览器内完成，邮箱 / 验证码 / SSO）
+# International site (in-browser; email / verification code / SSO)
 workbuddy-gateway login -intl
 workbuddy-gateway login -intl -auth workbuddy-intl.json
 ```
 
-说明：
+Notes:
 
-- 默认保存到 `workbuddy.json`；`-auth` 可指定其他路径。
-- 国际站凭据写入 `edition: "intl"`，与国内站凭据可混挂在同一账号池。
-- 重新登录会覆盖原凭据并自动清除该账号的失效标记，无需重启服务（热加载会生效）。
+- By default credentials are saved to `workbuddy.json`; `-auth` can specify another path.
+- International credentials are written with `edition: "intl"` and can be mixed with domestic credentials in the same account pool.
+- Logging in again overwrites the original credentials and automatically clears that account's disabled marker — no service restart needed (hot reload handles it).
 
 ---
 
 ## status
 
-查看账号池状态，包含站点、冷却、额度与 Token 过期时间。
+Shows account pool status, including site, cooldown, quota, and token expiry times.
 
 ```bash
 workbuddy-gateway status
 ```
 
-输出示例：
+Example output:
 
 ```text
-================== WorkBuddy 账号池状态 ==================
-账号总数: 2
+================== WorkBuddy Account Pool Status ==================
+Total accounts: 2
 
---- 账号 #1 ---
-凭据文件:     workbuddy.json
-站点:         国内站 (copilot.tencent.com)
-用户昵称:     user-a
-用户 UID:     uid-xxx
-企业 ID:      (个人账号)
-认证域名:     www.codebuddy.cn
-冷却状态:     可用
-Token 状态:   有效
-过期时间:     2026-09-22 12:32:07 (剩余 119h30m0s)
+--- Account #1 ---
+Credential file: workbuddy.json
+Site:            Domestic site (copilot.tencent.com)
+Nickname:        user-a
+User UID:        uid-xxx
+Enterprise ID:   (personal account)
+Auth domain:     www.codebuddy.cn
+Cooldown:        Available
+Token status:    Valid
+Expires:         2026-09-22 12:32:07 (119h30m0s remaining)
 ```
 
 ---
 
 ## refresh
 
-立即刷新所有账号的 Access Token（正常情况下由后台每 5 分钟自动检查，无需手动执行）。
+Immediately refreshes the Access Token of all accounts (normally the background checks every 5 minutes, so manual runs are unnecessary).
 
 ```bash
 workbuddy-gateway refresh
 ```
 
-- 成功 / 失败 / 跳过（授权失效）会分别统计。
-- 刷新失败若属于授权类错误，会禁用该账号并删除凭据文件。
+- Success / failure / skipped (authorization invalid) are counted separately.
+- If a refresh failure is authorization-related, the account is disabled and its credential file deleted.
 
 ---
 
 ## monitor
 
-前台实时监控，周期刷新展示「账号表格 + 模型统计附表 + 最近日志」，`Ctrl+C` 退出。
+Foreground live monitoring, periodically refreshing the "account table + model stats table + recent logs" view; `Ctrl+C` to exit.
 
 ```bash
-# 必须在 serve 的工作目录执行（读取 workbuddy-status.json）
+# Must run from serve's working directory (reads workbuddy-status.json)
 cd /opt/workbuddy-gateway
 workbuddy-gateway monitor
 
-# 附加展示 systemd 服务最近日志（Linux）
+# Also show recent systemd service logs (Linux)
 workbuddy-gateway monitor -journal workbuddy-gateway
 
-# 附加展示指定日志文件
+# Also show a specific log file
 workbuddy-gateway monitor -logfile /var/log/workbuddy-gateway.log
 
-# 调整刷新间隔与日志行数
+# Adjust the refresh interval and log line count
 workbuddy-gateway monitor -interval 2 -lines 20
 ```
 
-| 选项 | 默认 | 说明 |
+| Option | Default | Description |
 |---|---|---|
-| `-interval <sec>` | `3` | 状态刷新间隔 |
-| `-journal <svc>` | 空 | 同时展示 `journalctl -u <svc>` 最近日志 |
-| `-logfile <path>` | 空 | 同时展示指定日志文件末尾内容 |
-| `-lines <n>` | `15` | 每次展示的日志行数 |
+| `-interval <sec>` | `3` | Status refresh interval |
+| `-journal <svc>` | Empty | Also show recent `journalctl -u <svc>` logs |
+| `-logfile <path>` | Empty | Also show the tail of the specified log file |
+| `-lines <n>` | `15` | Number of log lines shown per refresh |
 
-**账号表格**
+**Account table**
 
 ```text
-账号池: 共 2 个 | 可用 1 | 冷却 0 | 付费耗尽 1 | 过期 0 | 失效 0
+Account pool: 2 total | Available 1 | Cooling 0 | Paid exhausted 1 | Expired 0 | Invalid 0
 +------+----------------+------------+--------+------------+---------------------+----------+----------+--------+------------+------------+------------+
-| 序号 | 凭据文件       | 账号       | 站点   | 状态       | Token 有效期        | 总额度   | 已用     | 剩余   | 套餐       | 免费模型   | 模型冷却   |
+| #    | Credential file| Account    | Site   | Status     | Token valid until   | Total    | Used     | Left   | Plan       | Free models| Model cooldown|
 +------+----------------+------------+--------+------------+---------------------+----------+----------+--------+------------+------------+------------+
-| 1    | workbuddy.json | user-a     | 国内站 | 可用       | 2026-09-22 12:32:07 | 2300     | 1200     | 1100   | pro        | 2          | 0          |
-| 2    | workbuddy2.json| user-b     | 国际站 | 付费耗尽   | 2027-09-05 01:57:00 | 1100     | 1100     | 0      | Pro试用    | 2          | 0          |
+| 1    | workbuddy.json | user-a     | Domestic | Available | 2026-09-22 12:32:07 | 2300     | 1200     | 1100   | pro        | 2          | 0          |
+| 2    | workbuddy2.json| user-b     | International | Paid exhausted | 2027-09-05 01:57:00 | 1100     | 1100     | 0      | Pro trial  | 2          | 0          |
 +------+----------------+------------+--------+------------+---------------------+----------+----------+--------+------------+------------+------------+
 ```
 
-状态取值：`可用`、`冷却`、`付费耗尽`、`已过期`、`失效`。
+Status values: `Available`, `Cooling`, `Paid exhausted`, `Expired`, `Invalid`.
 
-账号池表格和 CLI `monitor` 不再显示“免费模型”列，改为“签到”列；CLI `status` 的账号详情也展示签到。此改动不删除模型倍率、免费模型识别、实测账本或模型调度逻辑。
+The account pool table and CLI `monitor` no longer show the "Free models" column, replaced by a "Checkin" column; the account details in CLI `status` also show checkin. This change does not remove model multipliers, free-model detection, the measured ledger, or model scheduling logic.
 
-### 每日签到：随机计划与当天状态
+### Daily Checkin: Random Plan and Same-Day Status
 
-- 所有日期和执行窗口均按**北京时间 UTC+8**计算，与服务器本地时区无关。每个国内个人账号每天独立随机生成首次计划（`08:00` 起、`09:30` 前）和失败重试计划（`09:30` 起、`10:00` 前）。
-- 首次成功或上游明确返回“今天已签到”后，显示**已签**，当天不再请求；首次失败显示**失败**，仅到该账号的重试时间再发送一次。第二次仍失败则当天结束，不因网络错误、刷新状态、热加载凭据或重启增加次数。
-- 未到计划时间、正在启动补签队列中等待时显示**待签**，执行中的短暂状态也归入待签；没有请求且已被标记为错过窗口时显示**未签**，不把“未执行”伪装成“签到失败”。国际站、企业账号显示 `—`；状态文件异常时显示**未知**并暂停签到。
-- 计划与次数保存在运行目录的 `checkin-state.json`，文件仅包含账号哈希和固定状态信息，不含 Token、UID、昵称或凭据正文。**请求前先落盘占用本次机会**，以免进程中断后重发原请求。请保留此文件，不要当作临时缓存清理；它已被 Git 忽略。
-- **北京时间 08:00 前启动**：只恢复或生成随机计划，不立即签到。**08:00 起启动或重启**：仅把今天状态仍为待签、尝试次数为 0 的国内个人账号放入启动补签队列；只有一个就立即执行，多个则首个立即执行，前一请求完成后至少间隔 1 分钟再执行后续账号，不并发补签。
-- 启动补签不受首次随机窗口 `09:30` 的截止限制，但只处理北京时间今天，不跨日。已签、失败、上次执行中断或已标记未签的账号不会混入待签补签队列。若首次补签发生在 `10:00` 后且失败，当天不再重试；没有放宽原来的 `09:30–10:00` 失败重试窗口。
-- 队列时间、已用次数及最近一笔补签时间都保存到状态文件；反复重启不会把剩余账号同时挤到当前时间。上一笔请求未完成时不会发下一笔；同一启动队列账号的失败重试也遵守至少 1 分钟间隔。新加入的账号仍遵循正常随机计划，不因热加载事件立即补签。
-- 进程若在请求中退出，已占用的次数不退回：第一次结果未确认的账号只剩原定的一次重试；第二次结果未确认则当天不再尝试。状态损坏、无法落盘或北京时间倒退时采取保守保护，不发送新的签到，以避免重复。
-- 北京时间跨日后，昨日“已签”不再作为今天的成功。网页悬浮签到状态可以查看当天说明和计划时间。
-- 次日计划在北京时间跨日后生成；当天任务全部结束且没有待执行计划时，下次时间留空，不伪造一个固定的“明早 08:00 签到”。
-- 签到只使用一个正常签到请求，不模拟聊天或完成其他活动；不在网络等待期间占用账号模型凭据锁。随机时间仅是调度方式，不代表平台对自动化活动的授权，也不保证免于风控。
+- All dates and execution windows are computed in **Beijing time UTC+8**, regardless of the server's local timezone. Each domestic personal account independently generates a random first plan (from `08:00`, before `09:30`) and a failure-retry plan (from `09:30`, before `10:00`) each day.
+- After the first success or an explicit upstream "already checked in today" response, the status shows **Checked in** and no more requests are made that day; a first failure shows **Failed**, with exactly one more send at that account's retry time. A second failure ends the day — network errors, refresh state, credential hot reload, or restarts never add attempts.
+- Before the scheduled time, or while waiting in the startup catch-up queue, the status shows **Pending**; brief in-execution states also count as pending. When no request was made and the account was already marked as having missed its window, the status shows **Missed** — "not executed" is never disguised as "checkin failed". International and enterprise accounts show `—`; when the state file is abnormal the status shows **Unknown** and checkins pause.
+- Plans and attempt counts are saved in `checkin-state.json` in the run directory; the file contains only account hashes and fixed status info — no tokens, UIDs, nicknames, or credential bodies. **The attempt is claimed to disk before the request**, so an interrupted process does not resend the original request. Keep this file; do not treat it as a disposable cache. It is Git-ignored.
+- **Started before 08:00 Beijing time**: only restores or generates random plans, no immediate checkin. **Started or restarted from 08:00 on**: only domestic personal accounts whose today status is still pending with 0 attempts enter the startup catch-up queue; with one account it runs immediately, with several the first runs immediately and each subsequent one runs at least 1 minute after the preceding request completes — no concurrent catch-ups.
+- The startup catch-up is not limited by the random first window's `09:30` cutoff, but only handles today in Beijing time, never crossing days. Checked-in, failed, previously interrupted, or already-marked-missed accounts never enter the pending catch-up queue. If the first catch-up happens after `10:00` and fails, there are no more retries that day; the original `09:30–10:00` failure retry window was not widened.
+- Queue times, used attempts, and the latest catch-up time are saved to the state file; repeated restarts never squeeze remaining accounts onto the current moment. The next request is never sent while the previous one is unfinished; failure retries within the same startup queue also respect the 1-minute minimum gap. Newly added accounts still follow the normal random plan and are not immediately caught up by hot reload events.
+- If the process exits mid-request, the claimed attempt is not returned: an account whose first result was unconfirmed has only its original single retry left; if the second result is also unconfirmed, no more attempts that day. On state corruption, unwritable disk, or Beijing time moving backwards, conservative protection applies and no new checkins are sent, avoiding duplicates.
+- After midnight Beijing time, yesterday's "checked in" no longer counts as today's success. The web hover checkin status shows the day's explanation and planned times.
+- Next-day plans are generated after the Beijing-time day rollover; when all of today's tasks are done and nothing is pending, the next time is left empty — never faking a fixed "tomorrow 08:00 checkin".
+- Checkin sends exactly one normal checkin request — no simulated chats or other activities; the account's model credential lock is not held during network waits. The random time is only a scheduling method; it does not represent platform authorization for automated activity, nor any guarantee against risk controls.
 
-套餐取值：`Pro试用`（上游 `ProTrialStatus=1`）、`pro`（上游 `IsPaidUser=true`）、`免费`（其余，含识别不出）。
+Plan values: `Pro trial` (upstream `ProTrialStatus=1`), `pro` (upstream `IsPaidUser=true`), `Free` (everything else, including unrecognized).
 
-**模型统计附表**
+**Model stats table**
 
 ```text
-模型统计 (来源 live-api@2026-09-17 14:57):
+Model stats (source live-api@2026-09-17 14:57):
 +----------------------------+------------------+------------------+----------+----------+---------------+-----------------+------------+
-| 模型                       | 国内倍率         | 国际倍率         | 可用账号 | 请求     | 平均首字(5h)  | 平均总耗时(5h)  | 总Token(M) |
+| Model                      | Domestic rate    | Intl rate        | Avail accts | Requests | Avg TTFT(5h)  | Avg total(5h)   | Total tokens(M) |
 +----------------------------+------------------+------------------+----------+----------+---------------+-----------------+------------+
 | hy3                        | 0.00x            | 0.00x            | 8        | 3        | 1.9s          | 2.3s            | 0.12M      |
 | deepseek-v4.1-flash        | 0.03x            | 0.00x            | 5        | 12       | 820ms         | 3.4s            | 1.75M      |
-| hy4-preview                | 0.00x            | 收费(倍率未知)   | 8        | 4        | 1.3s          | 4.1s            | 0.00M      |
+| hy4-preview                | 0.00x            | Paid (unknown rate) | 8     | 4        | 1.3s          | 4.1s            | 0.00M      |
 +----------------------------+------------------+------------------+----------+----------+---------------+-----------------+------------+
 ```
 
-| 列 | 含义 |
+| Column | Meaning |
 |---|---|
-| 模型 | 模型 ID |
-| 国内倍率 | 国内站生效倍率（`credits` × 促销 factor）；免费显示 `0.00x`，促销过期或接口无有效倍率时显示 `-`，实测确认收费显示 `收费(倍率未知)` |
-| 国际倍率 | 国际站同上 |
-| 可用账号 | 当前可调度该模型的账号数（已计入账号冷却、模型冷却、模型额度阻断） |
-| 请求 | 客户端请求次数 |
-| 平均首Token(5h) | 最近 5 小时内的有效首 Token 延迟（TTFT v2），只计完整响应且确有增量的步骤；按小时分桶、自动淘汰过期样本 |
-| 平均总耗时(5h) | 最近 5 小时滚动窗口内的平均总耗时 |
-| 总Token(M) | 进程启动后累计的上游 usage token，单位百万；优先 `usage.total_tokens`，没有则用 `prompt_tokens + completion_tokens`；上游未返回 usage 的请求不估算 |
+| Model | Model ID |
+| Domestic rate | Effective domestic multiplier (`credits` × promo factor); free shows `0.00x`, `-` when the promo expired or the API has no valid rate, and `Paid (unknown rate)` when probing confirmed paid |
+| Intl rate | Same as above for the international site |
+| Available accounts | Number of accounts currently schedulable for this model (account cooldown, model cooldown, and model quota blocks all counted) |
+| Requests | Number of client requests |
+| Avg TTFT(5h) | Valid first-token latency in the last 5 hours (TTFT v2), counting only complete responses with real increments; bucketed hourly with automatic eviction of stale samples |
+| Avg total(5h) | Average total duration over the last 5 hours' rolling window |
+| Total tokens(M) | Cumulative upstream usage tokens since process start, in millions; prefers `usage.total_tokens`, falling back to `prompt_tokens + completion_tokens`; requests without upstream usage are not estimated |
 
 ---
 
-## webui（网页控制台）
+## webui (Web Console)
 
-默认关闭。显式 `-webui` 后在 `gateway.webPort`（默认 `8316`）提供独立网页控制台，用于管理账号池开关、模型列表开关，查看和清理日志、预览及编辑 `config.json`、查看定时任务记录，并在「访问设置」页切换模型 API Key 校验或编辑端口。网页不展示凭据页面。它与模型 API 端口分离，未启用时管理端口不监听。
+Off by default. With explicit `-webui`, a standalone web console is served on `gateway.webPort` (default `8316`) for managing account pool toggles and model list toggles, viewing and cleaning logs, previewing and editing `config.json`, viewing scheduled task records, and toggling model API key validation or editing ports on the "Access Settings" page. The web UI does not show a credentials page. It is separate from the model API port; when not enabled, the admin port does not listen.
 
 ```bash
-# 只有显式 -webui 才开启网页控制台；模型 API 仍监听 8317
+# Only an explicit -webui enables the web console; the model API still listens on 8317
 workbuddy-gateway serve -webui
 
-# 方式一：本机或 SSH 本地端口转发打开页面，一键生成管理 Key
-ssh -L 8316:127.0.0.1:8316 root@服务器
-# 浏览器打开
+# Option 1: open the page locally or via SSH local port forwarding, generate the admin key with one click
+ssh -L 8316:127.0.0.1:8316 root@server
+# Open in a browser:
 # http://127.0.0.1:8316/ui/
 
-# 方式二：不打开页面，直接在服务器上手动设置管理 Key（建议 32 位随机字符串）
+# Option 2: without opening the page, set the admin key manually on the server (32 random characters recommended)
 python3 - <<'PY'
 import json, secrets, pathlib
 p = pathlib.Path("/opt/workbuddy-gateway/config.json")
 cfg = json.loads(p.read_text())
-cfg.setdefault("gateway", {})["adminKey"] = secrets.token_hex(16)  # 32 字符
+cfg.setdefault("gateway", {})["adminKey"] = secrets.token_hex(16)  # 32 chars
 p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
-print("已写入 gateway.adminKey，运行中的新版本约 1 秒热生效")
+print("gateway.adminKey written; the running new version hot-reloads it in about 1 second")
 PY
 systemctl restart workbuddy-gateway
 ```
 
-| 项 | 说明 |
+| Item | Description |
 |---|---|
-| 入口 | `GET /ui/`（独立管理端口，静态外壳不含任何数据） |
-| 数据接口 | `GET /admin/api/status`、`/admin/api/models`、`/admin/api/logs`、`/admin/api/config`、`/admin/api/tasks`，**一律需要 `Authorization: Bearer <adminKey>`** |
-| 写入接口 | `POST /admin/api/setup`（仅本机首次生成管理 Key）、`POST /admin/api/settings`（模型 API 鉴权与端口）、`POST /admin/api/account-toggle` / `model-toggle`（账号/模型开关）、`POST /admin/api/credential-edit`（凭据 JSON）、`POST /admin/api/log-settings` / `log-cleanup`（保留设置与过期清理） |
-| 页面 | 总览（用量趋势、账号池健康度与日志告警）、账号池（全局调度开关）、模型列表（启停开关，含停用模型）、日志（保留天数与清理）、配置（Key 脱敏预览；确认警告后可编辑完整配置，systemPrompt 正文直接展示）、定时任务（只读日志视图）、访问设置（鉴权与端口编辑）。网页不再提供凭据列表或编辑器 |
-| 数据来源 | 复用 `serve` 的状态快照、完整模型目录、`logs/` 日志与本地配置/凭据文件；开关受控写入配置并应用原有调度过滤 |
-| 定时任务 | 周期、启用状态、最近执行、完成时间、执行结果、下次预计执行与日志说明；仅展示、不触发任务或修改调度 |
+| Entry | `GET /ui/` (standalone admin port; the static shell contains no data) |
+| Data APIs | `GET /admin/api/status`, `/admin/api/models`, `/admin/api/logs`, `/admin/api/config`, `/admin/api/tasks` — **all require `Authorization: Bearer <adminKey>`** |
+| Write APIs | `POST /admin/api/setup` (local-machine first-time admin key generation only), `POST /admin/api/settings` (model API auth and ports), `POST /admin/api/account-toggle` / `model-toggle` (account/model toggles), `POST /admin/api/credential-edit` (credential JSON), `POST /admin/api/log-settings` / `log-cleanup` (retention settings and expired cleanup) |
+| Pages | Overview (usage trends, account pool health, and log alerts), Account Pool (global scheduling toggles), Model List (enable/disable toggles, including disabled models), Logs (retention days and cleanup), Config (key-redacted preview; after confirming the warning you can edit the full config, with the systemPrompt body shown directly), Scheduled Tasks (read-only log view), Access Settings (auth and port editing). The web UI no longer provides a credential list or editor |
+| Data source | Reuses `serve`'s status snapshots, the full model catalog, `logs/` logs, and local config/credential files; toggles are written to the config under control and applied through the existing scheduling filters |
+| Scheduled tasks | Cadence, enabled state, last run, completion time, result, next estimated run, and log notes; display only — tasks are never triggered or rescheduled |
 
-#### 网页新增账号与删除凭据
+#### Adding Accounts and Deleting Credentials on the Web
 
-账号池页顶部有「添加账号」，点开后：
+The Account Pool page has an "Add Account" button at the top. Clicking it:
 
-1. 选择**国内站**或**国际站**；
-2. 填**凭据名**，默认是运行目录下第一个没被占用的 `workbuddyN.json`。只能改文件名，落地目录固定为程序运行目录（设置了 `-auth-dir` 时用该目录），页面不展示绝对路径；
-3. 点「获取登录接口」，表单内直接显示**登录链接与二维码**，链接旁有「复制链接」按钮；
-4. 手机扫码授权后，网关自动写入凭据、自动并入账号池并触发额度扫描，**不需要重启服务**。
+1. Choose the **Domestic site** or **International site**;
+2. Enter a **credential name**, defaulting to the first unused `workbuddyN.json` in the run directory. Only the file name is editable; the directory is fixed to the program's run directory (or the `-auth-dir` directory when set), and no absolute path is shown;
+3. Click "Fetch login endpoint" and the form directly shows the **login link and QR code**, with a "Copy link" button beside it;
+4. After you authorize via QR scan on your phone, the gateway writes the credentials, merges the account into the pool, and triggers a quota scan — **no service restart needed**.
 
-这条流程与命令行 `workbuddy-gateway login -auth <文件>`（国际站加 `-intl`）**复用同一套登录实现**，行为一致，不会出现两套逻辑漂移。登录会话有时限（国内站 5 分钟、国际站 15 分钟），页面会显示剩余时间；超时后提示登录链接已失效并停止轮询，点「关闭」也会停止轮询，两种情况都不写入任何文件。
+This flow **reuses the same login implementation** as the CLI `workbuddy-gateway login -auth <file>` (plus `-intl` for the international site), so behavior is identical and the two cannot drift apart. Login sessions have a time limit (5 minutes domestic, 15 minutes international) and the page shows the remaining time; on timeout it reports the login link expired and stops polling, and clicking "Close" also stops polling. Neither case writes any file.
 
-账号表每行末列有「删除」按钮：确认后删除该账号在运行目录下的凭据文件，并立即从账号池移除。**只删除凭据文件**，历史统计与日志保留。以下情况一律拒绝删除：同名凭据存在多个、文件名不符合 `workbuddy*.json`、目标不是普通文件（目录或符号链接）、账号不存在。
+The last column of each account row has a "Delete" button: after confirmation, it deletes that account's credential file in the run directory and immediately removes it from the pool. **Only the credential file is deleted**; historical stats and logs are kept. Deletion is always refused when: the same-named credential exists multiple times, the file name does not match `workbuddy*.json`, the target is not a regular file (directory or symlink), or the account does not exist.
 
-#### 只读定时任务与访问设置
+#### Read-Only Scheduled Tasks and Access Settings
 
-- 「定时任务」通过只读 `GET /admin/api/tasks` 从现有 `logs/gateway-*.log` 中的 `[定时任务]` JSON 记录聚合 11 项后台任务，包含启动续期补跑。没有新增任务调度模块、任务状态文件或持久化登记表；关闭 debug 仍会记录任务事件。
-- 每条任务事件包含任务 ID、轮次 TraceID、进程 PID、开始/完成时间、执行结果和已知下次计划。只聚合当前进程启动后的记录，旧进程、损坏行不充当当前成功记录；没有记录时显示“无执行记录”。日志扫描预算为 16 MiB，达到预算会明确提示。
-- 配置检查、凭据扫描、状态快照这三项高频任务，每 60 秒记录最近一次执行，实际变化/状态变化即时记录。任务页每 15 秒读取日志；周期性下次时间可按日志中的定时锚点推算，并标记“推算”，事件触发可能提前。一次性任务完成后不再安排下一次；过期且无法推算的计划等待新日志，不伪造执行结果。
-- 网页凭据页和编辑器已移除，不再自动读取或展示完整凭据。原 `/admin/api/credentials` 与 `/admin/api/credential-edit` 后端接口暂保留兼容，仍受独立管理鉴权、同源、文件范围和版本冲突保护，网页不再调用。
-- 网页标题及品牌文案使用「本地网关」，不再显示旧品牌名称；协议 Header、配置格式与数据字段保持兼容，不改写用户配置、日志或账号昵称中的原文。
-- 「账号池」的「只显示可用账号」只保留状态为 `active` 且全局调度未停用的账号；「模型列表」的「只显示可用模型」只保留已启用且可用账号数大于 0 的模型。取消勾选可查看全部，筛选不改变调度、配置或历史统计。
-- 两个筛选分别通过 Cookie 保存，刷新、退出再登录后恢复，默认不勾选。Cookie 只含 `0/1` 显示偏好，作用域为当前主机的 `/ui`，有效期一年，使用 `SameSite=Lax`，HTTPS 时加 `Secure`；Cookie 不保存任何 Key 或凭据，也不能用于登录。浏览器禁用 Cookie 时仍可筛选，但页面提示刷新可能无法记住状态。
-- 后台刷新按账号/模型键局部更新表格，未变化的行、开关焦点及已展开详情保留；统计数据不变时复用图表。操作结果在右下角浮层显示，不挤动页面：成功提示约 5 秒后关闭，错误提示不会被无关轮询清掉，只在对应接口恢复或新操作提示替换时关闭。
-- 「模型列表」国内 / 国际倍率后有 `!` 按钮，点击显示该倍率的**数据来源**、**更新时间**和一句**白话解释**（例如「官方接口给出的目录倍率」「官方促销已于 … 结束，接口仍返回 0.00x，该数值不可信」「上次真实探测结论：收费（尚未复测）」），其他来源按「其他记录」逐条给出一句解释。原始日志默认折叠在「原始日志（N 条，默认折叠）」里，需要时才展开，避免刷屏。
-- 倍率无法确定具体数值（如「收费(倍率未知)」）时额外显示**如何刷新**：后台自动探测已关闭时提示「用该站点的账号请求一次这个模型，网关会按返回的 `usage.credit` 自动重新判定并写入日志」；探测已开启时提示会自动复测。该提示里的开关状态同样解析自普通日志（`[ModelPrice] 阶段=自动探测调度`），不是额外状态。
-- 详情里**不显示「状态：未知」这类字样**：该结论本身是实测过的，写「未知」会让人误以为从未检测；实际含义由「上次真实探测结论：收费（尚未复测）」和「如何刷新」表达。
-- 日志中完全没有该模型的记录时显示**没有日志**，并说明「用该站点的账号请求一次这个模型，就会产生新的倍率记录」，不猜测来源。
-- 倍率来源只读 `GET /admin/api/rate-detail`（需管理 Key，仅支持 GET），复用定时任务页的日志读取方式：扫描 `logs/gateway-*.log` 尾部并解析，不新增调度器、状态文件或内存账本；结果缓存 20 秒，点击时按需拉取，不随总览轮询反复扫描。
-- 解析的日志来源：`[Models] 官方倍率`（官方目录首次或变化时记录）、`[ModelPrice]`（探测结论，含缓存载入）、`[ModelCost]`（正常请求实测）。优先级与页面取值顺序一致：正常请求实测免费 > 探测免费 > 探测收费 > 促销过期 > 官方数值。
-- 价格相关日志全部写入**普通日志**（`logs/gateway-YYYY-MM-DD.log`），不依赖 `debug.enabled`；调试日志关闭时这些记录仍然存在。日志只记录模型名、站点、倍率、credits、促销时间与账号文件名，不记录令牌。
-- 「访问设置」可编辑 `gateway.apiPort` / `gateway.webPort`，保存调用原来的 `POST /admin/api/settings`。配置端口与实际监听端口分别显示，修改后**立即热切换**；新监听全部绑定成功后才关闭旧监听，已有连接和流式请求不会被主动中断。页面本身若在旧 Web 端口打开，需用新端口重新打开；显式 `-port` 仍优先于配置。
-- 「配置」页点击「编辑配置」后先展示风险警告，确认后通过 `GET /admin/api/config-edit?acknowledged=1` 加载真实原文（包含 Key）；仅通过可信网络、HTTPS 或 SSH 转发使用。编辑器不把正文保存到浏览器存储，离开配置页、退出编辑或会话失效时清除原文，未保存修改需确认丢弃。
-- 「校验并保存」通过 `POST /admin/api/config-edit` 提交 `content`、读取时的 SHA-256 `revision` 和 `acknowledged: true`。配置最大 1 MiB，必须是符合既有字段及类型规则的单个 JSON 对象；拒绝将 `[REDACTED]` 当作 Key。读取后被其他网页操作或服务器修改过的配置返回 `409`，不覆盖新版本；网页保留输入供核对，重新加载前提示丢弃未保存修改。
-- 保存完整配置等效于直接修改服务器文件：`config.json` 内的全部字段都会热应用，包括监听端口；日志保留规则可能触发不可撤销的删除。管理 Key 改变后退出旧会话、要求重新登录；清空管理 Key 需额外确认并提交 `confirmAdminKeyRemoval: true`，之后需在服务器本机重新设置。配置写入、端口绑定或热应用失败会尽力恢复旧文件与旧监听，日志只记录阶段、结果和长度，不记录正文或 Key。
-- 「日志」页通过 `GET/POST /admin/api/log-settings` 读写 `logs.retentionDays`，通过 `POST /admin/api/log-cleanup`（空 JSON 对象）清理过期日志，返回删除数量、回收字节、正在写入跳过数量与失败数量。
-- 所有新接口均需要独立管理 Key，并复用同源校验和 TraceID 落盘审计；模型 API Key 不能编辑凭据、修改端口或清理日志。
+- "Scheduled Tasks" aggregates 11 background tasks from the existing `[Scheduled task]` JSON records in `logs/gateway-*.log` via the read-only `GET /admin/api/tasks`, including the startup renewal catch-up. There is no new task scheduling module, task state file, or persistent registry; task events are still recorded with debug off.
+- Each task event includes a task ID, round TraceID, process PID, start/completion times, result, and known next plan. Only records from the current process since startup are aggregated; old processes and corrupted lines never stand in for current successes; with no records, "No execution records" is shown. The log scan budget is 16 MiB, and reaching it is clearly reported.
+- The three high-frequency tasks — config checks, credential scans, and status snapshots — record their latest execution every 60 seconds, with actual/state changes recorded immediately. The tasks page reads the logs every 15 seconds; periodic next times can be inferred from the scheduled anchors in the logs and are marked "estimated", since event triggers may come early. One-shot tasks are not rescheduled after completion; expired plans that cannot be inferred wait for new logs, never faking results.
+- The web credentials page and editor have been removed; full credentials are no longer read or displayed automatically. The old `/admin/api/credentials` and `/admin/api/credential-edit` backend endpoints are temporarily kept for compatibility and still protected by independent admin auth, same-origin checks, file scoping, and version conflict protection, but the web UI no longer calls them.
+- The web page title and branding use "Local Gateway", no longer showing the old brand name; protocol headers, config formats, and data fields stay compatible, and original text in user configs, logs, or account nicknames is never rewritten.
+- "Account Pool"'s "Show available accounts only" keeps only accounts with `active` status whose global scheduling is not disabled; "Model List"'s "Show available models only" keeps only enabled models with more than 0 available accounts. Unchecking shows everything; the filters never change scheduling, config, or historical stats.
+- The two filters are saved via cookies respectively, restored after refresh or re-login, and unchecked by default. The cookie contains only a `0/1` display preference, scoped to `/ui` on the current host, valid for one year, with `SameSite=Lax` and `Secure` over HTTPS; the cookie stores no keys or credentials and cannot be used to log in. With browser cookies disabled, filtering still works, but the page notes that a refresh may not remember the state.
+- Background refresh updates tables partially by account/model key, preserving unchanged rows, toggle focus, and expanded details; charts are reused when stats are unchanged. Operation results appear in a bottom-right overlay that does not shift the page: success toasts close after about 5 seconds, error toasts are not cleared by unrelated polling, and they close only when the related endpoint recovers or a new operation toast replaces them.
+- Next to the domestic / international rates on "Model List" there is a `!` button; clicking shows the rate's **data source**, **updated time**, and a one-sentence **plain-language explanation** (e.g. "catalog rate given by the official API", "the official promo ended at …, but the API still returns 0.00x — this value is not trustworthy", "last real probe verdict: paid (not retested yet)"); other sources get a sentence each under "Other records". Raw logs are collapsed by default under "Raw logs (N entries, collapsed by default)" and expanded only when needed, avoiding flooding.
+- When a rate cannot be pinned to a value (e.g. "Paid (unknown rate)"), a **how to refresh** hint also appears: if background auto-probing is off, it says "request this model once with an account on that site, and the gateway will re-judge automatically from the returned `usage.credit` and write a log"; if probing is on, it says it will retest automatically. The toggle state in that hint is likewise parsed from normal logs (`[ModelPrice] stage=auto probe scheduling`), not an extra status.
+- Details **never show wording like "Status: unknown"**: that verdict was actually measured, and writing "unknown" would suggest it was never tested; the actual meaning is conveyed by "last real probe verdict: paid (not retested yet)" and "how to refresh".
+- When the logs contain no records for the model at all, it shows **no logs** with the note "request this model once with an account on that site and a new rate record will appear", without guessing a source.
+- Rate sources only read `GET /admin/api/rate-detail` (requires the admin key, GET only), reusing the scheduled-tasks page's log reading: it scans and parses the tail of `logs/gateway-*.log`, adding no scheduler, state file, or in-memory ledger; results are cached for 20 seconds and fetched on click, not rescanned with every overview poll.
+- Parsed log sources: `[Models] official multiplier` (recorded on first sight of or change to the official catalog), `[ModelPrice]` (probe verdicts, including cache loads), `[ModelCost]` (measurements from normal requests). Priority matches the page's value order: normal-request measured free > probe free > probe paid > promo expired > official value.
+- Price-related logs all go to the **normal log** (`logs/gateway-YYYY-MM-DD.log`), independent of `debug.enabled`; these records exist even with debug logs off. Logs record only the model name, site, rate, credits, promo times, and account file name — never tokens.
+- "Access Settings" can edit `gateway.apiPort` / `gateway.webPort`; saving calls the existing `POST /admin/api/settings`. Configured and actual listening ports are shown separately, and changes **hot switch immediately**; the old listener closes only after all new listeners bind, and existing connections and streaming requests are not interrupted. If the page itself is open on the old web port, reopen it on the new one; an explicit `-port` still takes priority over the config.
+- The "Config" page shows a risk warning before "Edit Config"; after confirming, the real raw content (including keys) is loaded via `GET /admin/api/config-edit?acknowledged=1`. Use it only over trusted networks, HTTPS, or SSH forwarding. The editor never stores the body in browser storage; it clears the raw content when you leave the config page, exit editing, or the session expires, and unsaved changes require confirmation to discard.
+- "Validate and Save" submits `content`, the SHA-256 `revision` read at load time, and `acknowledged: true` via `POST /admin/api/config-edit`. The config is capped at 1 MiB and must be a single JSON object conforming to the existing field and type rules; treating `[REDACTED]` as a key is rejected. If the config was changed by another web operation or the server since it was read, `409` is returned and the newer version is not overwritten; the web keeps your input for review and warns to discard unsaved changes before reloading.
+- Saving the full config is equivalent to editing the server file directly: every field in `config.json` hot-applies, including listen ports; log retention rules may trigger irreversible deletion. After the admin key changes, old sessions are logged out and re-login is required; clearing the admin key needs extra confirmation with `confirmAdminKeyRemoval: true`, and afterwards it must be set again on the server itself. On config write, port binding, or hot-apply failure, the old file and old listeners are restored on a best-effort basis; logs record only stage, result, and length — never the body or keys.
+- The "Logs" page reads and writes `logs.retentionDays` via `GET/POST /admin/api/log-settings`, and cleans expired logs via `POST /admin/api/log-cleanup` (empty JSON object), returning deleted count, reclaimed bytes, skipped in-write count, and failure count.
+- All new endpoints require the independent admin key, and reuse same-origin checks plus TraceID audit logging; the model API key cannot edit credentials, change ports, or clean logs.
 
-- 未启用 `-webui` 时，管理端口不监听，`/ui` 与 `/admin/api/*` 也不注册路由。
-- **管理 Key 的两种设置方式**（二选一即可）：
-  1. **页面一键生成**：`adminKey` 为空时，在服务器本机、或用 SSH 本地端口转发（`ssh -L 8316:127.0.0.1:8316 用户@服务器`）后访问 `http://127.0.0.1:8316/ui/`，点击生成 32 字符随机 Key；Key 写入 `config.json` 并**仅在弹窗中展示一次**。远程（非本机）访问不能触发一键生成，避免他人抢先生成；但远程仍可用已设置好的 Key 登录。
-   2. **手动编辑配置文件**：直接在服务器上编辑 `config.json`，把 `gateway.adminKey` 设为你自己的随机字符串（建议 32 位），保存后约 1 秒生效。此方式不需要本机访问，也不需要页面操作；登录时填写该字符串即可。
-- `/admin/api/logs` 只允许读取 `logs/` 下命名受限的普通、调试、部署和前端审计日志，拒绝任意路径与目录穿越；返回日志先做秘密值脱敏，且单次读取有约 1 MiB 的扫描预算，超长单行会被省略。
-- 前端为原生 HTML/CSS/JS，通过 `go:embed` 嵌入二进制，无额外构建步骤与运行时依赖；管理 Key 只保存在当前标签页的 `sessionStorage`，验证成功后才保存。
-- 状态快照缺失或损坏时接口返回 `503`，页面保留上次数据并提示，不会把读取失败显示成零账号。
+- When `-webui` is not enabled, the admin port does not listen and `/ui` with `/admin/api/*` routes are not registered.
+- **Two ways to set the admin key** (either one):
+  1. **One-click generation on the page**: when `adminKey` is empty, open `http://127.0.0.1:8316/ui/` on the server itself, or via SSH local port forwarding (`ssh -L 8316:127.0.0.1:8316 user@server`), and click to generate a random 32-character key; it is written to `config.json` and **shown only once** in the dialog. Remote (non-local) access cannot trigger one-click generation, preventing someone else from generating it first; but remote login with an already-set key still works.
+   2. **Edit the config file manually**: edit `config.json` directly on the server, set `gateway.adminKey` to your own random string (32 characters recommended); it takes effect in about 1 second after saving. This way needs neither local access nor the page; just enter the string at login.
+- `/admin/api/logs` only allows reading normal, debug, deployment, and frontend audit logs with restricted names under `logs/`, rejecting arbitrary paths and directory traversal; returned logs are first sanitized for secret values, and each read has a scan budget of about 1 MiB with overly long single lines omitted.
+- The frontend is native HTML/CSS/JS embedded in the binary via `go:embed`, with no extra build step or runtime dependency; the admin key is stored only in the current tab's `sessionStorage`, saved only after successful verification.
+- When the status snapshot is missing or corrupted, the APIs return `503`; the page keeps the last data with a notice, never displaying a read failure as zero accounts.
 
 ---
 
-## 上游会话请求头（v1.14.19）
+## Upstream Session Request Headers (v1.14.19)
 
-网关参照 WorkBuddy 5.8.4 官方客户端的会话／轮次／消息标识语义，为每次模型调用补齐
-`X-Conversation-ID`、`X-Conversation-Request-ID`、`X-Conversation-Message-ID`。
-国际站带工具声明的请求此前可能触发 `11128 conversation id missing`；这项兼容不关闭工具或思考，
-也不改变提示词、输出预算和原有鉴权指纹。
+Following the conversation/turn/message identifier semantics of the official WorkBuddy 5.8.4 client, the gateway fills in
+`X-Conversation-ID`, `X-Conversation-Request-ID`, and `X-Conversation-Message-ID` for every model call.
+International requests with tool declarations previously could trigger `11128 conversation id missing`; this compatibility layer neither disables tools or thinking,
+nor changes prompts, output budgets, or the existing auth fingerprint.
 
-- 三个协议入口（Chat Completions、Responses、Anthropic Messages）、流式与非流式聚合、
-  国内与国际站都经过同一出站路径；手工 `probe` 和后台价格探测也有统一兜底。
-- 优先读取客户端 `X-Conversation-ID`，再读取 `X-Session-ID`、
-  请求顶层或 `metadata` 内的 `conversation_id`／`conversationId`／`session_id`／`sessionId`。
-  合法 UUID 沿用；其他有效会话键按调用方隔离后生成稳定 UUIDv5。过长或带控制字符的键忽略。
-- `X-Conversation-Request-ID` 与 `X-Conversation-Message-ID` 可由客户端提供，
-  也可通过顶层或 `metadata` 的同名下划线／驼峰字段提供；缺失时独立生成。
-  新生成的消息 ID 采用客户端主路径的 32 位无连字符 UUID 格式。
-- 同一个逻辑 HTTP 请求的安全网络重试、跨账号／站点回退复用全部三个标识。
-  新 HTTP 请求的轮次与消息标识默认重新生成。**没有显式会话键时，每个 HTTP 调用独立生成会话**，
-  不会根据提示词、用户名或模型名猜测会话归属；需要跨轮稳定会话时请显式提供会话键。
-- 仅生成或规范化请求头，不记录原始会话键、请求正文或令牌；不向登录、续期、额度查询接口添加这些头。
+- All three protocol entries (Chat Completions, Responses, Anthropic Messages), streaming and non-streaming aggregation,
+  and both domestic and international sites go through the same outbound path; manual `probe` and background price probing share the same fallback.
+- The client's `X-Conversation-ID` is read first, then `X-Session-ID`, then
+  `conversation_id`/`conversationId`/`session_id`/`sessionId` from the request top level or `metadata`.
+  Valid UUIDs are kept; other valid session keys are isolated per caller and turned into stable UUIDv5. Overly long keys or keys with control characters are ignored.
+- `X-Conversation-Request-ID` and `X-Conversation-Message-ID` may be provided by the client,
+  or via same-named underscore/camelCase fields at the top level or in `metadata`; they are generated independently when missing.
+  Newly generated message IDs use the client's main-path 32-character hyphen-less UUID format.
+- Safe network retries and cross-account/site fallbacks within the same logical HTTP request reuse all three identifiers.
+  A new HTTP request regenerates turn and message identifiers by default. **Without an explicit session key, each HTTP call gets an independent session**;
+  session ownership is never guessed from prompts, usernames, or model names; for stable sessions across turns, provide the session key explicitly.
+- Only headers are generated or normalized; original session keys, request bodies, or tokens are never logged; these headers are not added to login, renewal, or quota endpoints.
 
 ## probe
 
-免费 / 收费属性按「账号（含站点）+ 模型」学习，只有该账号真正请求过该模型才会写入账本。默认调度优先使用有余额账号，**余额耗尽的账号几乎不会被选中，也就学不到属性**。`probe` 用于主动补课。
+Free/paid attributes are learned per "account (including site) + model", and the ledger only records accounts that actually requested that model. Default scheduling prefers accounts with balance, so **exhausted accounts are almost never selected and never learn attributes**. `probe` exists to fill that gap proactively.
 
-> 注意：额度耗尽的账号会被上游整体拒绝（`14018 Credits exhausted`），此时连免费模型也会失败。要验证某模型是否免费，请使用**额度未耗尽**的账号。
+> Note: quota-exhausted accounts are rejected wholesale by upstream (`14018 Credits exhausted`), so even free models fail. To verify whether a model is free, use an account **whose quota is not exhausted**.
 
 ```bash
-# 探测全部账号，每个账号取模型目录前 5 个模型
+# Probe all accounts, taking the first 5 catalog models per account
 workbuddy-gateway probe
 
-# 只探测指定账号
+# Probe only specified accounts
 workbuddy-gateway probe -auth workbuddy4.json
 
-# 指定模型
+# Specify models
 workbuddy-gateway probe -auth workbuddy4.json -models hy3,deepseek-v4.1-flash
 
-# 指定数量上限（默认 5，上限 50）
+# Cap the number (default 5, max 50)
 workbuddy-gateway probe -auth workbuddy4.json -limit 8
 ```
 
-| 选项 | 默认 | 说明 |
+| Option | Default | Description |
 |---|---|---|
-| `-auth <path>` | 全部账号 | 只探测指定凭据（文件名或路径均可） |
-| `-models <m1,m2>` | 目录前几个 | 指定要探测的模型 |
-| `-limit <n>` | `5` | 未指定 `-models` 时探测的模型数量，上限 50 |
+| `-auth <path>` | All accounts | Probe only the given credentials (file name or path both work) |
+| `-models <m1,m2>` | First few in catalog | Models to probe |
+| `-limit <n>` | `5` | Number of models probed when `-models` is not given, max 50 |
 
-输出示例：
+Example output:
 
 ```text
-正在请求 http://127.0.0.1:8317/admin/probe（账号=workbuddy4.json，模型=hy3）...
+Requesting http://127.0.0.1:8317/admin/probe (account=workbuddy4.json, models=hy3)...
 
-账号                   站点   模型     结果     credit  tokens  说明
-workbuddy4.json        intl   hy3      paid     0.42    820     usage.credit=0.42，收费
+account                 site   model    result   credit  tokens  note
+workbuddy4.json         intl   hy3      paid     0.42    820     usage.credit=0.42, paid
 
-汇总: paid=1
+Summary: paid=1
 ```
 
-结果状态：
+Result statuses:
 
-| 状态 | 含义 |
+| Status | Meaning |
 |---|---|
-| `free` | `usage.credit=0` 且 `total_tokens ≥ 100`，已学习为免费 |
-| `paid` | `usage.credit > 0`，已学习为收费 |
-| `unknown` | 未返回 `credit`，或 `credit=0` 但样本过小 |
-| `quota` | `14018` 额度耗尽，记为该账号该模型收费并阻断该模型 |
-| `rate_limited` | `6004` 模型级限流，只冷却该模型 |
-| `auth_failed` | 授权失效（probe 不会自动禁用账号） |
-| `skipped` | 账号失效或无凭据 |
-| `error` | 网络 / 协议错误 |
+| `free` | `usage.credit=0` and `total_tokens ≥ 100`; learned as free |
+| `paid` | `usage.credit > 0`; learned as paid |
+| `unknown` | No `credit` returned, or `credit=0` but the sample is too small |
+| `quota` | `14018` quota exhausted; recorded as paid for that account+model and the model blocked |
+| `rate_limited` | `6004` model-level rate limit; only that model cools down |
+| `auth_failed` | Authorization invalid (probe does not auto-disable accounts) |
+| `skipped` | Account invalid or no credentials |
+| `error` | Network / protocol error |
 
-> 原理：`probe` 作为客户端调用运行中服务的 `/admin/probe`。账本保存在 `serve` 进程内存中，独立进程直接写状态文件会被服务快照覆盖，因此探测必须由运行中的服务执行。该接口仅接受回环来源；模型 API 启用 Key 校验时同样需要携带 `gateway.apiKey`。
+> How it works: `probe` acts as a client calling the running service's `/admin/probe`. The ledger lives in the `serve` process's memory; a separate process writing the state file directly would be overwritten by the service snapshot, so probing must be done by the running service. This endpoint accepts loopback origins only; when model API key validation is on, `gateway.apiKey` must be carried as well.
 
 ---
 
 ## reset
 
-清空**除登录凭据以外**的全部本地数据，并重新拉取模型与倍率。
+Clears **all local data except login credentials** and re-fetches models and multipliers.
 
 ```bash
 workbuddy-gateway reset
 ```
 
-清理范围：
+Cleanup scope:
 
-- `workbuddy-status.json`（账号与模型状态快照）
-- `wb-models-cache.json`（模型目录、倍率、价格探测结论）
-- `*.disabled` / `*.json.disabled`（授权失效标记）
-- `logs/`（运行日志）
+- `workbuddy-status.json` (account and model status snapshot)
+- `wb-models-cache.json` (model catalog, multipliers, price probe verdicts)
+- `*.disabled` / `*.json.disabled` (authorization-invalid markers)
+- `logs/` (run logs)
 
-保留：`workbuddy*.json` 登录凭据。
+Kept: `workbuddy*.json` login credentials.
 
-清理后会立即重新拉取模型目录与倍率。账号账本同时存在于 `serve` 进程内存中，若服务正在运行，请重启使其同步归零：
+After cleanup, the model catalog and multipliers are re-fetched immediately. The account ledger also lives in the `serve` process's memory; if the service is running, restart it so everything resets in sync:
 
 ```bash
 systemctl restart workbuddy-gateway
@@ -999,40 +994,40 @@ systemctl restart workbuddy-gateway
 ## version / help
 
 ```bash
-workbuddy-gateway version    # 输出 WorkBuddy Local Gateway vX.Y.Z
-workbuddy-gateway help       # 输出完整帮助
-workbuddy-gateway -v         # 同 version
-workbuddy-gateway -h         # 同 help
+workbuddy-gateway version    # Prints WorkBuddy Local Gateway vX.Y.Z
+workbuddy-gateway help       # Prints full help
+workbuddy-gateway -v         # Same as version
+workbuddy-gateway -h         # Same as help
 ```
 
 ---
 
-## 多账号池
+## Multi-Account Pool
 
-三种配置方式：
+Three configuration methods:
 
 ```bash
-# 方式一（推荐）：自动发现
-# 把多个凭据文件放进工作目录，无需任何参数
+# Method 1 (recommended): auto-discovery
+# Put multiple credential files in the working directory; no flags needed
 workbuddy-gateway serve
 
-# 方式二：-auth 逗号分隔
+# Method 2: comma-separated -auth
 workbuddy-gateway serve -auth workbuddy.json,workbuddy2.json
 
-# 方式三：-auth-dir 目录
+# Method 3: -auth-dir directory
 workbuddy-gateway serve -auth-dir ./auths
 ```
 
-行为说明：
+Behavior notes:
 
-- **轮询**：请求按 round-robin 在可用账号间分发。
-- **429 冷却**：`6004` 只冷却触发模型；无法归因到模型的 429 才进入账号级冷却，冷却到期自动恢复。
-- **授权失效**：401/403 类错误禁用账号并删除凭据文件，同时写 `*.disabled` 标记；重新 `login` 后自动恢复。
-- **额度耗尽**：`剩余=0` 标记「付费耗尽」，仍可服务已确认免费的模型。
-- **热加载**：默认每 5 秒扫描，新增 / 更新 / 删除凭据免重启。
-- **并发控制**：默认同一凭据账号最多同时处理 4 条模型请求，全局不限。所有模型 API 共用下述限额，凭据维护仍使用独占保护，不会因放开模型并发而同时刷新令牌。
+- **Round-robin**: requests are dispatched round-robin across available accounts.
+- **429 cooldown**: `6004` only cools down the triggering model; only 429s that cannot be attributed to a model enter account-level cooldown, which recovers automatically when it expires.
+- **Authorization invalid**: 401/403-class errors disable the account and delete its credential file, writing a `*.disabled` marker; it recovers automatically after a new `login`.
+- **Quota exhausted**: `remaining=0` marks "paid exhausted"; the account can still serve models confirmed free.
+- **Hot reload**: scans every 5 seconds by default; credential additions / updates / deletions need no restart.
+- **Concurrency control**: by default each credential account handles at most 4 concurrent model requests, with no global limit. All model APIs share the limits below; credential maintenance still uses exclusive protection, so tokens are never refreshed while model concurrency is open.
 
-### 单账号与全局并发
+### Per-Account and Global Concurrency
 
 ```json
 {
@@ -1043,166 +1038,166 @@ workbuddy-gateway serve -auth-dir ./auths
 }
 ```
 
-| 配置 | 默认值 | 说明 |
+| Config | Default | Description |
 |---|---|---|
-| `MaxAcc` | `4` | 每个凭据账号可同时执行的模型请求数；正整数生效，0、负数、缺省或空值回退 4 |
-| `MaxGlobal` | `0` | 全部账号合计的模型请求上限；正整数生效，0、负数、缺省或空值表示不限 |
+| `MaxAcc` | `4` | Concurrent model requests per credential account; positive integers take effect; 0, negatives, missing, or empty fall back to 4 |
+| `MaxGlobal` | `0` | Cap on model requests across all accounts combined; positive integers take effect; 0, negatives, missing, or empty mean unlimited |
 
-- 缺少配置文件时，首次启动自动生成含本段的默认文件。升级后首次启动会补齐旧文件缺失的本段及其中缺失字段；已有值、账号规则、Key 和身份配置不覆盖。
-- `concurrent` 为 `null`、空字符串、空对象，或字段为 `null`、空字符串、非整数/错误类型时，按各字段默认值运行，不影响其他有效配置。未知字段名仍会被配置校验拒绝，避免拼写错误悄悄失效。
-- 修改文件后由原有配置监视器自动热加载（每秒检查）；网页保存完整 JSON 也会立即应用。不需要重启。
-- 扩容唤醒正在排队的请求；缩容不强行取消已有请求，等待占用自然降到新上限后再放行。热加载不会重建计数器，不会产生额外名额或释放错位。
-- 一条请求必须同时满足单账号和全局上限才准入；等待繁忙账号时不占用全局名额。客户端取消排队后不会继续向上游发送。
-- 并发名额从准入一直占用到上游响应体读完、关闭或取消，**包含整个流式响应**，不是仅限制“发送到收到响应头”阶段。安全重试、换号、异常结束均释放对应名额。
-- 本限制覆盖 Chat Completions、Responses、Messages 三个模型 API 的共享上游调用；后台额度、签到和凭据维护不计入模型并发。
-- 未新增排队超时配置：仍在等待的请求会等到有名额或客户端取消；上游超时继续使用 `upstream` 段。实际可承受并发取决于模型、上下文长度、账号和上游负载；提高上限不保证不会出现 429。
-
----
-
-## 模型列表与倍率
-
-**列表来源**：实时接口 `GET {Base}/v2/enterprises/personal/models` 与 npm 包静态目录，按模型 ID 去重、**接口优先**。
-
-```text
-两路都成功  → 合并去重
-一路成功    → 使用成功那路
-两路都失败  → 使用本地缓存 wb-models-cache.json
-失败且无缓存→ 该站点本轮不展示模型（不影响模型调用）
-```
-
-**免费站点优先**：若某模型出现「一个站点免费、另一个站点收费」，调度优先使用免费站点的账号，直到该站点账号全部不可用（冷却 / 耗尽 / 失效）才回退到另一站点；若两个站点都免费或都收费（只是倍率不同），则不设优先，保持正常轮询。
-
-**倍率**：
-
-```text
-1. 促销生效中：生效倍率 = credits × factor（factor=0 → 0.00x）
-2. 促销已过期：接口 credits 不可信（上游常把促销价固化进 credits），
-   探测出结果前显示 -，随后由实测决定
-3. 模型不在接口目录中：同样交由实测决定
-4. 无促销且 credits 有值：直接展示该倍率
-```
-
-**价格探测（默认关闭）**：仅显式传入 `-allow-price-probes` 才开启后台探测，优先选择有余额的同站点账号，余额未知时也可能使用。它会发起真实生成请求（`max_tokens=300`），可能消耗积分；频率 / 批量限制不等于积分预算，目前没有累计积分消耗上限。
-
-默认关闭只影响后台主动探测：目录刷新照常获取官方价格及促销时间；正常客户端请求照常根据 `usage.credit` 学习收费 / 免费（零积分且总 token 数至少 100 才认定免费）。显式 `probe` 命令仍可主动实测，同样可能消耗积分。
-
-```text
-探测免费 → 展示 0.00x；仍符合候选条件时，至少间隔 12 小时复测
-探测收费 → 展示 收费(倍率未知)；仍符合候选条件时也可能再次探测
-14018 / 无 usage.credit / 样本过小 → 不覆盖，保持未知
-```
-
-探测调度（仅显式开启后生效）：
-
-| 时机 | 说明 |
-|---|---|
-| 服务启动 | 启动后约 20 秒执行首轮 |
-| 首次 / 重置后 | 单轮最多 30 个，快速补齐结论 |
-| 收敛后 | 单轮最多 5 个，每模型 12 小时最多一次 |
-| 待探测未清空 | 用 2 分钟短间隔追赶，清空后回到 30 分钟 |
-| 目录刷新成功 | 立即触发一轮 |
-| 凭据变化 | 立即触发一轮（含「原本没有某站点账号、后来加入」的情况） |
-
-仅探测被实际请求过、或接口明确需要确认的模型，避免无谓消耗额度。
-
-`/v1/models` 响应头 `X-Model-Source` 与 `/health` 的 `model_source` 会标注目录来源。
-
-### 模型能力扩展字段
-
-`/v1/models` 的每条模型在目录确有可信数据时会附带能力字段；**未知一律省略，不做 1M 之类兜底**，避免下游按错误窗口预留上下文：
-
-| 字段 | 含义 |
-|---|---|
-| `context_length` | **模型能力上限**，取上游 `maxInputTokens`（缺失时回落 `maxAllowedSize`）。决定上游接受多少输入。 |
-| `max_output_tokens` | 输出上限，取上游 `maxOutputTokens`。 |
-| `default_context_length` | **客户端默认预算**，取上游 `contextWindow.defaultLength`。它只决定客户端自己从多少 token 开始压缩，**不是**能力上限。 |
-| `context_length_options` | 客户端可选档位，取上游 `contextWindow.supportedLengths`（≥2 档才给出，升序）。 |
-| `capabilities_by_site` | 仅当国内站与国际站对同一模型的声明不一致时给出，按站点列出上面四个字段。 |
-
-要点：
-
-- `context_length`（能力上限）与 `default_context_length`（默认预算）语义不同，必须分开看。以 `deepseek-v4.1-flash` 为例：上限 1000000、默认预算 300000、可选档位 300000 / 600000 / 1000000。
-- 同名模型可能由国内站或国际站账号分别服务，能力不一定相同。**不一致时不取最大值冒充**：顶层标量留空，改为在 `capabilities_by_site` 给出分站点明细，避免下游按较大值预留而实际被路由到较小窗口的账号。
-- 这些字段只描述能力，**不注入上游请求参数、不截断消息，也不改变现有输出预算（`max_tokens`）逻辑**。客户端实际发多少上下文，仍由客户端自己的压缩策略决定。
-- 目录刷新时日志会输出一条 `[模型能力]` 覆盖统计（各站点有上限／有档位／有输出上限的模型数），便于核对哪些模型缺数据。
+- Without a config file, first startup generates a default file including this section. The first startup after an upgrade fills in this section and any missing fields in old files; existing values, account rules, keys, and identity config are not overwritten.
+- When `concurrent` is `null`, an empty string, an empty object, or a field is `null`, an empty string, a non-integer/wrong type, each field runs at its default without affecting other valid config. Unknown field names are still rejected by config validation, so typos cannot silently fail.
+- After editing the file, the existing config watcher hot-reloads automatically (checked every second); saving the full JSON from the web also applies immediately. No restart needed.
+- Scaling up wakes queued requests; scaling down never force-cancels in-flight requests — admission resumes once usage naturally drops to the new cap. Hot reload never rebuilds counters, so no extra slots appear and none get mis-released.
+- A request must satisfy both the per-account and global caps to be admitted; while waiting on a busy account, no global slot is held. Once a client cancels a queued request, nothing more is sent upstream.
+- A concurrency slot is held from admission until the upstream response body is fully read, closed, or cancelled — **including the entire streaming response**, not just the "send to response headers" phase. Safe retries, failovers, and abnormal endings all release their slots.
+- This limit covers the shared upstream calls of the three model APIs — Chat Completions, Responses, and Messages; background quota, checkins, and credential maintenance do not count toward model concurrency.
+- No queue-timeout config was added: waiting requests wait for a slot or client cancellation; upstream timeouts continue using the `upstream` section. Actual sustainable concurrency depends on the model, context length, accounts, and upstream load; raising the cap does not guarantee no 429s.
 
 ---
 
-## 用量与性能统计（stats.json）
+## Model List and Multipliers
 
-网关在**程序工作目录**维护一份可选的 `stats.json`，记录按凭据分组的用量事实，供网页控制台「总览」页展示。
+**List sources**: the live API `GET {Base}/v2/enterprises/personal/models` and the static npm package catalog, deduplicated by model ID with the **API taking priority**.
 
-### 记录内容
+```text
+Both succeed   → merged and deduplicated
+One succeeds   → the successful one is used
+Both fail      → the local cache wb-models-cache.json is used
+Fail, no cache → that site shows no models this round (model calls unaffected)
+```
 
-| 内容 | 说明 |
+**Free-site priority**: if a model is "free on one site, paid on the other", scheduling prefers accounts on the free site until all of that site's accounts are unavailable (cooling / exhausted / invalid), then falls back to the other site; if both sites are free or both paid (only multipliers differ), no priority is set and normal round-robin continues.
+
+**Multipliers**:
+
+```text
+1. Promo active:      effective rate = credits × factor (factor=0 → 0.00x)
+2. Promo expired:     API credits are untrustworthy (upstream often bakes the promo price into credits);
+                      shown as - until a probe result arrives, then decided by measurement
+3. Model not in the API catalog: also decided by measurement
+4. No promo and credits present: that rate is shown directly
+```
+
+**Price probing (off by default)**: only passing `-allow-price-probes` explicitly enables background probing, which prefers same-site accounts with balance and may also use accounts with unknown balance. It sends real generation requests (`max_tokens=300`) that may consume credits; rate/batch limits are not a credit budget — there is currently no cumulative credit-spend cap.
+
+The default-off only affects background proactive probing: catalog refresh still fetches official prices and promo times; normal client requests still learn paid/free from `usage.credit` (free is only recognized at zero credits and at least 100 total tokens). The explicit `probe` command can still measure proactively, and likewise may consume credits.
+
+```text
+Probed free  → shows 0.00x; while still a candidate, retested at least 12 hours apart
+Probed paid  → shows Paid (unknown rate); may be probed again while still a candidate
+14018 / no usage.credit / sample too small → not overwritten, stays unknown
+```
+
+Probe scheduling (effective only after explicit opt-in):
+
+| Trigger | Description |
 |---|---|
-| 账号模型账本 | 每个凭据的 `ModelStates`（按模型隔离的成本、额度阻断、冷却、最近观测时间），键由「凭据文件 + 站点 + UID + 企业 ID」派生 |
-| 逐次账号调用 | 完成时间、模型、HTTP 状态、是否完整、输入／输出／总 Token、缓存读取、`usage.credit`、总耗时、首字耗时 |
+| Service startup | First round about 20 seconds after start |
+| First run / after reset | Up to 30 per round, quickly filling in verdicts |
+| After convergence | Up to 5 per round, at most once per model per 12 hours |
+| Pending probes not cleared | Catch up on a 2-minute short interval; back to 30 minutes once cleared |
+| Catalog refresh succeeds | Triggers a round immediately |
+| Credentials change | Triggers a round immediately (including "a site had no account, then one was added") |
 
-**不记录**：访问令牌、刷新令牌、请求或响应正文、提示词、账号昵称。
+Only models actually requested, or explicitly flagged for confirmation by the API, are probed, avoiding pointless quota spend.
 
-### 统计口径
+The `/v1/models` response header `X-Model-Source` and `/health`'s `model_source` mark the catalog source.
 
-- **按实际上游账号调用统计**：一次请求触发多次账号调用（失败重试、额度耗尽换号）时，每个被调用的账号各记一条。未选到账号就被拒绝的请求（鉴权失败、参数错误、模型被禁用）不计入任何账号。
-- **积分只取 `usage.credit`**，不用「账号余额差」推算，避免把并发请求和额度刷新算成消耗。
-- **缺失的 usage 记为空样本，不是零消耗**：接口返回 `—` 和「Token 1/2 请求有样本」这样的覆盖数，0 与未知可以区分。
-- **缓存读取已包含在输入 Token 内**，单独展示但不重复累加。
-- **首 Token 耗时（TTFT v2）**：从网关请求入口开始，到解析出首个非空文本、推理或有效工具调用增量结束；心跳、角色声明、空内容、usage、finish、DONE 不计入。工具名称或非空参数增量计入，单独工具 ID 不计入。三个协议的流式／非流式、普通日志、CLI 与网页使用同一测量结果，截断或取消的请求不进入 TTFT 平均。
-- **完整性判定**：只由上游流本身决定——读取出错或没有结束原因都不计；已确认完整结束后，客户端收到 `[DONE]` 就断开连接属于正常行为，不再因为事后看到请求 Context 已取消而丢弃该次首 Token 样本（v1.14.9 修复）。
-- **与 dsh 的边界**：采用相同的有效增量判据，但网关起点是收到 HTTP 请求（拿不到 dsh 的 `step/start`），无法计入客户端前置耗时；网关仍按所选时间／账号／模型汇总所有调用，包括辅助请求，不是 dsh 单个会话的平均。非流式时测量上游生成的首 Token，而非客户端收到完整 JSON 的时刻。
-- **历史兼容**：新请求记录带 `ttftMetric: "first_token_v2"`。旧记录的首响应体耗时保留但不参与新 TTFT 平均；Token、积分和历史总耗时仍正常汇总，网页显示被排除的旧口径样本数。新记录的总耗时也以网关请求入口计时，避免排队后出现首Token比总耗时更大的口径冲突。
-- 时间维度按 **UTC+8 日历**：小时对齐整点，**周从周一开始**，月按自然月。请求耗时图里柱形是首 Token、折线是总耗时，每个模型各自一条柱和一条线，只平均该模型自己的调用，不把不同模型合成一条。某个模型在某个时间桶没有调用时，柱形不画，折线跨过空桶连接相邻样本，**不伪造 0ms**；鼠标悬浮可查看该时间桶的逐模型读数。上方摘要卡里的平均总耗时和平均首 Token 仍是当前范围内全部调用的平均值。
-- **只统计本功能启用后的请求**，不回溯历史日志，也不补造数据。
+### Model Capability Extension Fields
 
-### 网页总览页
+Each model in `/v1/models` carries capability fields when the catalog has trustworthy data; **unknowns are always omitted, with no fallback like 1M**, preventing downstream from reserving context against a wrong window:
 
-「总览」页最上面是**运行状态**（账号池健康度与账号日志告警），再往下是「用量与性能」：可选**统计粒度**（小时／日／周／月）、**统计范围**（全局或单个凭据）、起止日期；展示总 Token、总积分、账号调用次数、平均总耗时、平均首字五张摘要卡，两张组合图（用量趋势：Token 折线＋积分柱形、左右双轴；请求耗时趋势：总耗时折线＋首 Token 柱形，均按模型分开），以及一张**模型用量排名**表。
+| Field | Meaning |
+|---|---|
+| `context_length` | **Model capability cap**, from upstream `maxInputTokens` (falls back to `maxAllowedSize` when missing). Determines how much input upstream accepts. |
+| `max_output_tokens` | Output cap, from upstream `maxOutputTokens`. |
+| `default_context_length` | **Client default budget**, from upstream `contextWindow.defaultLength`. It only decides where the client starts compressing, and is **not** the capability cap. |
+| `context_length_options` | Client-selectable tiers, from upstream `contextWindow.supportedLengths` (given only with ≥2 tiers, ascending). |
+| `capabilities_by_site` | Given only when the domestic and international sites declare different values for the same model, listing the four fields above per site. |
 
-排名表与图表使用同一套时间范围和账号过滤：只列出所选范围内**确实有调用**的模型，按总 Token 降序排列（Token 未知时按请求数降序），用量最多的排第一；没有调用的模型不出现。表内同时给出请求数、完整／失败、输入／输出、缓存读取、积分、平均耗时、平均首字与数据覆盖数。
+Key points:
 
-图表为页面内原生 SVG，不加载任何外部图表库。用量图把 Token（折线，左轴）和积分（柱形，右轴）放在同一张图里，两者量级不同所以分左右刻度；已经开始且没有 Token 样本的时间桶按 0 连接，便于观察空闲时段。尚未开始的时间桶按统计接口返回的服务器时间判断，两图均不画点、线、柱，也不补 0；保留完整且对齐的时间轴，悬浮显示「未到该时间」及四项「—」。当前正在进行的时间桶正常展示；旧接口没有服务器时间时回退浏览器时间。耗时图的柱形是首 Token、折线是总耗时；图例与排名表使用同一批模型，并跟随当前时间和账号范围，没有调用的模型不画。两图共用绘图区边距和日期刻度，悬停任一图时同一条虚线贯穿两图及卡片间隔，浮层统一展示该时间桶的总 Token、积分、平均总耗时和平均首 Token；平均耗时采用当前时间/账号范围的汇总值，分模型曲线仍保留各模型自己的样本。空闲桶用量为0，有请求但缺失usage时浮层显示未知；耗时图跨空桶连接折线，但不会把缺失样本伪装成0ms。交互起止使用同一TraceID写入日志，不记录鼠标坐标、指标数值或凭据，也不会逐像素上报。
-
-图表悬浮覆盖整个双图区，包括绘图区、横轴文字、标题、卡片留白和两图之间的间隙；在间隙中移动时按距离选择较近的图展示浮层，虚线与四项读数继续跟随同一时间位置，不会停在上一次进入绘图区的位置。离开整个双图区才隐藏联动提示。图表悬浮使用两图共用的 `requestAnimationFrame` 队列：同一帧内只处理最后一次鼠标位置；同一时间桶内不重建浮层内容、不重复读取浮层尺寸或更新命中点。浮层与贯穿虚线用 `transform` 移动；每帧先读取两图几何信息再更新显示，未激活图不测量隐藏浮层。离开图表、取消操作、切换页面、退出登录或重绘时会取消待绘制事件，避免旧浮层重新出现。交互审计仍仅记录开始和结束，不逐次记录鼠标移动。
-
-### 总览运行状态：健康度与账号日志告警
-
-运行状态区域不再重复展示账号数量和分站点数量卡片，改为左侧健康度、右侧日志告警；账号池页继续保留详细状态。该区块已移到总览最上面：先看健康度与告警，再看用量与性能。
-
-- **健康度 = 可用且未全局停用的账号 / 账号池全部账号 × 100%**。主动停用的账号仍在分母内；全部可用显示 `100%`，部分可用向下保留一位小数。无账号或状态快照过旧时显示 `—`，不伪装成全健康。
-- 健康度描述账号级状态，不是某个模型的可调用率；单模型冷却不等同于整个账号失效。
-- 告警来自 `logs/gateway-YYYY-MM-DD.log`，兼容既有冷却/额度耗尽/失效/停用日志，并增加 `[账号状态]` 结构化记录。仅在启动或状态变化时记录，包含 TraceID，不写凭据、Token 或上游错误正文。
-- 只显示**当前快照仍异常且找到对应日志**的记录，同账号同类别去重；恢复后的历史异常不继续显示。找不到日志时会提示缺失，不编造记录。
-- 告警按**日志时间倒序，最新在上**；严重程度只用于颜色和标签，不影响位置。时间相同按账号文件名、告警类别稳定排序。
-- 恢复后自动消除的是对应的异常类别，不是删除该账号所有告警。例如额度恢复但账号仍被手动停用时，仅移除「积分用尽」，保留「账号停用」。这不是即时推送：快照和总览通常各约 3 秒刷新；额度恢复还需先被后台额度查询发现（默认每 5 分钟查询一轮）。日志扫描缓存 10 秒不阻止用最新快照剔除已恢复项；网络或读取失败时会保留旧结果并提示。
-- 严重程度：红色「紧急」= 账号失效；橙色「重要」= 账号过期、积分用尽；黄色「注意」= 账号冷却；蓝灰色「提示」= 主动停用。颜色之外还有文字标签。
-- 日志读取总预算 4 MiB，扫描结果短缓存 10 秒，列表最多 100 条。达到范围上限或日志缺失时给出提示；日志读取失败保留旧列表并标明失败，不影响健康度查询或模型调用。
-- `/admin/api/account-alerts` 只读且需要管理 Key，不能通过该接口改变账号状态。
-
-### 鲁棒性
-
-- `stats.json` **不存在时静默从空统计启动**，首次有数据后自动尝试落盘。
-- **无法写入**（权限不足、磁盘满、路径被占用）时降级为「仅内存」：继续统计和展示，网页显示「仅内存 · 未落盘」，后台每 5 秒自动重试，**不阻塞、不中断模型请求**。
-- **文件损坏或不是普通文件**（例如被替换成符号链接或目录）时**保留原文件不覆盖**，同样降级为仅内存，避免把用户数据覆盖掉。
-- 落盘采用「同目录临时文件 → `fsync` → 原子重命名」，权限 `0600`；进程收到停止信号时会先冲刷一次。
-- 文件有安全大小上限；超出后停止写入并保留内存统计。
-
-> 该文件含账号标识与用量数据，已被 `.gitignore` 忽略，请勿提交或公开分享。
+- `context_length` (capability cap) and `default_context_length` (default budget) have different semantics and must be read separately. Take `deepseek-v4.1-flash`: cap 1000000, default budget 300000, tiers 300000 / 600000 / 1000000.
+- Same-named models may be served by domestic or international accounts with different capabilities. **When they disagree, the max is never faked**: top-level scalars are left empty and per-site details go into `capabilities_by_site`, so downstream is never routed to a smaller-window account while reserving against the larger value.
+- These fields describe capability only — **they neither inject upstream request parameters, nor truncate messages, nor change the existing output budget (`max_tokens`) logic**. How much context the client actually sends is still decided by the client's own compression strategy.
+- During catalog refresh, the log prints a `[Model capabilities]` coverage summary (per-site counts of models with a cap / tiers / output cap), making it easy to check which models lack data.
 
 ---
 
-## 客户端接入
+## Usage and Performance Statistics (stats.json)
 
-网关启动后服务地址为 `http://127.0.0.1:8317/v1`。
+The gateway maintains an optional `stats.json` in the **program working directory**, recording usage facts grouped by credential for the web console's "Overview" page.
 
-curl：
+### What Is Recorded
+
+| Content | Description |
+|---|---|
+| Per-account model ledger | Each credential's `ModelStates` (per-model cost, quota blocks, cooldowns, last observed time), keyed from "credential file + site + UID + enterprise ID" |
+| Per-call account invocations | Completion time, model, HTTP status, whether complete, input/output/total tokens, cache reads, `usage.credit`, total duration, first-token duration |
+
+**Not recorded**: access tokens, refresh tokens, request or response bodies, prompts, account nicknames.
+
+### Counting Rules
+
+- **Counted per actual upstream account call**: one request triggering multiple account calls (failed retries, failover on quota exhaustion) records one entry per account called. Requests rejected before any account was selected (auth failure, bad parameters, disabled model) count toward no account.
+- **Credits come only from `usage.credit`**, never inferred from "account balance deltas", so concurrent requests and quota refreshes are never counted as consumption.
+- **Missing usage is recorded as an empty sample, not zero consumption**: the API returns `—` and coverage numbers like "Token 1/2 requests have samples", keeping 0 and unknown distinguishable.
+- **Cache reads are already included in input tokens**, shown separately but never double-added.
+- **First-token latency (TTFT v2)**: measured from the gateway's request entry until parsing the first non-empty text, reasoning, or valid tool-call increment ends; heartbeats, role declarations, empty content, usage, finish, and DONE are excluded. Tool names or non-empty argument increments count; a bare tool ID does not. Streaming/non-streaming across all three protocols, normal logs, CLI, and web all use the same measurement; truncated or cancelled requests never enter the TTFT average.
+- **Completeness verdict**: decided only by the upstream stream itself — read errors or a missing end reason both fail; after a confirmed complete end, the client disconnecting upon receiving `[DONE]` is normal behavior, and that first-token sample is no longer discarded because the request context was later observed cancelled (fixed in v1.14.9).
+- **Boundary with dsh**: the same valid-increment criteria are used, but the gateway starts at receiving the HTTP request (dsh's `step/start` is unavailable), so client-side lead time cannot be counted; the gateway still aggregates all calls for the chosen time/account/model, including auxiliary requests — not a dsh single-session average. For non-streaming, the first token is measured from upstream generation, not when the client receives the full JSON.
+- **Backward compatibility**: new records carry `ttftMetric: "first_token_v2"`. Old records' first-response-body durations are kept but excluded from the new TTFT average; tokens, credits, and historical total durations still aggregate normally, and the web shows the count of old-scope samples excluded. New records' total duration is also timed from the gateway request entry, avoiding the inconsistency where first token appears larger than total duration after queueing.
+- Time dimensions follow the **UTC+8 calendar**: hours aligned on the hour, **weeks starting Monday**, months by calendar month. In the request-duration chart, bars are first token and the line is total duration, with one bar and one line per model averaging only that model's own calls — never merging different models into one. When a model has no calls in a time bucket, the bar is skipped and the line crosses the empty bucket connecting adjacent samples — **never faking 0ms**; hovering shows the per-model readings for that bucket. The average total duration and average first token in the summary cards above are still averages over all calls in the current range.
+- **Only requests after this feature was enabled are counted**; historical logs are not backfilled and no data is fabricated.
+
+### Web Overview Page
+
+The top of the "Overview" page is **run status** (account pool health and account log alerts), followed by "Usage & Performance": optional **granularity** (hour/day/week/month), **scope** (global or a single credential), and start/end dates; it shows five summary cards — total tokens, total credits, account calls, average total duration, average first token — two combined charts (usage trend: token line + credit bars with dual left/right axes; request-duration trend: total-duration line + first-token bars, both split per model), and a **model usage ranking** table.
+
+The ranking table and charts share the same time range and account filter: only models with **actual calls** in the selected range are listed, sorted by total tokens descending (by request count when tokens are unknown), with the heaviest usage first; models without calls do not appear. The table also gives request count, complete/failed, input/output, cache reads, credits, average duration, average first token, and data coverage counts.
+
+Charts are in-page native SVG with no external chart library loaded. The usage chart puts tokens (line, left axis) and credits (bars, right axis) in one chart with separate left/right scales since their magnitudes differ; time buckets that have started but have no token samples are connected at 0, making idle periods visible. Buckets that have not started are judged by the server time returned by the stats API, and both charts draw no points, lines, or bars and no 0-fill; the full aligned time axis is kept, with hover showing "not yet reached" and four `—` values. The currently in-progress bucket renders normally; when the old API has no server time, browser time is the fallback. In the duration chart, bars are first token and the line is total duration; the legend and ranking table use the same model set, following the current time and account range, and models without calls are not drawn. Both charts share plot margins and date ticks; hovering either chart runs one dashed line through both charts and the card gap, with a unified overlay showing that bucket's total tokens, credits, average total duration, and average first token; average duration uses the summary over the current time/account range, while per-model curves keep each model's own samples. Idle buckets have 0 usage, and when requests exist but usage is missing the overlay shows unknown; the duration chart connects its line across empty buckets but never disguises missing samples as 0ms. Interaction start and end are logged with the same TraceID; mouse coordinates, metric values, or credentials are never recorded, and nothing is reported per pixel.
+
+Chart hover covers the entire dual-chart area, including plot areas, axis text, titles, card margins, and the gap between the charts; moving in the gap picks the nearer chart by distance for the overlay, with the dashed line and four readings following the same time position instead of stopping at the last plot area entered. The linked tooltip hides only after leaving the whole dual-chart area. Chart hover uses a `requestAnimationFrame` queue shared by both charts: only the last mouse position per frame is processed; within one time bucket the overlay content is not rebuilt, its size is not re-read, and hit points are not re-updated. The overlay and through-line move via `transform`; each frame reads both charts' geometry before updating the display, and the inactive chart does not measure the hidden overlay. Pending draw events are cancelled on leaving the chart, cancelling, switching pages, logging out, or redrawing, so stale overlays never reappear. The interaction audit still logs only start and end, not every mouse move.
+
+### Overview Run Status: Health and Account Log Alerts
+
+The run status area no longer repeats account-count and per-site-count cards; it is now health on the left and log alerts on the right; the Account Pool page keeps the detailed statuses. This block moved to the very top of the overview: check health and alerts first, then usage and performance.
+
+- **Health = available accounts not globally disabled / all accounts in the pool × 100%**. Manually disabled accounts remain in the denominator; all available shows `100%`, and partial availability rounds down to one decimal. With no accounts or a stale snapshot, `—` is shown instead of faking full health.
+- Health describes account-level status, not a per-model callability rate; a single model's cooldown is not the same as the whole account failing.
+- Alerts come from `logs/gateway-YYYY-MM-DD.log`, compatible with the existing cooldown/quota-exhausted/invalid/disabled logs, plus `[Account status]` structured records. Recorded only at startup or on state change, including the TraceID, and never containing credentials, tokens, or upstream error bodies.
+- Only records that are **still abnormal in the current snapshot and have a matching log** are shown, deduplicated per account per category; historical anomalies that recovered stop showing. When a log cannot be found, the missing entry is noted — never fabricated.
+- Alerts sort by **log time descending, newest on top**; severity only affects color and label, not position. Equal times sort stably by account file name then alert category.
+- What auto-clears after recovery is the matching anomaly category, not all of an account's alerts. For example, if quota recovers but the account is still manually disabled, only "Credits exhausted" is removed while "Account disabled" remains. This is not push-based: snapshot and overview each refresh about every 3 seconds; quota recovery also needs the background quota query to notice it first (one round every 5 minutes by default). The log scan's 10-second cache does not stop the latest snapshot from removing recovered items; on network or read failure, old results are kept with a notice.
+- Severity: red "Critical" = account invalid; orange "Important" = account expired, credits exhausted; yellow "Attention" = account cooling; blue-gray "Notice" = manually disabled. Colors are paired with text labels.
+- The log read budget is 4 MiB total, scan results are short-cached 10 seconds, and the list is capped at 100 entries. Reaching the range cap or missing logs produces a notice; on log read failure the old list is kept and marked failed, without affecting health queries or model calls.
+- `/admin/api/account-alerts` is read-only and requires the admin key; account state cannot be changed through it.
+
+### Robustness
+
+- When `stats.json` **does not exist, statistics start silently from empty**, and persistence is attempted automatically after the first data.
+- When **unwritable** (insufficient permissions, full disk, path occupied), it degrades to "memory only": statistics and display continue, the web shows "Memory only · not persisted", and the background retries automatically every 5 seconds — **never blocking or interrupting model requests**.
+- When the **file is corrupted or not a regular file** (e.g. replaced by a symlink or directory), **the original file is kept, not overwritten**, likewise degrading to memory-only, so user data is never clobbered.
+- Persistence uses "temp file in the same directory → `fsync` → atomic rename", with `0600` permissions; on a stop signal, the process flushes once first.
+- The file has a safety size cap; once exceeded, writing stops and in-memory statistics are kept.
+
+> This file contains account identifiers and usage data; it is `.gitignore`d — do not commit or publicly share it.
+
+---
+
+## Client Integration
+
+After the gateway starts, the service address is `http://127.0.0.1:8317/v1`.
+
+curl:
 
 ```bash
 curl -N -s http://127.0.0.1:8317/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"hy4-preview","messages":[{"role":"user","content":"你好"}],"stream":true}'
+  -d '{"model":"hy4-preview","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
-Python OpenAI SDK：
+Python OpenAI SDK:
 
 ```python
 from openai import OpenAI
@@ -1210,32 +1205,32 @@ from openai import OpenAI
 client = OpenAI(base_url="http://127.0.0.1:8317/v1", api_key="none")
 resp = client.chat.completions.create(
     model="hy4-preview",
-    messages=[{"role": "user", "content": "写一个快速排序"}],
+    messages=[{"role": "user", "content": "write a quicksort"}],
 )
 print(resp.choices[0].message.content)
 ```
 
-Claude Code（Anthropic 协议直连，免外部翻译层）：
+Claude Code (direct Anthropic protocol connection, no external translation layer):
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
-export ANTHROPIC_API_KEY=你的模型APIKey   # config.json 未开启 apiKeyEnabled 时随意填
+export ANTHROPIC_API_KEY=your-model-api-key   # Any value works when apiKeyEnabled is off in config.json
 claude
 ```
 
-> 网关在 `/v1/messages` 入口完成 Anthropic → Chat 双向转译：思维链回译为 `thinking` 内容块、
-> `tool_calls` 回译为 `tool_use`、`finish_reason` 映射 `stop_reason`（`tool_calls→tool_use`、
-> `length→max_tokens`），并复用账号池轮询、工具序列自愈与 WAF 脱敏管线。
-> 模型名直接填网关 `/v1/models` 列表中的 ID。
+> The gateway performs bidirectional Anthropic → Chat translation at the `/v1/messages` entry: reasoning is translated back into `thinking` content blocks,
+> `tool_calls` into `tool_use`, and `finish_reason` maps to `stop_reason` (`tool_calls→tool_use`,
+> `length→max_tokens`), while reusing account pool round-robin, tool-sequence self-healing, and the WAF sanitization pipeline.
+> For the model name, use any ID from the gateway's `/v1/models` list.
 
-DSH（`~/.dsh/settings.yaml`）：
+DSH (`~/.dsh/settings.yaml`):
 
 ```yaml
 llm-pi-ai:
   providers:
     workbuddy-local:
       baseURL: http://127.0.0.1:8317/v1
-      apiKeyEnv: LOCAL_API_KEY   # 任意字符串即可
+      apiKeyEnv: LOCAL_API_KEY   # Any string works
       api: openai-completions
       models:
         - id: hy4-preview
@@ -1245,19 +1240,19 @@ llm-pi-ai:
 
 ---
 
-## 各平台部署
+## Platform Deployment
 
 ### Windows
 
-1. 从 [Releases](https://github.com/CangShui/workbuddy-gateway/releases) 下载 `workbuddy-gateway-windows-amd64.exe`。
-2. 在 PowerShell / CMD 中进入文件所在目录：
+1. Download `workbuddy-gateway-windows-amd64.exe` from [Releases](https://github.com/CangShui/workbuddy-gateway/releases).
+2. In PowerShell / CMD, go to the file's directory:
 
    ```powershell
    .\workbuddy-gateway-windows-amd64.exe login
    .\workbuddy-gateway-windows-amd64.exe serve -port 8317
    ```
 
-3. 开机自启：`Win+R` → `shell:startup`，把 exe 快捷方式放入启动文件夹，并在快捷方式“目标”后追加 `serve`。
+3. Start at boot: `Win+R` → `shell:startup`, put a shortcut to the exe into the startup folder, and append `serve` after the shortcut's "Target".
 
 ### Linux
 
@@ -1274,9 +1269,9 @@ workbuddy-gateway login
 workbuddy-gateway serve -addr 127.0.0.1 -port 8317
 ```
 
-#### systemd 服务（推荐）
+#### systemd Service (recommended)
 
-创建 `/etc/systemd/system/workbuddy-gateway.service`：
+Create `/etc/systemd/system/workbuddy-gateway.service`:
 
 ```ini
 [Unit]
@@ -1299,7 +1294,7 @@ ProtectHome=false
 WantedBy=multi-user.target
 ```
 
-部署与启动：
+Deploy and start:
 
 ```bash
 sudo mkdir -p /opt/workbuddy-gateway
@@ -1311,9 +1306,9 @@ sudo systemctl status workbuddy-gateway
 sudo journalctl -u workbuddy-gateway -f
 ```
 
-> `WorkingDirectory` 决定自动发现的凭据目录。把多个凭据文件放进该目录即可组成账号池，新增 / 更新 / 删除会自动热加载。
+> `WorkingDirectory` determines the auto-discovered credential directory. Put multiple credential files in it to form an account pool; additions / updates / deletions hot-reload automatically.
 
-常用运维：
+Common operations:
 
 ```bash
 sudo systemctl restart workbuddy-gateway
@@ -1321,7 +1316,7 @@ sudo systemctl stop workbuddy-gateway
 sudo systemctl disable workbuddy-gateway
 ```
 
-对外开放时（例如局域网其他设备）把 `-addr` 改为 `0.0.0.0`，并在 `config.json` 中开启模型 API Key 校验：
+When exposing externally (e.g. other LAN devices), change `-addr` to `0.0.0.0` and enable model API key validation in `config.json`:
 
 ```json
 {"gateway":{"apiKeyEnabled":true,"apiKey":"sk-changeme"}}
@@ -1333,22 +1328,22 @@ ExecStart=/opt/workbuddy-gateway/workbuddy-gateway serve -addr 0.0.0.0
 
 ### macOS
 
-1. 下载 `workbuddy-gateway-darwin-arm64`（Apple Silicon）或 `workbuddy-gateway-darwin-amd64`（Intel）。
-2. 移除隔离属性：
+1. Download `workbuddy-gateway-darwin-arm64` (Apple Silicon) or `workbuddy-gateway-darwin-amd64` (Intel).
+2. Remove the quarantine attribute:
 
    ```bash
    chmod +x workbuddy-gateway-darwin-arm64
    xattr -d com.apple.quarantine workbuddy-gateway-darwin-arm64 2>/dev/null || true
    ```
 
-3. 登录与启动：
+3. Log in and start:
 
    ```bash
    ./workbuddy-gateway-darwin-arm64 login
    ./workbuddy-gateway-darwin-arm64 serve
    ```
 
-4. 开机自启（launchd）：创建 `~/Library/LaunchAgents/com.workbuddy.gateway.plist`：
+4. Start at boot (launchd): create `~/Library/LaunchAgents/com.workbuddy.gateway.plist`:
 
    ```xml
    <?xml version="1.0" encoding="UTF-8"?>
@@ -1375,19 +1370,19 @@ ExecStart=/opt/workbuddy-gateway/workbuddy-gateway serve -addr 0.0.0.0
 
 ---
 
-## 安全提示
+## Security Notes
 
-- `workbuddy*.json` 包含真实访问凭据（Access Token / Refresh Token），**严禁提交到 Git 或公开分享**；本仓库 `.gitignore` 已排除。
-- 网关默认只监听 `127.0.0.1`。需要局域网 / 公网访问时改用 `-addr 0.0.0.0`，并在 `config.json` 中开启模型 API Key 校验（`gateway.apiKeyEnabled`），或置于反向代理之后。
-- `config.json` 中的 `gateway.adminKey` 与 `gateway.apiKey` 按要求明文保存，请限制该文件权限；网页配置预览隐藏 Key，管理员明确确认编辑警告后才在编辑器显示真实 Key。不要分享编辑器截图或在公共设备上编辑，完整配置只保留在当前页面内存中，不进入审计日志。
-- `/admin/probe` 仅接受回环来源调用。
-- 不再需要某账号授权时，删除对应凭据文件并在 CodeBuddy 控制台撤销授权。
+- `workbuddy*.json` files contain real access credentials (Access Token / Refresh Token) — **never commit them to Git or share them publicly**; this repo's `.gitignore` already excludes them.
+- The gateway listens only on `127.0.0.1` by default. For LAN / public access, use `-addr 0.0.0.0` and enable model API key validation in `config.json` (`gateway.apiKeyEnabled`), or place it behind a reverse proxy.
+- `gateway.adminKey` and `gateway.apiKey` in `config.json` are stored in plaintext as required — restrict the file's permissions; the web config preview hides keys, and real keys appear in the editor only after the admin explicitly confirms the edit warning. Do not share editor screenshots or edit on public devices; the full config lives only in the current page's memory and never enters audit logs.
+- `/admin/probe` accepts loopback-origin calls only.
+- When an account's authorization is no longer needed, delete its credential file and revoke the authorization in the CodeBuddy console.
 
 ---
 
-## 从源码构建
+## Building from Source
 
-需要 `go.mod` 声明的 **Go 1.26.5 或更新工具链**：
+Requires the **Go 1.26.5 or newer toolchain** declared in `go.mod`:
 
 ```bash
 git clone https://github.com/CangShui/workbuddy-gateway.git
@@ -1396,50 +1391,50 @@ cd workbuddy-gateway
 go vet ./...
 go test ./...
 
-# 当前平台
+# Current platform
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o workbuddy-gateway .
 
-# 交叉编译示例
+# Cross-compile examples
 GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/workbuddy-gateway-linux-amd64 .
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/workbuddy-gateway-windows-amd64.exe .
 ```
 
-独立网页和构建脚本回归已集中到 `tests/`：
+Standalone web and build script regressions are centralized in `tests/`:
 
 ```powershell
 .\scripts\test.ps1
 ```
 
-Go 同包测试统一使用 `snake_case_test.go` 命名，仍位于源码包目录，不参与生产构建。完整目录说明见 [project-layout.md](project-layout.md)，测试命令见 [tests/README.md](../tests/README.md)。
+Go same-package tests uniformly use `snake_case_test.go` naming and stay in the source package directories, excluded from production builds. See [project-layout.md](project-layout.md) for the full directory guide and [tests/README.md](../tests/README.md) for test commands.
 
-PowerShell 一键构建：
+One-shot PowerShell build:
 
 ```powershell
-.\build.ps1                         # 检查并构建全部 9 个目标
-.\build.ps1 -Only windows           # Windows x86、x64、ARM64
-.\build.ps1 -Only linux             # Linux x86、x64、ARMv7、ARM64
+.\build.ps1                         # Check and build all 9 targets
+.\build.ps1 -Only windows           # Windows x86, x64, ARM64
+.\build.ps1 -Only linux             # Linux x86, x64, ARMv7, ARM64
 .\build.ps1 -Only linux -Architecture arm -ArmVersion 6
 ```
 
-| 系统 | 架构 | 产物 |
+| OS | Architecture | Artifact |
 |---|---|---|
-| Windows | x86 32 位 / `386`（需要 SSE2） | `workbuddy-gateway-windows-386.exe` |
+| Windows | x86 32-bit / `386` (requires SSE2) | `workbuddy-gateway-windows-386.exe` |
 | Windows | x86-64 / `amd64` | `workbuddy-gateway-windows-amd64.exe` |
 | Windows | ARM64 | `workbuddy-gateway-windows-arm64.exe` |
-| Linux | x86 32 位 / `386`（需要 SSE2） | `workbuddy-gateway-linux-386` |
+| Linux | x86 32-bit / `386` (requires SSE2) | `workbuddy-gateway-linux-386` |
 | Linux | x86-64 / `amd64` | `workbuddy-gateway-linux-amd64` |
-| Linux | ARM 32 位（默认 ARMv7） | `workbuddy-gateway-linux-armv7` |
+| Linux | ARM 32-bit (defaults to ARMv7) | `workbuddy-gateway-linux-armv7` |
 | Linux | ARM64 | `workbuddy-gateway-linux-arm64` |
 | macOS | x86-64 / `amd64` | `workbuddy-gateway-darwin-amd64` |
 | macOS | ARM64 | `workbuddy-gateway-darwin-arm64` |
 
-- **Windows ARM32 不受当前 Go 工具链支持**，不能用 ARM64 文件替代。Linux ARM32 可用 `-ArmVersion 5/6/7` 选择，文件名与最低 ARM 版本一致。
-- 默认先运行 `go vet`、`go test`；不受调用者遗留的 `GOOS` / `GOARCH` 影响。各目标使用 `CGO_ENABLED=0`，x64 基线为 `GOAMD64=v1`、ARM64 基线为 `GOARM64=v8.0`。成功或失败后恢复原构建环境和工作目录。
-- 默认输出到 `dist/`，同时生成 `SHA256SUMS`、`build-manifest.json` 与空密钥的 `config.example.json`；校验和覆盖二进制、清单与示例配置。
-- `-OutputDir` 必须是项目内的独立子目录；`-Clean` 仅清理已知构建文件，不递归删除目录、配置凭据或其他文件。构建日志写入 `logs/build-YYYY-MM-DD.jsonl`。
+- **Windows ARM32 is not supported by the current Go toolchain** and cannot be substituted with the ARM64 file. Linux ARM32 can choose `-ArmVersion 5/6/7`, with the file name matching the minimum ARM version.
+- By default `go vet` and `go test` run first, unaffected by the caller's leftover `GOOS` / `GOARCH`. Every target uses `CGO_ENABLED=0`, with an x64 baseline of `GOAMD64=v1` and an ARM64 baseline of `GOARM64=v8.0`. The original build environment and working directory are restored after success or failure.
+- Default output goes to `dist/`, also generating `SHA256SUMS`, `build-manifest.json`, and a `config.example.json` with empty keys; checksums cover the binaries, manifest, and example config.
+- `-OutputDir` must be a dedicated subdirectory inside the project; `-Clean` only removes known build files and never recursively deletes directories, config credentials, or other files. Build logs go to `logs/build-YYYY-MM-DD.jsonl`.
 
 ---
 
-## 免责声明
+## Disclaimer
 
-本项目仅用于个人学习与技术研究。腾讯 CodeBuddy（含国内站与国际站 workbuddy.ai）的接口协议与风控策略可能随时变化；请遵守腾讯服务条款，自行承担使用风险。本仓库不包含任何官方未公开的密钥或凭据。
+This project is for personal learning and technical research only. Tencent CodeBuddy's (both the domestic site and international workbuddy.ai) interface protocols and risk-control policies may change at any time; comply with Tencent's terms of service and use at your own risk. This repository contains no officially undisclosed keys or credentials.

@@ -75,11 +75,11 @@ func TestProtocolAuthenticationAndAudit(t *testing.T) {
 					if errBody["type"] != wantType {
 						t.Fatalf("error type=%v want=%s", errBody["type"], wantType)
 					}
-					if !strings.Contains(audit.String(), "请求被拦截") {
+					if !strings.Contains(audit.String(), "[Request intercepted]") {
 						t.Error("missing rejection audit")
 					}
 				}
-				for _, marker := range []string{"请求到达", "中间件-CORS", "响应返回", "traceId=integration-trace"} {
+				for _, marker := range []string{"[Request received]", "[Middleware-CORS]", "[Response returned]", "traceId=integration-trace"} {
 					if !strings.Contains(audit.String(), marker) {
 						t.Errorf("missing audit marker %s", marker)
 					}
@@ -94,8 +94,8 @@ func TestProtocolAuthenticationAndAudit(t *testing.T) {
 
 func TestMessagesToolHistoryReachesUpstream(t *testing.T) {
 	body := `{"model":"m","messages":[
-		{"role":"assistant","content":[{"type":"tool_use","id":"call_a","name":"lookup","input":{"city":"北京"}}]},
-		{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_a","content":"晴天"},{"type":"text","text":"继续"}]}
+		{"role":"assistant","content":[{"type":"tool_use","id":"call_a","name":"lookup","input":{"city":"Beijing"}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_a","content":"Sunny"},{"type":"text","text":"Continue"}]}
 	]}`
 	messages := captureUpstreamMessages(t, "/v1/messages", body)
 	if len(messages) != 4 || messages[0].(map[string]any)["role"] != "system" {
@@ -103,7 +103,7 @@ func TestMessagesToolHistoryReachesUpstream(t *testing.T) {
 	}
 	call := messages[1].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
 	result := messages[2].(map[string]any)
-	if call["id"] != "call_a" || result["role"] != "tool" || result["tool_call_id"] != "call_a" || result["content"] != "晴天" {
+	if call["id"] != "call_a" || result["role"] != "tool" || result["tool_call_id"] != "call_a" || result["content"] != "Sunny" {
 		t.Fatalf("tool history not preserved: %#v", messages)
 	}
 }
@@ -111,7 +111,7 @@ func TestMessagesToolHistoryReachesUpstream(t *testing.T) {
 func TestAnthropicRequestOptions(t *testing.T) {
 	var body map[string]any
 	err := json.Unmarshal([]byte(`{
-		"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},{"type":"text","text":"描述"}]}],
+		"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},{"type":"text","text":"Describe"}]}],
 		"max_tokens":1024,"thinking":{"type":"enabled","budget_tokens":8192},
 		"tools":[{"name":"lookup","input_schema":{"type":"object"}}],"tool_choice":{"type":"any"}
 	}`), &body)
@@ -161,13 +161,13 @@ func TestAnthropicNamedToolChoiceUsesUpstreamString(t *testing.T) {
 	}
 }
 
-const messagesTestSSE = `data: {"model":"m","choices":[{"delta":{"reasoning_content":"分析"},"finish_reason":""}]}
+const messagesTestSSE = `data: {"model":"m","choices":[{"delta":{"reasoning_content":"analysis"},"finish_reason":""}]}
 
-data: {"choices":[{"delta":{"content":"结果"},"finish_reason":null}]}
+data: {"choices":[{"delta":{"content":"result"},"finish_reason":null}]}
 
 data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":null}]}
 
-data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"北京\"}"}}]},"finish_reason":"tool_calls"}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Beijing\"}"}}]},"finish_reason":"tool_calls"}]}
 
 data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":40}}}
 
@@ -219,11 +219,11 @@ func TestMessagesStreamingAndAggregate(t *testing.T) {
 				t.Fatal(err)
 			}
 			content := out["content"].([]any)
-			if len(content) != 3 || content[0].(map[string]any)["thinking"] != "分析" || content[1].(map[string]any)["text"] != "结果" {
+			if len(content) != 3 || content[0].(map[string]any)["thinking"] != "analysis" || content[1].(map[string]any)["text"] != "result" {
 				t.Fatalf("aggregate lost content: %#v", out)
 			}
 			tool := content[2].(map[string]any)
-			if tool["input"].(map[string]any)["city"] != "北京" || out["stop_reason"] != "tool_use" {
+			if tool["input"].(map[string]any)["city"] != "Beijing" || out["stop_reason"] != "tool_use" {
 				t.Fatalf("tool aggregation failed: %#v", out)
 			}
 			usage := out["usage"].(map[string]any)
@@ -274,7 +274,7 @@ func TestMessagesCountTokensAndValidation(t *testing.T) {
 		path, method, body string
 		status             int
 	}{
-		{"/v1/messages/count_tokens", "POST", `{"messages":[{"role":"user","content":"你好世界"}]}`, 200},
+		{"/v1/messages/count_tokens", "POST", `{"messages":[{"role":"user","content":"hello world"}]}`, 200},
 		{"/v1/messages/count_tokens", "POST", `{`, 400},
 		{"/v1/messages/count_tokens", "GET", ``, 405},
 		{"/v1/messages", "POST", `{`, 400},
